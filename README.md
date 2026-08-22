@@ -38,6 +38,12 @@ treepolo-mlb backfill
 # Explicit range
 treepolo-mlb backfill --start 2015-01-01 --end 2026-08-23
 
+# Resume a previously attempted backfill and skip exact chunks already completed
+treepolo-mlb backfill --start 2015-01-01 --end 2026-08-23 --resume
+
+# Retry chunks recorded as failed
+treepolo-mlb retry-failed
+
 # Incremental sync; also re-fetches the recent correction window
 treepolo-mlb update
 
@@ -72,7 +78,7 @@ The primary pitch identity is `game_pk + at_bat_number + pitch_number`. Rows mis
 
 Daily updates intentionally overlap recent dates. If Savant revises velocity, pitch classification, batted-ball values, or other fields after a game, the same pitch is updated in place. Re-running the same range is therefore safe and does not inflate the database.
 
-Backfill continues after failed chunks by default and records every failure. `--fail-fast` changes that behavior. After a partial run, simply run the range again; idempotent upserts make retry safe.
+Backfill continues after failed chunks by default and records every failure. `--fail-fast` changes that behavior. `--resume` skips exact date chunks already completed successfully, while `retry-failed` re-runs recorded failed chunks. Idempotent upserts make all of these retries safe.
 
 ## Tests
 
