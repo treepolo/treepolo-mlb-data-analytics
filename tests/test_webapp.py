@@ -112,7 +112,7 @@ def test_arsenal_change_and_temporal(tmp_path):
     assert any(row["pitcher"] == 20 and row["reference_value"] is not None for row in temporal["rows"])
 
 
-def test_static_ui_is_bilingual_and_chart_free():
+def test_static_ui_is_bilingual_chart_free_and_aero_glass():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
@@ -122,3 +122,7 @@ def test_static_ui_is_bilingual_and_chart_free():
     assert "<canvas" not in html.lower()
     assert "new Chart" not in js
     assert "title-bar" in css and "window-buttons" in css
+    assert "--aero-glass" in css
+    assert "backdrop-filter: blur" in css
+    assert "--xp-blue" not in css
+    assert "#ece9d8" not in css
