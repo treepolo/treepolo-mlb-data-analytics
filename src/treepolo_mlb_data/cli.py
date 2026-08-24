@@ -29,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     g = a.add_mutually_exclusive_group(required=True); g.add_argument("--enable", action="store_true"); g.add_argument("--disable", action="store_true")
     s = sub.add_parser("scheduler"); s.add_argument("--once", action="store_true")
     r = sub.add_parser("rebuild"); r.add_argument("--yes", action="store_true", help="Required: recreates normalized DB from raw snapshots")
+    ui = sub.add_parser("ui", help="Open the local bilingual Windows XP/7-style analysis interface")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.add_argument("--no-browser", action="store_true", help="Do not open the default browser automatically")
     return p
 
 
@@ -47,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         config.root.mkdir(parents=True, exist_ok=True)
         with StatcastStore(config.database_path): pass
         print(f"Initialized {config.database_path}")
+        return 0
+    if args.command == "ui":
+        from .webapp import serve
+        serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
         return 0
     store, engine = _engine(config)
     try:
