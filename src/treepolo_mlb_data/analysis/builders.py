@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal as TypingLiteral
+
 from .model import (
     Aggregate, Binary, CollectSet, Column, Filter, Grain, Literal, Metric,
     NamedExpr, Node, OrderKey, Project, Rank, Window, WindowField,
@@ -59,13 +61,22 @@ def rank_pitch_roles(
     metric: str = "usage_rate",
     alias: str = "role_rank",
     descending: bool = True,
+    method: TypingLiteral["row_number", "rank", "dense_rank"] = "dense_rank",
 ) -> Node:
+    """Rank pitch roles within each entity.
+
+    dense_rank is the default so tied usage or performance values remain tied.
+    row_number is available when a caller explicitly needs one deterministic pitch.
+    """
+    order = [OrderKey(Column(metric), descending=descending)]
+    if method == "row_number":
+        order.append(OrderKey(Column("pitch_type")))
     return Rank(
         usage,
         alias,
-        (OrderKey(Column(metric), descending=descending), OrderKey(Column("pitch_type"))),
+        tuple(order),
         tuple(Column(x) for x in entity_fields),
-        "row_number",
+        method,
     )
 
 
