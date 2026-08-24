@@ -124,8 +124,11 @@ def test_static_ui_is_bilingual_chart_free_and_aero_glass():
     assert "new Chart" not in js
     assert "title-bar" in css and "window-buttons" in css
     assert "vista-aurora.svg" in css
-    assert "backdrop-filter:blur(16px)" in css
-    assert "brightness(.86)" in css
-    assert "#01274f" in aurora and "#e1fcff" in aurora
+    assert "backdrop-filter:blur(14px) saturate(172%) brightness(.88)" in css
+    assert "background:rgba(11,39,55,.19)" in css
+    assert "background:rgba(187,222,233,.08)" in css
+    assert ".app-window:before" in css and ".app-window:after" in css
+    assert "linearGradient id=\"base\"" in aurora
+    assert "#03294f" in aurora and "#e7ffff" in aurora
     assert "--xp-blue" not in css
     assert "#ece9d8" not in css
