@@ -19,6 +19,9 @@ treepolo-mlb = "treepolo_mlb_data.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+treepolo_mlb_data = ["web_static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["integration: tests requiring live Baseball Savant access"]
