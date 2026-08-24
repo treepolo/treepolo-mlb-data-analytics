@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .compiler import CompiledQuery, SQLCompiler
-from .model import Node, Grain, output_grain
+from .model import Grain, Node, output_grain
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +24,7 @@ class AnalysisResult:
 
 
 class ExecutionPlanner:
-    """Plan relational AST nodes for SQL execution; future compute nodes can use other backends."""
+    """Plan relational analysis nodes for SQL; future compute nodes can route elsewhere."""
 
     def __init__(self, compiler: SQLCompiler | None = None):
         self.compiler = compiler or SQLCompiler()
@@ -44,8 +44,9 @@ class SQLiteExecutor:
         conn.row_factory = sqlite3.Row
         try:
             cursor = conn.execute(plan.query.sql, plan.query.params)
-            columns = tuple(item[0] for item in (cursor.description or ()))
-            rows = tuple(dict(row) for row in cursor.fetchall())
+            raw_columns = tuple(item[0] for item in (cursor.description or ()))
+            columns = tuple(name for name in raw_columns if not name.startswith("__ta_"))
+            rows = tuple({name: row[name] for name in columns} for row in cursor.fetchall())
             return AnalysisResult(columns, rows, plan.grain)
         finally:
             conn.close()
