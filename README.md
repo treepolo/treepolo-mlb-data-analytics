@@ -2,6 +2,10 @@
 
 Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes the ingestion/synchronization system, typed analysis engine, advanced sequence/arsenal analysis capabilities, and a deliberately simple local frontend for operating those capabilities and viewing returned tables.
 
+## Project plan
+
+The canonical long-term architecture, ten stress-test analysis requirements, Stage 4 plan, and future backlog are documented in [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md). Important future work should be recorded there rather than existing only in chat history.
+
 ## What is implemented
 
 - Historical backfill from 2015 onward, split into bounded requests to avoid oversized Savant queries.
