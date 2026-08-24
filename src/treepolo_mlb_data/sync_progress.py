@@ -31,6 +31,7 @@ def start_sync(kind: str, run_id: int, start_date: str, end_date: str, total_chu
             "started_at": _now_iso(),
             "finished_at": None,
             "_started_monotonic": time.monotonic(),
+            "_finished_monotonic": None,
         }
 
 
@@ -69,6 +70,7 @@ def finish_sync(kind: str, status: str) -> None:
         item["current_start"] = None
         item["current_end"] = None
         item["finished_at"] = _now_iso()
+        item["_finished_monotonic"] = time.monotonic()
 
 
 def get_sync_progress(kind: str) -> dict | None:
@@ -77,7 +79,8 @@ def get_sync_progress(kind: str) -> dict | None:
         if item is None:
             return None
         result = {key: value for key, value in item.items() if not key.startswith("_")}
-        elapsed = max(0.0, time.monotonic() - item["_started_monotonic"])
+        end_clock = item["_finished_monotonic"] or time.monotonic()
+        elapsed = max(0.0, end_clock - item["_started_monotonic"])
         total = max(0, int(item["total_chunks"]))
         completed = max(0, int(item["completed_chunks"]))
         result["elapsed_seconds"] = round(elapsed, 1)
