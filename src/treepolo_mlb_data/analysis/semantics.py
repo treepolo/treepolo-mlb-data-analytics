@@ -28,7 +28,11 @@ def default_registry() -> SemanticRegistry:
     registry = SemanticRegistry()
     registry.register("four_seam_fastball", Binary(Column("pitch_type"), "=", Literal("FF")))
     registry.register("sweeper", Binary(Column("pitch_type"), "=", Literal("ST")))
+    registry.register("changeup", Binary(Column("pitch_type"), "=", Literal("CH")))
+    registry.register("breaking_ball", InList(Column("pitch_type"), tuple(Literal(x) for x in ("SL", "ST", "CU", "KC", "SV"))))
+    registry.register("fastball_family", InList(Column("pitch_type"), tuple(Literal(x) for x in ("FF", "SI", "FC"))))
     registry.register("in_strike_zone", InList(Column("zone"), tuple(Literal(x) for x in range(1, 10))))
+    registry.register("called_strike", Binary(Column("description"), "=", Literal("called_strike")))
     registry.register("whiff", InList(Column("description"), tuple(Literal(x) for x in (
         "swinging_strike", "swinging_strike_blocked", "missed_bunt",
     ))))
