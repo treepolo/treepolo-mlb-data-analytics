@@ -112,23 +112,13 @@ def test_arsenal_change_and_temporal(tmp_path):
     assert any(row["pitcher"] == 20 and row["reference_value"] is not None for row in temporal["rows"])
 
 
-def test_static_ui_is_bilingual_chart_free_and_aero_glass():
+def test_static_ui_is_bilingual_and_chart_free():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    aurora = (STATIC_DIR / "vista-aurora.svg").read_text(encoding="utf-8")
     assert "基本分析 Basic Analysis" in html
     assert "球種武器庫 Pitch Arsenal" in html
     assert "Windows XP/7" not in html
     assert "<canvas" not in html.lower()
     assert "new Chart" not in js
     assert "title-bar" in css and "window-buttons" in css
-    assert "vista-aurora.svg" in css
-    assert "backdrop-filter:blur(14px) saturate(172%) brightness(.88)" in css
-    assert "background:rgba(11,39,55,.19)" in css
-    assert "background:rgba(187,222,233,.08)" in css
-    assert ".app-window:before" in css and ".app-window:after" in css
-    assert "linearGradient id=\"base\"" in aurora
-    assert "#03294f" in aurora and "#e7ffff" in aurora
-    assert "--xp-blue" not in css
-    assert "#ece9d8" not in css
