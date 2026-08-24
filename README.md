@@ -1,12 +1,12 @@
 # treepolo MLB Data Analytics
 
-Baseball Savant/Statcast pitch-level data foundation for later fine-grained MLB analysis. This repository currently implements the complete ingestion/synchronization layer; analytical UI is intentionally out of scope for this stage.
+Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes the ingestion/synchronization system, typed analysis engine, advanced sequence/arsenal analysis capabilities, and a deliberately simple local frontend for operating those capabilities and viewing returned tables.
 
 ## What is implemented
 
 - Historical backfill from 2015 onward, split into bounded requests to avoid oversized Savant queries.
 - Exact compressed raw-response archive for every successful request.
-- Normalized local SQLite database optimized for later filtering/sequence analysis.
+- Normalized local SQLite database optimized for filtering and sequence analysis.
 - Full upstream-column preservation with automatic schema evolution when Savant adds fields.
 - Stable pitch identity (`game_pk:at_bat_number:pitch_number`) with fallback identity diagnostics.
 - Idempotent upserts: re-fetches update corrected Statcast values without duplicating pitches.
@@ -15,6 +15,11 @@ Baseball Savant/Statcast pitch-level data foundation for later fine-grained MLB 
 - Retry/backoff, resumable backfill behavior, per-run and per-chunk error/state records.
 - Integrity report: pitch rows, games, duplicates, missing natural keys, latest date, failed chunks, schema drift and raw snapshot count.
 - Rebuild normalized storage entirely from archived raw snapshots.
+- Typed analysis tree with filtering, aggregation, ranking, window operations, joins, set operations and serialization.
+- Ordered plate-appearance event patterns, bounded follow-up events, pitch-usage/arsenal analysis, relative pitch-role ranking, individual percentile thresholds, temporal comparisons and cross-level comparisons.
+- Local bilingual Chinese/English frontend with a Windows XP/Windows 7 desktop-application visual style.
+- Frontend data-management controls for status, update, auto update, backfill, failed-chunk retry and rebuild.
+- Table-only analysis results in the current frontend stage; charting and additional frontend-only analysis features are intentionally not included yet.
 - Unit/integration tests and a live Baseball Savant smoke test in GitHub Actions.
 
 ## Install
@@ -29,7 +34,31 @@ treepolo-mlb init
 
 `init` creates `config.json` and the local database under `data/`. The `data/` directory is intentionally gitignored; Statcast data should not be committed to Git.
 
-## Commands
+## Local frontend
+
+Start the frontend with:
+
+```bash
+treepolo-mlb ui
+```
+
+By default it binds only to `127.0.0.1:8765` and opens the default browser. The frontend and its API therefore stay local to the machine unless a different host is explicitly supplied.
+
+Optional examples:
+
+```bash
+# Use another local port
+treepolo-mlb ui --port 9000
+
+# Start without opening the browser automatically
+treepolo-mlb ui --no-browser
+```
+
+The frontend keeps Chinese and English visible together rather than providing a language switch. It exposes user-meaningful analysis concepts while keeping low-level execution concepts such as SQL joins and window implementation details out of the interface. Current results are deliberately shown as tables only.
+
+If Auto Update is enabled, the existing scheduler logic runs while the UI service is running. For a machine-level recurring schedule independent of the UI process, use the scheduler command with Windows Task Scheduler, cron, a service, or an equivalent wrapper.
+
+## Data commands
 
 ```bash
 # Full historical import (default 2015-01-01 through today)
