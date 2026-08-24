@@ -154,6 +154,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/meta":
                 self._json(HTTPStatus.OK, self.services.analysis.meta())
                 return
+            if path == "/api/data/backfill-progress":
+                self._json(HTTPStatus.OK, {"progress": get_sync_progress("backfill")})
+                return
             if path == "/api/data/status":
                 self._json(HTTPStatus.OK, self.services.status())
                 return
