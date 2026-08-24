@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>treepolo MLB Data Analytics</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="desktop-shell">
+    <main class="app-window" role="application" aria-label="treepolo MLB Data Analytics">
+      <header class="title-bar">
+        <div class="title-icon">⚾</div>
+        <div class="title-text">treepolo MLB Data Analytics</div>
+        <div class="window-buttons" aria-hidden="true">
+          <span>＿</span><span>□</span><span class="close">×</span>
+        </div>
+      </header>
+
+      <div class="menu-bar">
+        <span>檔案 File</span>
+        <span>分析 Analysis</span>
+        <span>資料 Data</span>
+        <span>說明 Help</span>
+      </div>
+
+      <div class="toolbar">
+        <button id="refresh-meta" class="tool-button">⟳ <span>重新整理 Refresh</span></button>
+        <div class="toolbar-separator"></div>
+        <span id="db-indicator" class="toolbar-status">資料庫 Database: —</span>
+      </div>
+
+      <div class="workspace">
+        <aside class="navigation-pane">
+          <div class="task-group">
+            <div class="task-group-title">資料 Data</div>
+            <button class="nav-item active" data-panel="data-panel">資料管理 Data Management</button>
+          </div>
+          <div class="task-group">
+            <div class="task-group-title">分析 Analysis</div>
+            <button class="nav-item" data-panel="basic-panel">基本分析 Basic Analysis</button>
+            <button class="nav-item" data-panel="sequence-panel">球序模式 Sequence Pattern</button>
+            <button class="nav-item" data-panel="follow-panel">後續事件 Follow-up Event</button>
+            <button class="nav-item" data-panel="arsenal-panel">球種武器庫 Pitch Arsenal</button>
+            <button class="nav-item" data-panel="role-panel">球種角色 Pitch Role</button>
+            <button class="nav-item" data-panel="temporal-panel">時間序列 Temporal Comparison</button>
+            <button class="nav-item" data-panel="percentile-panel">個人門檻 Individual Threshold</button>
+            <button class="nav-item" data-panel="cross-panel">層級比較 Level Comparison</button>
+            <button class="nav-item" data-panel="arsenal-change-panel">武器庫變化 Arsenal Change</button>
+          </div>
+        </aside>
+
+        <section class="main-pane">
+          <div id="data-panel" class="panel active-panel">
+            <div class="panel-heading">資料管理 Data Management</div>
+            <div class="panel-body">
+              <fieldset>
+                <legend>資料狀態 Data Status</legend>
+                <div id="data-status" class="status-grid"><div class="muted">讀取中 Loading…</div></div>
+                <div class="button-row">
+                  <button id="status-refresh">重新讀取狀態 Refresh Status</button>
+                  <button id="update-now">立即更新 Update Now</button>
+                  <label class="checkbox-line"><input id="auto-update" type="checkbox"> 自動更新 Auto Update</label>
+                </div>
+                <p class="hint">自動更新會在本介面服務運行期間依既有排程週期執行。 Auto Update follows the existing schedule while this interface service is running.</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>歷史回補 Historical Backfill</legend>
+                <div class="form-grid compact-grid">
+                  <label>開始日期 Start Date<input id="backfill-start" type="date"></label>
+                  <label>結束日期 End Date<input id="backfill-end" type="date"></label>
+                  <label class="checkbox-line"><input id="backfill-resume" type="checkbox" checked> 接續已完成區段 Resume Completed Chunks</label>
+                  <label class="checkbox-line"><input id="backfill-fail-fast" type="checkbox"> 首次失敗即停止 Stop on First Failure</label>
+                </div>
+                <div class="button-row">
+                  <button id="run-backfill">執行回補 Run Backfill</button>
+                  <button id="retry-failed">重試失敗區段 Retry Failed Chunks</button>
+                </div>
+              </fieldset>
+
+              <fieldset class="danger-zone">
+                <legend>重建資料庫 Rebuild Database</legend>
+                <p class="hint">重新從已保存的原始快照建立正規化資料庫。 Rebuild the normalized database from saved raw snapshots.</p>
+                <div class="inline-controls">
+                  <label>確認文字 Confirmation<input id="rebuild-confirmation" type="text" placeholder="REBUILD"></label>
+                  <button id="run-rebuild" class="danger-button">重建 Rebuild</button>
+                </div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="basic-panel" class="panel">
+            <div class="panel-heading">基本分析 Basic Analysis</div>
+            <div class="panel-body">
+              <div data-filter-box="basic"></div>
+              <fieldset>
+                <legend>分組與指標 Grouping & Metrics</legend>
+                <div class="form-grid">
+                  <label>分組欄位 Group By<select id="basic-group" multiple size="6" data-field-select></select></label>
+                  <div>
+                    <div class="subheading">統計指標 Metrics</div>
+                    <div id="basic-metrics" class="repeat-list"></div>
+                    <button type="button" data-add-metric>＋ 新增指標 Add Metric</button>
+                  </div>
+                  <label>排序欄位 Sort Field<select id="basic-sort" data-field-select data-allow-empty></select></label>
+                  <label>排序方向 Sort Direction<select id="basic-sort-direction"><option value="asc">由小到大 Ascending</option><option value="desc">由大到小 Descending</option></select></label>
+                  <label>最多回傳列數 Row Limit<input id="basic-limit" type="number" min="1" max="5000" value="200"></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="basic">執行分析 Run Analysis</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="sequence-panel" class="panel">
+            <div class="panel-heading">球序模式 Sequence Pattern</div>
+            <div class="panel-body">
+              <div data-filter-box="sequence"></div>
+              <fieldset>
+                <legend>事件條件 Event Condition</legend>
+                <div id="sequence-event" class="single-condition"></div>
+                <div class="form-grid four-cols">
+                  <label>選取第幾次事件 Select Occurrence<input id="sequence-occurrence" type="number" min="1" value="1"></label>
+                  <label>打席內精確出現次數 Exact Count<input id="sequence-exact" type="number" min="1" placeholder="不限 Any"></label>
+                  <label>排列關係 Arrangement<select id="sequence-arrangement"><option value="any">不限 Any</option><option value="consecutive">全部連續 All Consecutive</option><option value="none_adjacent">完全不相鄰 None Adjacent</option></select></label>
+                  <label class="checkbox-line"><input id="sequence-last" type="checkbox"> 最後一球也必須符合 Final Pitch Must Match</label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="sequence_pattern">執行分析 Run Analysis</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="follow-panel" class="panel">
+            <div class="panel-heading">後續事件 Follow-up Event</div>
+            <div class="panel-body">
+              <div data-filter-box="follow"></div>
+              <fieldset>
+                <legend>事件設定 Event Setup</legend>
+                <div class="three-condition-grid">
+                  <div><div class="subheading">起始事件 Anchor Event</div><div id="follow-anchor" class="single-condition"></div></div>
+                  <div><div class="subheading">目標事件 Target Event</div><div id="follow-target" class="single-condition"></div></div>
+                  <div><div class="subheading">中間是否出現 Between Event</div><div id="follow-between" class="single-condition"></div></div>
+                </div>
+                <label class="short-label">最多間隔球數 Maximum Row Gap<input id="follow-gap" type="number" min="1" value="3"></label>
+                <div class="button-row"><button class="primary" data-run="follow_event">執行分析 Run Analysis</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="arsenal-panel" class="panel">
+            <div class="panel-heading">球種武器庫 Pitch Arsenal</div>
+            <div class="panel-body">
+              <div data-filter-box="arsenal"></div>
+              <fieldset>
+                <legend>武器庫定義 Arsenal Definition</legend>
+                <div class="form-grid">
+                  <label>分析個體 Entity Fields<select id="arsenal-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>納入武器庫最低使用率 Minimum Usage<input id="arsenal-min-usage" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+                  <label>並列處理 Tie Handling<select id="arsenal-tie"><option value="dense_rank">保留並列 Keep Ties</option><option value="row_number">固定選出唯一順位 Pick One Deterministically</option></select></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="arsenal">建立武器庫 Build Arsenal</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="role-panel" class="panel">
+            <div class="panel-heading">球種角色 Pitch Role</div>
+            <div class="panel-body">
+              <div data-filter-box="role"></div>
+              <fieldset>
+                <legend>相對角色選擇 Relative Role Selection</legend>
+                <div class="form-grid">
+                  <label>分析個體 Entity Fields<select id="role-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>排名依據 Ranking Basis<select id="role-metric-kind"><option value="usage_rate">球種使用率 Pitch Usage Rate</option><option value="field_metric">指定資料指標 Selected Data Metric</option></select></label>
+                  <label>資料欄位 Data Field<select id="role-value-field" data-field-select data-preselect="release_speed"></select></label>
+                  <label>統計方式 Aggregation<select id="role-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
+                  <label>選取順位 Select Rank<input id="role-rank" type="number" min="1" value="1"></label>
+                  <label>方向 Direction<select id="role-direction"><option value="desc">數值最高 Highest</option><option value="asc">數值最低 Lowest</option></select></label>
+                  <label>排除球種 Exclude Pitch Types<input id="role-exclude" type="text" placeholder="例如 Example: FF, SI"></label>
+                  <label>並列處理 Tie Handling<select id="role-tie"><option value="dense_rank">保留並列 Keep Ties</option><option value="row_number">固定選出唯一順位 Pick One Deterministically</option></select></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="pitch_role">選取球種角色 Select Pitch Role</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="temporal-panel" class="panel">
+            <div class="panel-heading">時間序列比較 Temporal Comparison</div>
+            <div class="panel-body">
+              <div data-filter-box="temporal"></div>
+              <fieldset>
+                <legend>前後期比較 Previous / Next Comparison</legend>
+                <div class="form-grid">
+                  <label>分析個體 Entity Fields<select id="temporal-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>時間單位欄位 Period Field<select id="temporal-period" data-field-select data-preselect="game_pk"></select></label>
+                  <label>資料欄位 Data Field<select id="temporal-value" data-field-select data-preselect="release_speed"></select></label>
+                  <label>統計方式 Aggregation<select id="temporal-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
+                  <label>比較方向 Comparison Direction<select id="temporal-direction"><option value="previous">前一期 Previous</option><option value="next">後一期 Next</option></select></label>
+                  <label>間隔期數 Period Offset<input id="temporal-offset" type="number" min="1" value="1"></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="temporal">執行比較 Run Comparison</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="percentile-panel" class="panel">
+            <div class="panel-heading">個人門檻 Individual Percentile Threshold</div>
+            <div class="panel-body">
+              <div data-filter-box="percentile"></div>
+              <fieldset>
+                <legend>每個個體自己的門檻 Per-Entity Threshold</legend>
+                <div class="form-grid">
+                  <label>分析個體 Entity Fields<select id="percentile-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>資料欄位 Data Field<select id="percentile-value" data-field-select data-preselect="release_speed"></select></label>
+                  <label>百分位門檻 Percentile Threshold<input id="percentile-threshold" type="number" min="0" max="100" step="1" value="80"></label>
+                  <label>保留方向 Keep Side<select id="percentile-side"><option value="high">高於或等於門檻 At or Above</option><option value="low">低於或等於門檻 At or Below</option></select></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="percentile">套用門檻 Apply Threshold</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="cross-panel" class="panel">
+            <div class="panel-heading">層級比較 Level Comparison</div>
+            <div class="panel-body">
+              <div data-filter-box="cross"></div>
+              <fieldset>
+                <legend>分析單位對基準 Unit vs Baseline</legend>
+                <div class="form-grid">
+                  <label>分析單位欄位 Unit Fields<select id="cross-unit" multiple size="6" data-field-select data-preselect="pitcher,game_pk"></select></label>
+                  <label>基準欄位 Baseline Fields<select id="cross-baseline" multiple size="6" data-field-select data-preselect="pitcher"></select></label>
+                  <label>資料欄位 Data Field<select id="cross-value" data-field-select data-preselect="release_speed"></select></label>
+                  <label>統計方式 Aggregation<select id="cross-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
+                </div>
+                <p class="hint">基準欄位必須包含在分析單位欄位中。 Baseline fields must be a subset of unit fields.</p>
+                <div class="button-row"><button class="primary" data-run="cross_level">執行比較 Run Comparison</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <div id="arsenal-change-panel" class="panel">
+            <div class="panel-heading">武器庫變化 Arsenal Change</div>
+            <div class="panel-body">
+              <div data-filter-box="arsenal-change"></div>
+              <fieldset>
+                <legend>期間比較 Period Comparison</legend>
+                <div class="form-grid">
+                  <label>分析個體 Entity Fields<select id="change-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>最低使用率 Minimum Usage<input id="change-min-usage" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+                  <label>期間 A 開始 Period A Start<input id="change-a-start" type="date"></label>
+                  <label>期間 A 結束 Period A End<input id="change-a-end" type="date"></label>
+                  <label>期間 B 開始 Period B Start<input id="change-b-start" type="date"></label>
+                  <label>期間 B 結束 Period B End<input id="change-b-end" type="date"></label>
+                </div>
+                <div class="button-row"><button class="primary" data-run="arsenal_change">比較武器庫 Compare Arsenal</button></div>
+              </fieldset>
+            </div>
+          </div>
+
+          <section id="result-window" class="result-window">
+            <div class="result-title-bar">
+              <span>分析結果 Analysis Result</span>
+              <span id="result-summary">尚未執行 Not Run</span>
+            </div>
+            <div id="result-content" class="result-content">
+              <div class="empty-state">請從上方設定分析條件後執行。 Configure an analysis above and run it.</div>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      <footer class="status-bar">
+        <span id="status-message">就緒 Ready</span>
+        <span id="status-clock"></span>
+      </footer>
+    </main>
+  </div>
+
+  <template id="filter-box-template">
+    <fieldset class="filter-box">
+      <legend>共同篩選條件 Common Filters</legend>
+      <div class="repeat-list filter-list"></div>
+      <button type="button" class="add-filter">＋ 新增篩選條件 Add Filter</button>
+    </fieldset>
+  </template>
+
+  <template id="condition-template">
+    <div class="condition-row">
+      <select class="condition-field" data-field-select></select>
+      <select class="condition-op">
+        <option value="eq">等於 Equals</option>
+        <option value="ne">不等於 Not Equal</option>
+        <option value="gt">大於 Greater Than</option>
+        <option value="ge">大於等於 At Least</option>
+        <option value="lt">小於 Less Than</option>
+        <option value="le">小於等於 At Most</option>
+        <option value="in">包含於清單 In List</option>
+        <option value="not_in">不包含於清單 Not In List</option>
+        <option value="is_null">沒有資料 Is Null</option>
+        <option value="not_null">有資料 Is Not Null</option>
+      </select>
+      <input class="condition-value" type="text" placeholder="數值 Value">
+      <button type="button" class="remove-row" title="移除 Remove">×</button>
+    </div>
+  </template>
+
+  <template id="metric-template">
+    <div class="metric-row">
+      <select class="metric-function">
+        <option value="count">筆數 Count</option>
+        <option value="avg">平均 Average</option>
+        <option value="max">最大 Maximum</option>
+        <option value="min">最小 Minimum</option>
+        <option value="sum">總和 Sum</option>
+      </select>
+      <select class="metric-field" data-field-select data-allow-empty></select>
+      <label class="checkbox-line mini"><input class="metric-distinct" type="checkbox"> 不重複 Distinct</label>
+      <button type="button" class="remove-row" title="移除 Remove">×</button>
+    </div>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>
