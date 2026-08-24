@@ -116,13 +116,16 @@ def test_static_ui_is_bilingual_chart_free_and_aero_glass():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    aurora = (STATIC_DIR / "vista-aurora.svg").read_text(encoding="utf-8")
     assert "基本分析 Basic Analysis" in html
     assert "球種武器庫 Pitch Arsenal" in html
     assert "Windows XP/7" not in html
     assert "<canvas" not in html.lower()
     assert "new Chart" not in js
     assert "title-bar" in css and "window-buttons" in css
-    assert "--aero-glass" in css
-    assert "backdrop-filter: blur" in css
+    assert "vista-aurora.svg" in css
+    assert "backdrop-filter:blur(16px)" in css
+    assert "brightness(.86)" in css
+    assert "#01274f" in aurora and "#e1fcff" in aurora
     assert "--xp-blue" not in css
     assert "#ece9d8" not in css
