@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from .config import AppConfig
 from .raw import RawArchive
 from .storage import StatcastStore
+from .sync_progress import complete_chunk, finish_sync, set_current_chunk, start_sync
 
 
 @dataclass(slots=True)
@@ -38,13 +39,17 @@ class SyncEngine:
         if end < start:
             raise ValueError("end date must be >= start date")
         size = chunk_days or self.config.backfill_chunk_days
+        ranges = list(chunk_ranges(start, end, size))
         run_id = self.store.start_run(kind, start.isoformat(), end.isoformat())
+        start_sync(kind, run_id, start.isoformat(), end.isoformat(), len(ranges))
         total_received = total_inserted = total_updated = chunks = skipped = 0
         overall_status = "success"
         try:
-            for cstart, cend in chunk_ranges(start, end, size):
+            for cstart, cend in ranges:
+                set_current_chunk(kind, cstart.isoformat(), cend.isoformat())
                 if resume and self.store.has_successful_chunk(cstart.isoformat(), cend.isoformat()):
                     skipped += 1
+                    complete_chunk(kind, status="skipped")
                     continue
                 chunks += 1
                 try:
@@ -56,14 +61,18 @@ class SyncEngine:
                     total_received += stats.received
                     total_inserted += stats.inserted
                     total_updated += stats.updated
+                    complete_chunk(kind, status="success", rows_received=stats.received)
                 except Exception as exc:
                     overall_status = "partial" if continue_on_error else "failed"
                     self.store.record_chunk(run_id, cstart.isoformat(), cend.isoformat(), "failed", None, error=str(exc))
+                    complete_chunk(kind, status="failed")
                     if not continue_on_error:
                         raise
             self.store.finish_run(run_id, overall_status)
+            finish_sync(kind, overall_status)
         except Exception as exc:
             self.store.finish_run(run_id, "failed", str(exc))
+            finish_sync(kind, "failed")
             raise
         return SyncResult(run_id, overall_status, chunks, total_received, total_inserted, total_updated, skipped)
 

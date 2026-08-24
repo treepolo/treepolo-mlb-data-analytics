@@ -17,9 +17,11 @@ from .raw import RawArchive
 from .savant import SavantClient
 from .storage import StatcastStore
 from .sync import SyncEngine
+from .sync_progress import get_sync_progress
 from .web_analysis import AnalysisFacade, RequestError, _jsonable
 
 STATIC_DIR = Path(__file__).with_name("web_static")
+
 
 class AppServices:
     def __init__(self, config: AppConfig):
@@ -69,6 +71,7 @@ class AppServices:
             ) == "true"
         verify["auto_update_enabled"] = enabled
         verify["database_path"] = str(self.config.database_path)
+        verify["backfill_progress"] = get_sync_progress("backfill")
         return verify
 
     def data_action(self, action: str, payload: dict[str, Any]) -> Any:
@@ -151,6 +154,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/meta":
                 self._json(HTTPStatus.OK, self.services.analysis.meta())
                 return
+            if path == "/api/data/backfill-progress":
+                self._json(HTTPStatus.OK, {"progress": get_sync_progress("backfill")})
+                return
             if path == "/api/data/status":
                 self._json(HTTPStatus.OK, self.services.status())
                 return
@@ -191,6 +197,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         body = candidate.read_bytes()
+        if relative == "index.html":
+            body = body.replace(
+                b"</body>",
+                b'<script src="/backfill-progress.js"></script>\n</body>',
+            )
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type + ("; charset=utf-8" if content_type.startswith("text/") else ""))
