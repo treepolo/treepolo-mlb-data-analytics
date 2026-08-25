@@ -113,6 +113,16 @@ class SQLCompiler:
             pieces.append(sql + (" DESC" if item.descending else " ASC")); params.extend(ep)
         return pieces, params
 
+    @staticmethod
+    def _frame_bound(offset: int | None, *, start: bool) -> str:
+        if offset is None:
+            return "UNBOUNDED PRECEDING" if start else "UNBOUNDED FOLLOWING"
+        if offset < 0:
+            return f"{abs(offset)} PRECEDING"
+        if offset > 0:
+            return f"{offset} FOLLOWING"
+        return "CURRENT ROW"
+
     def _window_field(self, field: WindowField) -> tuple[str, list[object]]:
         fn = field.function.upper(); params: list[object] = []; args: list[str] = []
         if field.function in {"row_number", "rank", "dense_rank", "percent_rank", "cume_dist"}:
@@ -136,6 +146,10 @@ class SQLCompiler:
         if field.order_by:
             order, op = self._order(field.order_by); params.extend(op)
             parts.append("ORDER BY " + ", ".join(order))
+        if field.frame is not None:
+            start = self._frame_bound(field.frame.start, start=True)
+            end = self._frame_bound(field.frame.end, start=False)
+            parts.append(f"ROWS BETWEEN {start} AND {end}")
         return f"{fn}({', '.join(args)}) OVER ({' '.join(parts)}) AS {quote_ident(field.alias)}", params
 
     def _prepared_ordered_stream(self, child: str, child_params: list[object], partition_by, order_by) -> tuple[str, list[str], list[object]]:
