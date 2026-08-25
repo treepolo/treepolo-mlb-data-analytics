@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--resume", action="store_true", help="Skip exact chunks already completed successfully")
     u = sub.add_parser("update"); u.add_argument("--through", default=None)
     sub.add_parser("verify"); sub.add_parser("status"); sub.add_parser("retry-failed")
+    sub.add_parser("optimize", help="Build/refresh SQLite analysis indexes and planner statistics")
+    sub.add_parser("analytics-sync", help="Build or refresh the persistent DuckDB analytical mirror")
+    bench = sub.add_parser("benchmark", help="Benchmark representative analysis on the local full database")
+    bench.add_argument("--year", type=int, default=2026)
+    bench.add_argument("--runs", type=int, default=3)
+    bench.add_argument("--backend", choices=("sqlite", "duckdb", "both"), default="both")
     a = sub.add_parser("auto-update")
     g = a.add_mutually_exclusive_group(required=True); g.add_argument("--enable", action="store_true"); g.add_argument("--disable", action="store_true")
     s = sub.add_parser("scheduler"); s.add_argument("--once", action="store_true")
@@ -44,6 +50,13 @@ def _engine(config: AppConfig):
     return store, SyncEngine(config, store, client, archive)
 
 
+def _remove_analytics_db(config: AppConfig) -> None:
+    for suffix in ("", ".wal"):
+        path = Path(str(config.analytics_database_path) + suffix)
+        if path.exists():
+            path.unlink()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
@@ -58,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
         from .webapp import serve
         serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
         return 0
+    if args.command == "analytics-sync":
+        from .duckdb_mirror import DuckDBMirror
+        result = DuckDBMirror(config.database_path, config.analytics_database_path).ensure()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "benchmark":
+        from .benchmark import run_benchmark
+        print(json.dumps(run_benchmark(config, year=args.year, runs=max(1, args.runs), backend=args.backend), indent=2, ensure_ascii=False))
+        return 0
+
     store, engine = _engine(config)
     try:
         if args.command == "backfill":
@@ -74,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             prepare_fast_status(config.database_path)
             print(json.dumps(read_fast_status(config.database_path), indent=2, ensure_ascii=False))
+        elif args.command == "optimize":
+            store.optimize()
+            print("SQLite analysis indexes and statistics optimized")
         elif args.command == "auto-update":
             value = "true" if args.enable else "false"
             store.set_setting("auto_update_enabled", value)
@@ -87,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             for suffix in ("", "-wal", "-shm"):
                 p = Path(str(db) + suffix)
                 if p.exists(): p.unlink()
+            _remove_analytics_db(config)
             store = StatcastStore(db)
             prepare_fast_status(db)
             engine = SyncEngine(config, store, engine.fetcher, engine.archive)
