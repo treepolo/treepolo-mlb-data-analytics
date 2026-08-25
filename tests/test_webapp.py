@@ -72,7 +72,7 @@ def test_basic_statistics_distinct_nulls_and_metric_sorting(tmp_path):
             {"function": "stddev_pop", "field": "release_speed"},
             {"function": "stddev_samp", "field": "release_speed"},
         ],
-        "sort": {"field": "avg_release_speed", "descending": True},
+        "result_sort": [{"field": "avg_release_speed", "descending": True}],
         "limit": 20,
     })
     assert [row["pitch_type"] for row in result["rows"]] == ["FF", "CH", "SL", "ST"]
@@ -89,7 +89,7 @@ def test_basic_statistics_distinct_nulls_and_metric_sorting(tmp_path):
             {"function": "median", "field": "release_speed", "distinct": True},
             {"function": "stddev_pop", "field": "release_speed", "distinct": True},
         ],
-        "sort": {"field": "median_release_speed", "descending": True},
+        "result_sort": [{"field": "median_release_speed", "descending": True}],
         "limit": 20,
     })
     assert distinct["rows"][0]["median_release_speed"] == pytest.approx(95.0)
@@ -102,7 +102,7 @@ def test_basic_statistics_distinct_nulls_and_metric_sorting(tmp_path):
             {"function": "avg", "field": "release_speed"},
             {"function": "avg", "field": "release_speed"},
         ],
-        "sort": {"field": "avg_release_speed_2", "descending": True},
+        "result_sort": [{"field": "avg_release_speed_2", "descending": True}],
         "limit": 1,
     })
     assert duplicate_alias["columns"] == ["pitch_type", "avg_release_speed", "avg_release_speed_2"]
@@ -170,18 +170,26 @@ def test_arsenal_change_and_temporal(tmp_path):
     assert any(row["pitcher"] == 20 and row["reference_value"] is not None for row in temporal["rows"])
 
 
-def test_static_ui_is_bilingual_and_chart_free():
+def test_static_ui_uses_shared_components_and_stays_chart_free():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    ordering = (STATIC_DIR / "analysis-controls.js").read_text(encoding="utf-8")
+    progress = (STATIC_DIR / "analysis-progress.js").read_text(encoding="utf-8")
     assert "基本分析 Basic Analysis" in html
     assert "球種武器庫 Pitch Arsenal" in html
     assert "Windows XP/7" not in html
     assert "<canvas" not in html.lower()
     assert "new Chart" not in js
-    assert "title-bar" in css and "window-buttons" in css
-    assert "field-checklist" in js and "field-check-item" in css
+    assert "field-checklist" in css and "field-check-item" in css
     assert "中位數 Median" in js
     assert "母體標準差 Population SD" in js
     assert "樣本標準差 Sample SD" in js
-    assert "metricOutputSpecs" in js
+    assert "renderBasicGroupChecklist" not in js
+    assert all(mode in ordering for mode in (
+        "basic", "sequence_pattern", "follow_event", "arsenal", "pitch_role",
+        "temporal", "percentile", "cross_level", "arsenal_change",
+    ))
+    assert "結果排序 Result Ordering" in ordering
+    assert "/api/analysis/progress" in progress
+    assert "分析進度 Analysis Progress" in progress
