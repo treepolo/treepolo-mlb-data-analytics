@@ -9,8 +9,8 @@ from .model import (
     WindowField, WindowFrame, output_grain, validate,
 )
 from .numerical import (
-    BootstrapSpec, ClusteringSpec, NumericalExecutor, NumericalSection,
-    NumericalTable, RegressionSpec,
+    BootstrapSpec, ClusteringOutput, ClusteringSpec, NumericalExecutor,
+    NumericalSection, NumericalTable, RegressionSpec,
 )
 from .semantics import SemanticRegistry, default_registry
 from .workflow import (
@@ -20,12 +20,13 @@ from .workflow import (
 
 __all__ = [
     "Aggregate", "AggregateStage", "AnalysisEngine", "AnalysisResult", "Binary", "Boolean",
-    "BootstrapSpec", "Case", "ClusteringSpec", "CollectSet", "Column", "DerivedStage", "EventPattern",
-    "ExecutionPlan", "ExecutionPlanner", "Filter", "FilterStage", "FollowEvent", "GAME_GRAIN", "Grain",
-    "InList", "IsNull", "Join", "Limit", "Literal", "Metric", "NamedExpr", "Not", "NthStage",
-    "NumericalExecutor", "NumericalSection", "NumericalTable", "OffsetStage", "OrderKey", "PITCH_GRAIN",
-    "PLATE_APPEARANCE_GRAIN", "Project", "ProjectStage", "Rank", "RankStage", "RegressionSpec",
-    "RollingStage", "SCALAR_GRAIN", "SemanticRegistry", "SetOperation", "Sort", "SortStage", "Source",
+    "BootstrapSpec", "Case", "ClusteringOutput", "ClusteringSpec", "CollectSet", "Column",
+    "DerivedStage", "EventPattern", "ExecutionPlan", "ExecutionPlanner", "Filter", "FilterStage",
+    "FollowEvent", "GAME_GRAIN", "Grain", "InList", "IsNull", "Join", "Limit", "Literal",
+    "Metric", "NamedExpr", "Not", "NthStage", "NumericalExecutor", "NumericalSection",
+    "NumericalTable", "OffsetStage", "OrderKey", "PITCH_GRAIN", "PLATE_APPEARANCE_GRAIN",
+    "Project", "ProjectStage", "Rank", "RankStage", "RegressionSpec", "RollingStage",
+    "SCALAR_GRAIN", "SemanticRegistry", "SetOperation", "Sort", "SortStage", "Source",
     "TrendStage", "Window", "WindowField", "WindowFrame", "WorkflowPlanner", "WorkflowState",
     "arsenal_table", "default_registry", "empirical_percentile", "node_from_dict", "node_to_dict",
     "output_grain", "pitch_usage", "rank_pitch_roles", "validate",
