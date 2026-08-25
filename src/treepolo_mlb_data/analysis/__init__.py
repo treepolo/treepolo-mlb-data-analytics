@@ -14,13 +14,13 @@ from .numerical import (
 )
 from .semantics import SemanticRegistry, default_registry
 from .workflow import (
-    AggregateStage, FilterStage, NthStage, OffsetStage, ProjectStage, RankStage,
-    RollingStage, SortStage, TrendStage, WorkflowPlanner, WorkflowState,
+    AggregateStage, DerivedStage, FilterStage, NthStage, OffsetStage, ProjectStage,
+    RankStage, RollingStage, SortStage, TrendStage, WorkflowPlanner, WorkflowState,
 )
 
 __all__ = [
     "Aggregate", "AggregateStage", "AnalysisEngine", "AnalysisResult", "Binary", "Boolean",
-    "BootstrapSpec", "Case", "ClusteringSpec", "CollectSet", "Column", "EventPattern",
+    "BootstrapSpec", "Case", "ClusteringSpec", "CollectSet", "Column", "DerivedStage", "EventPattern",
     "ExecutionPlan", "ExecutionPlanner", "Filter", "FilterStage", "FollowEvent", "GAME_GRAIN", "Grain",
     "InList", "IsNull", "Join", "Limit", "Literal", "Metric", "NamedExpr", "Not", "NthStage",
     "NumericalExecutor", "NumericalSection", "NumericalTable", "OffsetStage", "OrderKey", "PITCH_GRAIN",
