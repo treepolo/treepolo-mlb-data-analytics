@@ -77,7 +77,14 @@ def update_analysis_job(
         if stage is not None:
             job.stage = stage
         if not preserve_percentage:
-            job.percentage = None if percentage is None else max(0.0, min(float(percentage), 100.0))
+            if percentage is None:
+                # Keep an existing determinate percentage when a fallback can
+                # only report indeterminate work; never make the bar go backward.
+                if job.percentage is None:
+                    job.percentage = None
+            else:
+                value = max(0.0, min(float(percentage), 100.0))
+                job.percentage = value if job.percentage is None else max(job.percentage, value)
         if detail is not None:
             job.detail = detail
         if backend is not None:
@@ -99,7 +106,7 @@ def finish_analysis_job(job_id: str, *, backend: str | None = None, error: str |
         job._finished_monotonic = time.monotonic()
         if error:
             job.detail = error
-        elif not job.detail:
+        else:
             job.detail = "Analysis complete"
 
 
