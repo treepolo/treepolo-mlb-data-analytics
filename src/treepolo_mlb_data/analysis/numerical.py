@@ -1,0 +1,428 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import sqrt
+from typing import Any, Callable, Literal as TypingLiteral
+
+import numpy as np
+from scipy import stats
+from sklearn.cluster import KMeans
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, log_loss
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+
+from .model import Grain
+
+ProgressCallback = Callable[[str, float | None, str | None], None]
+
+
+@dataclass(frozen=True, slots=True)
+class NumericalTable:
+    columns: tuple[str, ...]
+    rows: tuple[dict[str, Any], ...]
+    grain: Grain
+
+    def __post_init__(self) -> None:
+        if not self.columns or len(set(self.columns)) != len(self.columns):
+            raise ValueError("numerical input requires unique columns")
+        missing = [key for key in self.grain.keys if key not in self.columns]
+        if missing:
+            raise ValueError(f"numerical input must retain grain keys: {missing}")
+
+
+@dataclass(frozen=True, slots=True)
+class NumericalSection:
+    title: str
+    columns: tuple[str, ...]
+    rows: tuple[dict[str, Any], ...]
+    grain: Grain
+    backend: str = "numerical"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "columns": list(self.columns),
+            "rows": [dict(row) for row in self.rows],
+            "grain": {"keys": list(self.grain.keys), "label": self.grain.label},
+            "row_count": len(self.rows),
+            "backend": self.backend,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ClusteringSpec:
+    features: tuple[str, ...]
+    method: TypingLiteral["kmeans", "gmm"] = "kmeans"
+    clusters: int = 3
+    standardize: bool = True
+    seed: int = 42
+    id_fields: tuple[str, ...] = ()
+    assignment_limit: int = 5000
+
+
+@dataclass(frozen=True, slots=True)
+class RegressionSpec:
+    dependent: str
+    independent: tuple[str, ...]
+    model: TypingLiteral["linear", "logistic"] = "linear"
+    standardize_predictors: bool = False
+    confidence: float = 0.95
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapSpec:
+    value_field: str
+    resample_unit_fields: tuple[str, ...]
+    statistic: TypingLiteral["mean", "median", "proportion"] = "mean"
+    group_field: str | None = None
+    group_a: Any = None
+    group_b: Any = None
+    success_value: Any = 1
+    iterations: int = 2000
+    confidence: float = 0.95
+    seed: int = 42
+
+
+def _notify(callback: ProgressCallback | None, percentage: float | None, detail: str) -> None:
+    if callback is not None:
+        callback("numerical_compute", percentage, detail)
+
+
+def _finite_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return float(value) if isinstance(value, bool) else None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _numeric_rows(table: NumericalTable, fields: tuple[str, ...]) -> tuple[list[dict[str, Any]], np.ndarray]:
+    rows: list[dict[str, Any]] = []
+    matrix: list[list[float]] = []
+    for row in table.rows:
+        values: list[float] = []
+        valid = True
+        for field in fields:
+            number = _finite_number(row.get(field))
+            if number is None:
+                valid = False
+                break
+            values.append(number)
+        if valid:
+            rows.append(row)
+            matrix.append(values)
+    if not matrix:
+        raise ValueError("no complete numeric rows remain after removing NULL/non-numeric values")
+    return rows, np.asarray(matrix, dtype=float)
+
+
+def _statistic(values: np.ndarray, kind: str, success_value: Any) -> float:
+    if values.size == 0:
+        return float("nan")
+    if kind == "mean":
+        return float(np.mean(values.astype(float)))
+    if kind == "median":
+        return float(np.median(values.astype(float)))
+    if kind == "proportion":
+        return float(np.mean(values == success_value))
+    raise ValueError(f"unsupported bootstrap statistic: {kind}")
+
+
+class NumericalExecutor:
+    """Strict numerical execution boundary consuming a typed relational result."""
+
+    def clustering(
+        self,
+        table: NumericalTable,
+        spec: ClusteringSpec,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        if not spec.features:
+            raise ValueError("clustering requires at least one feature")
+        if not 2 <= spec.clusters <= 50:
+            raise ValueError("cluster count must be between 2 and 50")
+        missing = [field for field in spec.features + spec.id_fields if field not in table.columns]
+        if missing:
+            raise ValueError(f"clustering fields are missing from input: {missing}")
+        rows, raw = _numeric_rows(table, spec.features)
+        if len(rows) < spec.clusters:
+            raise ValueError("cluster count cannot exceed complete input rows")
+        _notify(progress, 25.0, f"Preparing {len(rows)} complete rows for clustering")
+        scaler = StandardScaler() if spec.standardize else None
+        matrix = scaler.fit_transform(raw) if scaler is not None else raw
+        if spec.method == "kmeans":
+            model = KMeans(n_clusters=spec.clusters, random_state=spec.seed, n_init=10)
+            labels = model.fit_predict(matrix)
+            centers = model.cluster_centers_
+            probabilities = None
+        elif spec.method == "gmm":
+            model = GaussianMixture(n_components=spec.clusters, random_state=spec.seed)
+            labels = model.fit_predict(matrix)
+            centers = model.means_
+            probabilities = np.max(model.predict_proba(matrix), axis=1)
+        else:
+            raise ValueError(f"unsupported clustering method: {spec.method}")
+        if scaler is not None:
+            centers = scaler.inverse_transform(centers)
+        _notify(progress, 82.0, "Building cluster summaries and assignments")
+
+        summary_rows: list[dict[str, Any]] = []
+        for cluster in range(spec.clusters):
+            mask = labels == cluster
+            subset = raw[mask]
+            row: dict[str, Any] = {"cluster": int(cluster), "sample_size": int(mask.sum())}
+            for index, field in enumerate(spec.features):
+                row[f"center_{field}"] = float(centers[cluster, index])
+                row[f"mean_{field}"] = float(np.mean(subset[:, index])) if subset.size else None
+                row[f"std_{field}"] = float(np.std(subset[:, index], ddof=0)) if subset.size else None
+            summary_rows.append(row)
+
+        assignment_rows: list[dict[str, Any]] = []
+        limit = max(0, int(spec.assignment_limit))
+        for index, source in enumerate(rows[:limit] if limit else []):
+            row = {field: source.get(field) for field in spec.id_fields}
+            row.update({field: float(raw[index, feature_index]) for feature_index, field in enumerate(spec.features)})
+            row["cluster"] = int(labels[index])
+            if probabilities is not None:
+                row["cluster_probability"] = float(probabilities[index])
+            assignment_rows.append(row)
+
+        summary_columns = ("cluster", "sample_size") + tuple(
+            name for field in spec.features for name in (f"center_{field}", f"mean_{field}", f"std_{field}")
+        )
+        assignment_columns = spec.id_fields + spec.features + ("cluster",) + (("cluster_probability",) if probabilities is not None else ())
+        sections = [
+            NumericalSection("分群摘要 Cluster Summary", summary_columns, tuple(summary_rows), Grain(("cluster",), "cluster")),
+            NumericalSection("分群指派 Cluster Assignments", assignment_columns, tuple(assignment_rows), table.grain),
+        ]
+        _notify(progress, 98.0, "Clustering complete")
+        return {
+            "sections": [section.to_dict() for section in sections],
+            "backend": "numerical",
+            "numerical": {
+                "method": spec.method,
+                "features": list(spec.features),
+                "standardized": spec.standardize,
+                "seed": spec.seed,
+                "input_rows": len(table.rows),
+                "complete_rows": len(rows),
+                "assignment_rows_returned": len(assignment_rows),
+            },
+        }
+
+    def regression(
+        self,
+        table: NumericalTable,
+        spec: RegressionSpec,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        if not spec.independent:
+            raise ValueError("regression requires at least one independent variable")
+        if not 0.5 < spec.confidence < 1:
+            raise ValueError("regression confidence must be between 0.5 and 1")
+        fields = spec.independent + (spec.dependent,)
+        missing = [field for field in fields if field not in table.columns]
+        if missing:
+            raise ValueError(f"regression fields are missing from input: {missing}")
+        rows, matrix = _numeric_rows(table, fields)
+        x = matrix[:, : len(spec.independent)]
+        y = matrix[:, -1]
+        if len(rows) <= len(spec.independent) + 1:
+            raise ValueError("regression requires more complete rows than fitted parameters")
+        scaler = StandardScaler() if spec.standardize_predictors else None
+        x_fit = scaler.fit_transform(x) if scaler is not None else x
+        _notify(progress, 30.0, f"Fitting {spec.model} regression on {len(rows)} complete rows")
+
+        coefficient_rows: list[dict[str, Any]] = []
+        summary_rows: list[dict[str, Any]] = []
+        if spec.model == "linear":
+            design = np.column_stack([np.ones(len(x_fit)), x_fit])
+            beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
+            fitted = design @ beta
+            residuals = y - fitted
+            n = len(y); p = design.shape[1]
+            df = n - p
+            sse = float(np.sum(residuals ** 2))
+            sst = float(np.sum((y - np.mean(y)) ** 2))
+            r2 = 1.0 - sse / sst if sst > 0 else 0.0
+            rmse = sqrt(sse / n)
+            sigma2 = sse / df if df > 0 else float("nan")
+            covariance = sigma2 * np.linalg.pinv(design.T @ design)
+            standard_errors = np.sqrt(np.maximum(np.diag(covariance), 0.0))
+            alpha = 1.0 - spec.confidence
+            critical = float(stats.t.ppf(1 - alpha / 2, df)) if df > 0 else float("nan")
+            names = ("intercept",) + spec.independent
+            for index, name in enumerate(names):
+                estimate = float(beta[index]); se = float(standard_errors[index])
+                t_stat = estimate / se if se > 0 else None
+                p_value = float(2 * stats.t.sf(abs(t_stat), df)) if t_stat is not None and df > 0 else None
+                coefficient_rows.append({
+                    "term": name, "estimate": estimate, "std_error": se,
+                    "statistic": t_stat, "p_value": p_value,
+                    "ci_lower": estimate - critical * se if np.isfinite(critical) else None,
+                    "ci_upper": estimate + critical * se if np.isfinite(critical) else None,
+                })
+            summary_rows.append({
+                "model": "linear", "sample_size": n, "predictors": len(spec.independent),
+                "r_squared": r2, "rmse": rmse, "degrees_of_freedom": df,
+                "standardized_predictors": int(spec.standardize_predictors),
+            })
+            summary_columns = ("model", "sample_size", "predictors", "r_squared", "rmse", "degrees_of_freedom", "standardized_predictors")
+        elif spec.model == "logistic":
+            unique = np.unique(y)
+            if unique.size != 2:
+                raise ValueError("logistic regression requires a binary dependent variable")
+            model = LogisticRegression(max_iter=2000, random_state=42)
+            model.fit(x_fit, y)
+            predicted = model.predict(x_fit)
+            probabilities = model.predict_proba(x_fit)
+            classes = model.classes_
+            positive_index = 1
+            for name, estimate in zip(spec.independent, model.coef_[0]):
+                coefficient_rows.append({
+                    "term": name, "estimate": float(estimate), "std_error": None,
+                    "statistic": None, "p_value": None, "ci_lower": None, "ci_upper": None,
+                })
+            coefficient_rows.insert(0, {
+                "term": "intercept", "estimate": float(model.intercept_[0]), "std_error": None,
+                "statistic": None, "p_value": None, "ci_lower": None, "ci_upper": None,
+            })
+            summary_rows.append({
+                "model": "logistic", "sample_size": len(y), "predictors": len(spec.independent),
+                "accuracy": float(accuracy_score(y, predicted)),
+                "log_loss": float(log_loss(y, probabilities, labels=classes)),
+                "positive_class": float(classes[positive_index]),
+                "standardized_predictors": int(spec.standardize_predictors),
+            })
+            summary_columns = ("model", "sample_size", "predictors", "accuracy", "log_loss", "positive_class", "standardized_predictors")
+        else:
+            raise ValueError(f"unsupported regression model: {spec.model}")
+
+        _notify(progress, 96.0, "Regression complete")
+        coefficient_columns = ("term", "estimate", "std_error", "statistic", "p_value", "ci_lower", "ci_upper")
+        sections = [
+            NumericalSection("模型摘要 Model Summary", summary_columns, tuple(summary_rows), Grain((), "model")),
+            NumericalSection("迴歸係數 Coefficients", coefficient_columns, tuple(coefficient_rows), Grain(("term",), "coefficient")),
+        ]
+        return {
+            "sections": [section.to_dict() for section in sections],
+            "backend": "numerical",
+            "numerical": {
+                "method": spec.model,
+                "dependent": spec.dependent,
+                "independent": list(spec.independent),
+                "complete_rows": len(rows),
+                "confidence": spec.confidence,
+            },
+        }
+
+    def bootstrap(
+        self,
+        table: NumericalTable,
+        spec: BootstrapSpec,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        if not spec.resample_unit_fields:
+            raise ValueError("bootstrap requires explicit resample_unit_fields; do not assume pitch rows are independent")
+        if not 100 <= spec.iterations <= 100_000:
+            raise ValueError("bootstrap iterations must be between 100 and 100000")
+        if not 0.5 < spec.confidence < 1:
+            raise ValueError("bootstrap confidence must be between 0.5 and 1")
+        required = (spec.value_field,) + spec.resample_unit_fields + ((spec.group_field,) if spec.group_field else ())
+        missing = [field for field in required if field not in table.columns]
+        if missing:
+            raise ValueError(f"bootstrap fields are missing from input: {missing}")
+
+        usable: list[dict[str, Any]] = []
+        for row in table.rows:
+            value = row.get(spec.value_field)
+            if spec.statistic in {"mean", "median"} and _finite_number(value) is None:
+                continue
+            if any(row.get(field) is None for field in spec.resample_unit_fields):
+                continue
+            usable.append(row)
+        if not usable:
+            raise ValueError("bootstrap has no usable rows")
+
+        units: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for row in usable:
+            key = tuple(row.get(field) for field in spec.resample_unit_fields)
+            units.setdefault(key, []).append(row)
+        unit_values = list(units.values())
+        if len(unit_values) < 2:
+            raise ValueError("bootstrap requires at least two resampling units")
+
+        def calculate(rows: list[dict[str, Any]]) -> float:
+            if spec.group_field is None:
+                values = np.asarray([row.get(spec.value_field) for row in rows], dtype=object)
+                if spec.statistic in {"mean", "median"}:
+                    values = values.astype(float)
+                return _statistic(values, spec.statistic, spec.success_value)
+            a = [row.get(spec.value_field) for row in rows if row.get(spec.group_field) == spec.group_a]
+            b = [row.get(spec.value_field) for row in rows if row.get(spec.group_field) == spec.group_b]
+            if not a or not b:
+                return float("nan")
+            av = np.asarray(a, dtype=object); bv = np.asarray(b, dtype=object)
+            if spec.statistic in {"mean", "median"}:
+                av = av.astype(float); bv = bv.astype(float)
+            return _statistic(av, spec.statistic, spec.success_value) - _statistic(bv, spec.statistic, spec.success_value)
+
+        estimate = calculate(usable)
+        rng = np.random.default_rng(spec.seed)
+        distribution = np.empty(spec.iterations, dtype=float)
+        _notify(progress, 20.0, f"Resampling {len(unit_values)} explicit units")
+        notify_every = max(1, spec.iterations // 20)
+        for iteration in range(spec.iterations):
+            indices = rng.integers(0, len(unit_values), size=len(unit_values))
+            sampled: list[dict[str, Any]] = []
+            for index in indices:
+                sampled.extend(unit_values[int(index)])
+            distribution[iteration] = calculate(sampled)
+            if iteration % notify_every == 0:
+                _notify(progress, 20.0 + 70.0 * iteration / spec.iterations, f"Bootstrap iteration {iteration + 1}/{spec.iterations}")
+        finite = distribution[np.isfinite(distribution)]
+        if finite.size < max(20, int(spec.iterations * 0.5)):
+            raise ValueError("too many bootstrap samples lacked both required groups")
+        alpha = 1.0 - spec.confidence
+        lower, upper = np.quantile(finite, [alpha / 2, 1 - alpha / 2])
+        q05, q25, q50, q75, q95 = np.quantile(finite, [.05, .25, .5, .75, .95])
+        result_row = {
+            "statistic": spec.statistic,
+            "estimate": float(estimate),
+            "ci_lower": float(lower),
+            "ci_upper": float(upper),
+            "confidence": float(spec.confidence),
+            "iterations": int(spec.iterations),
+            "resample_units": len(unit_values),
+            "usable_rows": len(usable),
+            "group_a": spec.group_a if spec.group_field else None,
+            "group_b": spec.group_b if spec.group_field else None,
+        }
+        distribution_row = {
+            "q05": float(q05), "q25": float(q25), "median": float(q50),
+            "q75": float(q75), "q95": float(q95), "finite_iterations": int(finite.size),
+        }
+        _notify(progress, 98.0, "Bootstrap confidence interval complete")
+        sections = [
+            NumericalSection(
+                "Bootstrap 結果 Bootstrap Result",
+                tuple(result_row), (result_row,), Grain((), "bootstrap"),
+            ),
+            NumericalSection(
+                "重抽樣分布摘要 Resampling Distribution Summary",
+                tuple(distribution_row), (distribution_row,), Grain((), "bootstrap_distribution"),
+            ),
+        ]
+        return {
+            "sections": [section.to_dict() for section in sections],
+            "backend": "numerical",
+            "numerical": {
+                "method": "bootstrap",
+                "value_field": spec.value_field,
+                "resample_unit_fields": list(spec.resample_unit_fields),
+                "seed": spec.seed,
+            },
+        }
