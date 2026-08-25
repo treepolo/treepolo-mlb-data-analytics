@@ -9,22 +9,28 @@ from .analysis import (
 from .web_analysis_common import RequestError
 
 
+_BASIC_METRIC_FUNCTIONS = {"count", "sum", "avg", "min", "max", "median", "stddev_pop", "stddev_samp"}
+_NUMERIC_ONLY_METRICS = {"median", "stddev_pop", "stddev_samp"}
+
+
 class CoreModesMixin:
     def _basic(self, payload: dict[str, Any]) -> dict[str, Any]:
         node = self._filter_source(payload.get("filters"))
         group_by = tuple(self._field(str(field)) for field in payload.get("group_by", []) if field)
         metric_specs = payload.get("metrics", [])
+        metrics: list[Metric] = []
         if group_by or metric_specs:
-            metrics: list[Metric] = []
             used: set[str] = set(group_by)
             for spec in metric_specs:
                 function = str(spec.get("function", "count"))
-                if function not in {"count", "sum", "avg", "min", "max"}:
+                if function not in _BASIC_METRIC_FUNCTIONS:
                     raise RequestError(f"Unsupported metric function: {function}")
                 field = str(spec.get("field", ""))
                 expr = None
                 if function != "count" or field:
                     field = self._field(field)
+                    if function in _NUMERIC_ONLY_METRICS and self.schema().get(field) not in {"INTEGER", "REAL"}:
+                        raise RequestError(f"{function} requires a numeric field")
                     expr = Column(field)
                 base = "row_count" if expr is None else f"{function}_{field}"
                 alias = base
@@ -42,8 +48,12 @@ class CoreModesMixin:
         sort = payload.get("sort") or {}
         sort_field = str(sort.get("field", ""))
         if sort_field:
-            if (group_by or metric_specs) and sort_field not in group_by:
-                raise RequestError("Grouped results can currently be sorted only by selected group fields")
+            if group_by or metric_specs:
+                output_fields = set(group_by) | {metric.alias for metric in metrics}
+                if sort_field not in output_fields:
+                    raise RequestError("Grouped results can be sorted only by selected group fields or computed metrics")
+            else:
+                sort_field = self._field(sort_field)
             node = Sort(node, (OrderKey(Column(sort_field), bool(sort.get("descending", False))),))
         return self._execute(Limit(node, max(0, min(int(payload.get("limit", 200)), 5000))))
 
