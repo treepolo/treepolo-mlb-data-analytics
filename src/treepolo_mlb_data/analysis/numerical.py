@@ -58,7 +58,15 @@ class ClusteringSpec:
     standardize: bool = True
     seed: int = 42
     id_fields: tuple[str, ...] = ()
+    partition_fields: tuple[str, ...] = ()
     assignment_limit: int = 5000
+
+
+@dataclass(frozen=True, slots=True)
+class ClusteringOutput:
+    summary: NumericalSection
+    assignments: NumericalTable
+    probability_field: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,87 +160,148 @@ def _bootstrap_unit_parts(
 class NumericalExecutor:
     """Strict numerical execution boundary consuming a typed relational result."""
 
+    def cluster_table(
+        self,
+        table: NumericalTable,
+        spec: ClusteringSpec,
+        progress: ProgressCallback | None = None,
+    ) -> ClusteringOutput:
+        if not spec.features:
+            raise ValueError("clustering requires at least one feature")
+        if not 2 <= spec.clusters <= 50:
+            raise ValueError("cluster count must be between 2 and 50")
+        if "cluster" in table.columns or "cluster_probability" in table.columns:
+            raise ValueError("clustering input cannot already contain cluster output fields")
+
+        identity_fields = _unique(table.grain.keys + spec.id_fields)
+        required = _unique(spec.features + identity_fields + spec.partition_fields)
+        missing = [field for field in required if field not in table.columns]
+        if missing:
+            raise ValueError(f"clustering fields are missing from input: {missing}")
+        rows, raw = _numeric_rows(table, spec.features)
+
+        groups: dict[tuple[Any, ...], list[int]] = {}
+        if spec.partition_fields:
+            for index, row in enumerate(rows):
+                key = tuple(row.get(field) for field in spec.partition_fields)
+                if any(value is None for value in key):
+                    continue
+                groups.setdefault(key, []).append(index)
+            if not groups:
+                raise ValueError("no clustering partitions remain after removing NULL partition keys")
+        else:
+            groups[()] = list(range(len(rows)))
+
+        summary_rows: list[dict[str, Any]] = []
+        cluster_labels = np.full(len(rows), -1, dtype=int)
+        cluster_probabilities = np.full(len(rows), np.nan, dtype=float)
+        has_probability = spec.method == "gmm"
+        group_count = len(groups)
+
+        for group_index, (partition_key, indices) in enumerate(groups.items(), 1):
+            if len(indices) < spec.clusters:
+                label = ", ".join(
+                    f"{field}={value!r}" for field, value in zip(spec.partition_fields, partition_key)
+                ) or "all rows"
+                raise ValueError(
+                    f"cluster count {spec.clusters} exceeds complete rows {len(indices)} in partition {label}"
+                )
+            subset = raw[np.asarray(indices, dtype=int)]
+            scaler = StandardScaler() if spec.standardize else None
+            matrix = scaler.fit_transform(subset) if scaler is not None else subset
+            _notify(
+                progress,
+                20.0 + 55.0 * (group_index - 1) / max(1, group_count),
+                f"Clustering partition {group_index}/{group_count} with {len(indices)} complete rows",
+            )
+            if spec.method == "kmeans":
+                model = KMeans(n_clusters=spec.clusters, random_state=spec.seed, n_init=10)
+                local_labels = model.fit_predict(matrix)
+                centers = model.cluster_centers_
+                local_probabilities = None
+            elif spec.method == "gmm":
+                model = GaussianMixture(n_components=spec.clusters, random_state=spec.seed)
+                local_labels = model.fit_predict(matrix)
+                centers = model.means_
+                local_probabilities = np.max(model.predict_proba(matrix), axis=1)
+            else:
+                raise ValueError(f"unsupported clustering method: {spec.method}")
+            if scaler is not None:
+                centers = scaler.inverse_transform(centers)
+
+            for local_index, global_index in enumerate(indices):
+                cluster_labels[global_index] = int(local_labels[local_index])
+                if local_probabilities is not None:
+                    cluster_probabilities[global_index] = float(local_probabilities[local_index])
+
+            for cluster in range(spec.clusters):
+                mask = local_labels == cluster
+                cluster_subset = subset[mask]
+                row: dict[str, Any] = {
+                    field: value for field, value in zip(spec.partition_fields, partition_key)
+                }
+                row.update({"cluster": int(cluster), "sample_size": int(mask.sum())})
+                for feature_index, field in enumerate(spec.features):
+                    row[f"center_{field}"] = float(centers[cluster, feature_index])
+                    row[f"mean_{field}"] = float(np.mean(cluster_subset[:, feature_index])) if cluster_subset.size else None
+                    row[f"std_{field}"] = float(np.std(cluster_subset[:, feature_index], ddof=0)) if cluster_subset.size else None
+                summary_rows.append(row)
+
+        complete_assignment_rows: list[dict[str, Any]] = []
+        for index, source in enumerate(rows):
+            if cluster_labels[index] < 0:
+                continue
+            row = dict(source)
+            row["cluster"] = int(cluster_labels[index])
+            if has_probability:
+                row["cluster_probability"] = float(cluster_probabilities[index])
+            complete_assignment_rows.append(row)
+
+        summary_columns = spec.partition_fields + ("cluster", "sample_size") + tuple(
+            name for field in spec.features for name in (f"center_{field}", f"mean_{field}", f"std_{field}")
+        )
+        summary_grain = Grain(spec.partition_fields + ("cluster",), "cluster")
+        assignment_columns = table.columns + ("cluster",) + (("cluster_probability",) if has_probability else ())
+        assignment_table = NumericalTable(assignment_columns, tuple(complete_assignment_rows), table.grain)
+        _notify(progress, 86.0, "Cluster assignments are ready for downstream analysis")
+        return ClusteringOutput(
+            NumericalSection("分群摘要 Cluster Summary", summary_columns, tuple(summary_rows), summary_grain),
+            assignment_table,
+            "cluster_probability" if has_probability else None,
+        )
+
     def clustering(
         self,
         table: NumericalTable,
         spec: ClusteringSpec,
         progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        if not spec.features:
-            raise ValueError("clustering requires at least one feature")
-        if not 2 <= spec.clusters <= 50:
-            raise ValueError("cluster count must be between 2 and 50")
-
-        identity_fields = _unique(table.grain.keys + spec.id_fields)
-        missing = [field for field in spec.features + identity_fields if field not in table.columns]
-        if missing:
-            raise ValueError(f"clustering fields are missing from input: {missing}")
-        rows, raw = _numeric_rows(table, spec.features)
-        if len(rows) < spec.clusters:
-            raise ValueError("cluster count cannot exceed complete input rows")
-        _notify(progress, 25.0, f"Preparing {len(rows)} complete rows for clustering")
-
-        scaler = StandardScaler() if spec.standardize else None
-        matrix = scaler.fit_transform(raw) if scaler is not None else raw
-        if spec.method == "kmeans":
-            model = KMeans(n_clusters=spec.clusters, random_state=spec.seed, n_init=10)
-            labels = model.fit_predict(matrix)
-            centers = model.cluster_centers_
-            probabilities = None
-        elif spec.method == "gmm":
-            model = GaussianMixture(n_components=spec.clusters, random_state=spec.seed)
-            labels = model.fit_predict(matrix)
-            centers = model.means_
-            probabilities = np.max(model.predict_proba(matrix), axis=1)
-        else:
-            raise ValueError(f"unsupported clustering method: {spec.method}")
-        if scaler is not None:
-            centers = scaler.inverse_transform(centers)
-        _notify(progress, 82.0, "Building cluster summaries and assignments")
-
-        summary_rows: list[dict[str, Any]] = []
-        for cluster in range(spec.clusters):
-            mask = labels == cluster
-            subset = raw[mask]
-            row: dict[str, Any] = {"cluster": int(cluster), "sample_size": int(mask.sum())}
-            for index, field in enumerate(spec.features):
-                row[f"center_{field}"] = float(centers[cluster, index])
-                row[f"mean_{field}"] = float(np.mean(subset[:, index])) if subset.size else None
-                row[f"std_{field}"] = float(np.std(subset[:, index], ddof=0)) if subset.size else None
-            summary_rows.append(row)
-
-        assignment_rows: list[dict[str, Any]] = []
-        limit = max(0, int(spec.assignment_limit))
-        for index, source in enumerate(rows[:limit] if limit else []):
-            row = {field: source.get(field) for field in identity_fields}
-            row.update({field: float(raw[index, feature_index]) for feature_index, field in enumerate(spec.features)})
-            row["cluster"] = int(labels[index])
-            if probabilities is not None:
-                row["cluster_probability"] = float(probabilities[index])
-            assignment_rows.append(row)
-
-        summary_columns = ("cluster", "sample_size") + tuple(
-            name for field in spec.features for name in (f"center_{field}", f"mean_{field}", f"std_{field}")
-        )
+        output = self.cluster_table(table, spec, progress)
+        identity_fields = _unique(table.grain.keys + spec.id_fields + spec.partition_fields)
         assignment_columns = identity_fields + tuple(
             field for field in spec.features if field not in identity_fields
-        ) + ("cluster",) + (("cluster_probability",) if probabilities is not None else ())
-        sections = [
-            NumericalSection("分群摘要 Cluster Summary", summary_columns, tuple(summary_rows), Grain(("cluster",), "cluster")),
-            NumericalSection("分群指派 Cluster Assignments", assignment_columns, tuple(assignment_rows), table.grain),
-        ]
+        ) + ("cluster",) + ((output.probability_field,) if output.probability_field else ())
+        limit = max(0, int(spec.assignment_limit))
+        visible_rows = output.assignments.rows[:limit] if limit else ()
+        visible = NumericalSection(
+            "分群指派 Cluster Assignments",
+            assignment_columns,
+            tuple({field: row.get(field) for field in assignment_columns} for row in visible_rows),
+            table.grain,
+        )
         _notify(progress, 98.0, "Clustering complete")
         return {
-            "sections": [section.to_dict() for section in sections],
+            "sections": [output.summary.to_dict(), visible.to_dict()],
             "backend": "numerical",
             "numerical": {
                 "method": spec.method,
                 "features": list(spec.features),
+                "partition_fields": list(spec.partition_fields),
                 "standardized": spec.standardize,
                 "seed": spec.seed,
                 "input_rows": len(table.rows),
-                "complete_rows": len(rows),
-                "assignment_rows_returned": len(assignment_rows),
+                "complete_rows": len(output.assignments.rows),
+                "assignment_rows_returned": len(visible.rows),
                 "identity_fields": list(identity_fields),
             },
         }
@@ -431,11 +500,6 @@ class NumericalExecutor:
         distribution = np.empty(spec.iterations, dtype=float)
         notify_every = max(1, spec.iterations // 20)
 
-        # If each cluster belongs to exactly one comparison group, resample the
-        # A and B unit sets independently. This preserves group sample sizes and
-        # avoids invalid bootstrap draws that contain only one group. If units
-        # contain both groups, use a pooled cluster bootstrap so within-unit
-        # dependence between groups is preserved.
         exclusive_group_units = False
         group_a_units: list[list[dict[str, Any]]] = []
         group_b_units: list[list[dict[str, Any]]] = []
