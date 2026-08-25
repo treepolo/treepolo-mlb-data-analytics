@@ -24,10 +24,7 @@
       const notice = ensureNotice();
       if (!notice) return;
       if (status.summary_state === "ready") {
-        notice.textContent = status.integrity_stale
-          ? "快速摘要已就緒；完整性數值以上次檢查為準。 Fast status ready; integrity figures reflect the last deep check."
-          : "";
-        if (!status.integrity_stale) notice.remove();
+        notice.remove();
         if (timer) clearTimeout(timer);
         timer = null;
         const button = document.querySelector("#status-refresh");
