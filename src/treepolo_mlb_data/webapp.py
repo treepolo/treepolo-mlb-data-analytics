@@ -445,6 +445,7 @@ class _Handler(BaseHTTPRequestHandler):
                 b'<script src="/field-checklists.js"></script>\n'
                 b'<script src="/analysis-controls.js"></script>\n'
                 b'<script src="/analysis-progress.js"></script>\n'
+                b'<script src="/stage4-analysis-pages.js"></script>\n'
                 b'<script src="/stage4-controls.js"></script>\n'
                 b'<script src="/backfill-progress.js"></script>\n'
                 b'<script src="/fast-status.js"></script>\n</body>',
