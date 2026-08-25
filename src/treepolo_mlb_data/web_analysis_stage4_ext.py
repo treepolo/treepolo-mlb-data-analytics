@@ -51,5 +51,13 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
                 if "right_value" not in spec:
                     raise RequestError("Derived field requires right_field or right_value")
                 right = _literal(spec.get("right_value"))
-            planner.apply(DerivedStage(alias, Binary(Column(left), op, right)))
+
+            # SQLite performs integer division when both operands are integers,
+            # while DuckDB promotes `/` to a fractional result. Research metrics
+            # such as pitch usage (conditional count / total count) must therefore
+            # force a real-valued numerator so both relational backends agree.
+            left_expr = Column(left)
+            if op == "/":
+                left_expr = Binary(left_expr, "*", Literal(1.0))
+            planner.apply(DerivedStage(alias, Binary(left_expr, op, right)))
         return planner.state
