@@ -100,7 +100,16 @@
     setTimeout(poll, 0);
   }
 
+  function loadStage4Pages() {
+    if (document.querySelector('script[data-treepolo-stage4-pages]')) return;
+    const script = document.createElement("script");
+    script.src = "/stage4-analysis-pages.js";
+    script.dataset.treepoloStage4Pages = "true";
+    document.head.append(script);
+  }
+
   window.treepoloAnalysisProgress = { start, finish };
+  loadStage4Pages();
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ensurePanel, { once: true });
   else ensurePanel();
 })();
