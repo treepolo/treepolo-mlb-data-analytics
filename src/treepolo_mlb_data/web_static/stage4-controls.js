@@ -423,6 +423,12 @@
 
   function applyPayload(payload) {
     const mode = payload.mode;
+    if (["workflow", "clustering", "regression", "bootstrap"].includes(mode)) {
+      if (!window.treepoloStage4Pages?.applyPayload?.(payload)) {
+        throw new Error(`Stage 4 analysis page is unavailable: ${mode}`);
+      }
+      return;
+    }
     if (mode === "basic") {
       setFilters("basic", payload.filters); setSelect("basic-group", payload.group_by || []);
       setBasicMetrics(payload.metrics || []); setInput("basic-limit", payload.limit ?? 200);
