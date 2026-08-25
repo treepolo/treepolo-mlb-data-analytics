@@ -216,18 +216,43 @@ class StatcastStore:
                 batch.clear()
         flush(batch)
         self._ensure_indexes()
+        self.conn.execute("""
+            INSERT INTO settings(key,value,updated_at) VALUES('data_revision',?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """, (f"{snapshot_id}:{now}", now))
         self.conn.commit()
         return stats
 
     def _ensure_indexes(self) -> None:
         cols = {row[1] for row in self.conn.execute("PRAGMA table_info(pitches)")}
-        for name, column in [
-            ("idx_pitches_game_date", "game_date"), ("idx_pitches_game_pk", "game_pk"),
-            ("idx_pitches_pitcher", "pitcher"), ("idx_pitches_batter", "batter"),
-            ("idx_pitches_pitch_type", "pitch_type"),
-        ]:
-            if column in cols:
-                self.conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON pitches({quote_ident(column)})")
+        single_indexes = [
+            ("idx_pitches_game_date", ("game_date",)),
+            ("idx_pitches_game_pk", ("game_pk",)),
+            ("idx_pitches_pitcher", ("pitcher",)),
+            ("idx_pitches_batter", ("batter",)),
+            ("idx_pitches_pitch_type", ("pitch_type",)),
+            ("idx_pitches_game_year", ("game_year",)),
+        ]
+        composite_indexes = [
+            ("idx_pitches_pa_order", ("game_pk", "at_bat_number", "pitch_number")),
+            ("idx_pitches_year_pitch_type", ("game_year", "pitch_type")),
+            ("idx_pitches_pitcher_year_type", ("pitcher", "game_year", "pitch_type")),
+            ("idx_pitches_year_matchup", ("game_year", "p_throws", "stand")),
+        ]
+        for name, columns in single_indexes + composite_indexes:
+            if all(column in cols for column in columns):
+                quoted = ",".join(quote_ident(column) for column in columns)
+                self.conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON pitches({quoted})")
+        self.conn.execute("PRAGMA optimize")
+
+    def optimize(self) -> None:
+        exists = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pitches'").fetchone()
+        if not exists:
+            return
+        self._ensure_indexes()
+        self.conn.execute("ANALYZE")
+        self.conn.execute("PRAGMA optimize")
+        self.conn.commit()
 
     def record_snapshot(self, snapshot) -> None:
         self.conn.execute("""
@@ -341,4 +366,3 @@ class StatcastStore:
             "columns_missing_from_latest_snapshot": missing_latest,
             "raw_snapshots": self.conn.execute("SELECT COUNT(*) FROM raw_snapshots").fetchone()[0],
         }
-
