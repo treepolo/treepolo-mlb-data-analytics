@@ -43,6 +43,7 @@ class AnalysisFacade(BaseAnalysisMixin, CoreModesMixin, AdvancedModesMixin, Stag
             "clustering": self._clustering,
             "regression": self._regression,
             "bootstrap": self._bootstrap,
+            "cluster_compare": self._cluster_compare,
         }
         token = _PROGRESS.set(progress)
         try:
