@@ -233,7 +233,7 @@ class _Handler(BaseHTTPRequestHandler):
         if relative == "index.html":
             body = body.replace(
                 b"</body>",
-                b'<script src="/backfill-progress.js"></script>\n</body>',
+                b'<script src="/backfill-progress.js"></script>\n<script src="/fast-status.js"></script>\n</body>',
             )
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
