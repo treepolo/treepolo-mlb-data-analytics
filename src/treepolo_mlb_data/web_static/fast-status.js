@@ -1,6 +1,10 @@
 (() => {
   "use strict";
 
+  const checklistScript = document.createElement("script");
+  checklistScript.src = "/field-checklists.js";
+  document.head.append(checklistScript);
+
   let timer = null;
 
   function ensureNotice() {
