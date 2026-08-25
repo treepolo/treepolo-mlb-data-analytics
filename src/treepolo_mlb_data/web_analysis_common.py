@@ -51,21 +51,14 @@ class BaseAnalysisMixin:
             return {row[1]: (row[2] or "TEXT").upper() for row in conn.execute("PRAGMA table_info(pitches)")}
 
     def meta(self) -> dict[str, Any]:
+        # Startup metadata must stay O(schema), not O(number of pitches). Distinct
+        # data-value discovery is intentionally not performed here.
         schema = self.schema()
-        choices: dict[str, list[Any]] = {}
-        if schema:
-            with self._connect() as conn:
-                for field in ("pitch_type", "p_throws", "stand", "game_year"):
-                    if field in schema:
-                        rows = conn.execute(
-                            f'SELECT DISTINCT "{field}" FROM pitches WHERE "{field}" IS NOT NULL ORDER BY "{field}" LIMIT 250'
-                        ).fetchall()
-                        choices[field] = [row[0] for row in rows]
         return {
             "database": str(self.database_path),
             "ready": bool(schema),
             "fields": [{"name": name, "type": sql_type} for name, sql_type in schema.items()],
-            "choices": choices,
+            "choices": {},
             "capabilities": [
                 "basic", "sequence_pattern", "follow_event", "arsenal", "pitch_role",
                 "temporal", "percentile", "cross_level", "arsenal_change",
