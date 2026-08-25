@@ -1,6 +1,6 @@
 # treepolo MLB Data Analytics
 
-Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes the ingestion/synchronization system, typed analysis engine, advanced sequence/arsenal analysis capabilities, and a deliberately simple local frontend for operating those capabilities and viewing returned tables.
+Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes the ingestion/synchronization system, typed analysis engine, advanced sequence/arsenal analysis capabilities, a SQLite source-of-truth database, a DuckDB analytical mirror, and a local bilingual frontend.
 
 ## Project plan
 
@@ -8,22 +8,28 @@ The canonical long-term architecture, ten stress-test analysis requirements, Sta
 
 ## What is implemented
 
-- Historical backfill from 2015 onward, split into bounded requests to avoid oversized Savant queries.
-- Exact compressed raw-response archive for every successful request.
-- Normalized local SQLite database optimized for filtering and sequence analysis.
+- Historical backfill from 2015 onward, split into bounded Savant requests.
+- Exact gzip-compressed raw-response archive for every successful request.
+- Normalized local SQLite database used as the authoritative data store.
 - Full upstream-column preservation with automatic schema evolution when Savant adds fields.
 - Stable pitch identity (`game_pk:at_bat_number:pitch_number`) with fallback identity diagnostics.
 - Idempotent upserts: re-fetches update corrected Statcast values without duplicating pitches.
 - Incremental update plus configurable recent-day re-fetch window for post-game Statcast corrections.
 - Automatic update setting, manual update, scheduler entry point, backfill and rebuild kept separate.
 - Retry/backoff, resumable backfill behavior, per-run and per-chunk error/state records.
-- Integrity report: pitch rows, games, duplicates, missing natural keys, latest date, failed chunks, schema drift and raw snapshot count.
-- Rebuild normalized storage entirely from archived raw snapshots.
+- Persistent fast status cache so ordinary UI startup does not rescan the multi-million-row pitch table.
+- Integrity report and rebuild from preserved raw snapshots.
 - Typed analysis tree with filtering, aggregation, ranking, window operations, joins, set operations and serialization.
 - Ordered plate-appearance event patterns, bounded follow-up events, pitch-usage/arsenal analysis, relative pitch-role ranking, individual percentile thresholds, temporal comparisons and cross-level comparisons.
-- Local bilingual Chinese/English frontend with a Windows XP/Windows 7 desktop-application visual style.
-- Frontend data-management controls for status, update, auto update, backfill, failed-chunk retry and rebuild.
-- Table-only analysis results in the current frontend stage; charting and additional frontend-only analysis features are intentionally not included yet.
+- Basic statistics including count, average, min/max, sum, median, population SD and sample SD.
+- Persistent DuckDB columnar analytical mirror with SQLite fallback for large analytical queries.
+- SQLite analysis indexes plus `ANALYZE` / `PRAGMA optimize` support.
+- One shared field-checklist renderer for all eight current multi-select analysis controls.
+- One shared result-ordering component and backend ordering layer for all nine analysis modes.
+- One shared analysis Job/Progress system for all analysis modes.
+- Reproducible local performance benchmark for the canonical season/pitch-type average-velocity query.
+- Local Chinese/English frontend with Windows XP/Windows 7 desktop-application visual style.
+- Table-only analysis results in the current frontend stage; charting remains intentionally deferred.
 - Unit/integration tests and a live Baseball Savant smoke test in GitHub Actions.
 
 ## Install
@@ -36,7 +42,9 @@ python -m pip install -e ".[dev]"
 treepolo-mlb init
 ```
 
-`init` creates `config.json` and the local database under `data/`. The `data/` directory is intentionally gitignored; Statcast data should not be committed to Git.
+`duckdb` is a normal project dependency. After pulling a revision that changes dependencies, run the editable install command again.
+
+`init` creates `config.json` and the local database under `data/`. The `data/` directory is intentionally gitignored; Statcast data and the analytical mirror should not be committed to Git.
 
 ## Local frontend
 
@@ -46,7 +54,7 @@ Start the frontend with:
 treepolo-mlb ui
 ```
 
-By default it binds only to `127.0.0.1:8765` and opens the default browser. The frontend and its API therefore stay local to the machine unless a different host is explicitly supplied.
+By default it binds only to `127.0.0.1:8765` and opens the default browser.
 
 Optional examples:
 
@@ -58,9 +66,11 @@ treepolo-mlb ui --port 9000
 treepolo-mlb ui --no-browser
 ```
 
-The frontend keeps Chinese and English visible together rather than providing a language switch. It exposes user-meaningful analysis concepts while keeping low-level execution concepts such as SQL joins and window implementation details out of the interface. Current results are deliberately shown as tables only.
+The frontend keeps Chinese and English visible together. It exposes user-meaningful analysis concepts while keeping low-level SQL joins/window implementation details out of the interface.
 
-If Auto Update is enabled, the existing scheduler logic runs while the UI service is running. For a machine-level recurring schedule independent of the UI process, use the scheduler command with Windows Task Scheduler, cron, a service, or an equivalent wrapper.
+All nine analysis modes share the same result-ordering controls and analysis-progress system. DuckDB queries can expose actual query progress; SQLite fallback reports stage/elapsed status instead of inventing a percentage.
+
+If Auto Update is enabled, the scheduler logic runs while the UI service is running. For a machine-level recurring schedule independent of the UI process, use the scheduler command with Windows Task Scheduler, cron, a service, or equivalent wrapper.
 
 ## Data commands
 
@@ -69,10 +79,10 @@ If Auto Update is enabled, the existing scheduler logic runs while the UI servic
 treepolo-mlb backfill
 
 # Explicit range
-treepolo-mlb backfill --start 2015-01-01 --end 2026-08-23
+treepolo-mlb backfill --start 2015-01-01 --end 2026-08-25
 
-# Resume a previously attempted backfill and skip exact chunks already completed
-treepolo-mlb backfill --start 2015-01-01 --end 2026-08-23 --resume
+# Resume and skip exact chunks already completed successfully
+treepolo-mlb backfill --start 2015-01-01 --end 2026-08-25 --resume
 
 # Retry chunks recorded as failed
 treepolo-mlb retry-failed
@@ -80,38 +90,75 @@ treepolo-mlb retry-failed
 # Incremental sync; also re-fetches the recent correction window
 treepolo-mlb update
 
-# Data-quality and sync status
+# Fast status / full integrity check
+treepolo-mlb status
 treepolo-mlb verify
+
+# Build/refresh SQLite analysis indexes and planner statistics
+treepolo-mlb optimize
+
+# Build or refresh the persistent DuckDB analytical mirror
+treepolo-mlb analytics-sync
+
+# Compare the representative query on SQLite and DuckDB
+treepolo-mlb benchmark --year 2026 --runs 3 --backend both
 
 # Automatic-update switch
 treepolo-mlb auto-update --enable
 treepolo-mlb auto-update --disable
 
-# Scheduler process; suitable for a service/container/Task Scheduler wrapper
+# Scheduler process / one iteration
 treepolo-mlb scheduler
-
-# One scheduler iteration (useful from cron/Windows Task Scheduler)
 treepolo-mlb scheduler --once
 
 # Recreate normalized DB from preserved raw responses
 treepolo-mlb rebuild --yes
 ```
 
-## Configuration
-
-`config.json` contains the data directory, earliest backfill date, Savant request chunk size, recent correction window, retries/backoff, request pacing, and automatic-update interval. Defaults are conservative: five-day backfill chunks, seven-day correction refresh, bounded retry with exponential backoff, and automatic updates disabled until explicitly enabled.
-
 ## Storage model
 
-`data/raw/**` contains gzip-compressed exact Savant CSV responses plus manifests/checksums. `data/statcast.sqlite3` contains normalized pitch rows and synchronization metadata. Every valid upstream CSV header becomes a database column automatically. Unknown future Savant fields are preserved and logged as schema events instead of being dropped.
+`data/raw/**` contains gzip-compressed exact Savant CSV responses plus manifests/checksums.
 
-The primary pitch identity is `game_pk + at_bat_number + pitch_number`. Rows missing any part of that natural key receive a deterministic fallback key and are surfaced by `verify`; this prevents silent data loss while making malformed upstream records visible.
+`data/statcast.sqlite3` is the authoritative normalized pitch database and synchronization metadata store. Every valid upstream CSV header becomes a database column automatically. Unknown future Savant fields are preserved and logged as schema events instead of being dropped.
+
+`data/statcast.duckdb` is a persistent columnar analytical mirror. It exists for fast analytical scans/grouping/window workloads; it is not the source of truth. If it is missing or stale, it can be rebuilt/refreshed from SQLite. If DuckDB execution fails, analysis can fall back to SQLite.
+
+The primary pitch identity is `game_pk + at_bat_number + pitch_number`. Rows missing any part of that natural key receive a deterministic fallback key and are surfaced by `verify`.
+
+## Performance workflow
+
+The canonical benchmark corresponds to a real interactive analysis:
+
+```text
+Season = 2026
+Group By = pitch_type
+Metrics = Count + Average release_speed
+Sort = Average release_speed descending
+```
+
+Run:
+
+```bash
+treepolo-mlb benchmark --year 2026 --runs 3 --backend both
+```
+
+The report separates DuckDB mirror preparation from measured query runs and reports min/median/max query time. Full-database performance should be validated on the actual persistent 2015-present dataset; CI synthetic data cannot substitute for that measurement.
+
+`treepolo-mlb optimize` remains useful for SQLite fallback and comparison. The project intentionally does not create indexes for every possible combination of Statcast columns; general OLAP work is primarily routed through DuckDB.
 
 ## Data correctness behavior
 
 Daily updates intentionally overlap recent dates. If Savant revises velocity, pitch classification, batted-ball values, or other fields after a game, the same pitch is updated in place. Re-running the same range is therefore safe and does not inflate the database.
 
 Backfill continues after failed chunks by default and records every failure. `--fail-fast` changes that behavior. `--resume` skips exact date chunks already completed successfully, while `retry-failed` re-runs recorded failed chunks. Idempotent upserts make all of these retries safe.
+
+After successful data maintenance, an existing DuckDB mirror is refreshed best-effort. A mirror-refresh problem does not turn a successful SQLite ingest into a failed data update.
+
+## Configuration
+
+`config.json` contains the data directory, SQLite database name, DuckDB analytical database name, default analysis backend, earliest backfill date, Savant request chunk size, correction window, retries/backoff, pacing and automatic-update interval.
+
+Existing configuration files that omit the newer DuckDB fields continue to receive the application defaults.
 
 ## Tests
 
@@ -120,4 +167,4 @@ pytest -q -m "not integration"
 pytest -q -m integration  # requires internet access to Baseball Savant
 ```
 
-CI runs both the deterministic test suite and a live one-day Savant smoke test. The live test checks that the endpoint returns pitch-level rows and core fields including spin rate, 2D spin axis, movement, pitch result and batted-ball metrics.
+CI runs both the deterministic test suite and a live Savant smoke test. Deterministic coverage includes shared sorting/checklist/progress behavior and SQLite-vs-DuckDB result compatibility for representative basic, sequence and arsenal analysis paths.
