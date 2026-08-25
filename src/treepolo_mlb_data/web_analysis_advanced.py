@@ -29,6 +29,8 @@ class AdvancedModesMixin:
         ))
         node = Join(ranked, arsenal, on, tuple(fields), Grain(entities + ("pitch_type",), "pitch_role"))
         node = Sort(node, tuple(OrderKey(Column(field)) for field in entities) + (OrderKey(Column("role_rank")),))
+        allowed = entities + ("pitch_type", "pitch_count", "total_pitch_count", "usage_rate", "role_rank", "arsenal")
+        node = self._apply_result_sort(node, payload, allowed)
         return self._execute(node)
 
     def _pitch_role(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -36,6 +38,7 @@ class AdvancedModesMixin:
         pitch_field = self._field("pitch_type"); metric_kind = str(payload.get("metric_kind", "usage_rate"))
         if metric_kind == "usage_rate":
             relation = pitch_usage(source, entity_fields=entities, pitch_field=pitch_field); metric_name = "usage_rate"
+            allowed = entities + (pitch_field, "pitch_count", "total_pitch_count", "usage_rate", "role_rank")
         else:
             value_field = self._field(str(payload.get("value_field", "release_speed")))
             function = str(payload.get("function", "avg"))
@@ -47,6 +50,7 @@ class AdvancedModesMixin:
                 (Metric(metric_name, function, Column(value_field) if function != "count" else None),),
                 Grain(grouping, "pitch_role_metric"),
             )
+            allowed = entities + (pitch_field, "role_metric", "role_rank")
         exclude = payload.get("exclude_pitch_types") or []
         if exclude:
             relation = Filter(relation, InList(Column(pitch_field), tuple(Literal(str(v)) for v in exclude), True))
@@ -54,7 +58,9 @@ class AdvancedModesMixin:
             relation, entity_fields=entities, metric=metric_name, alias="role_rank",
             descending=bool(payload.get("descending", True)), method=self._tie_method(payload),
         )
-        return self._execute(Filter(ranked, Binary(Column("role_rank"), "=", Literal(int(payload.get("rank", 1))))))
+        node = Filter(ranked, Binary(Column("role_rank"), "=", Literal(int(payload.get("rank", 1)))))
+        node = self._apply_result_sort(node, payload, allowed)
+        return self._execute(node)
 
     def _temporal(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._filter_source(payload.get("filters")); entities = self._entity_fields(payload)
@@ -80,7 +86,10 @@ class AdvancedModesMixin:
             NamedExpr("reference_value", Column("reference_value")),
             NamedExpr("difference", Binary(Column("current_value"), "-", Column("reference_value"))),
         ))
-        return self._execute(Project(window, tuple(fields), Grain(grouping, "temporal")))
+        node = Project(window, tuple(fields), Grain(grouping, "temporal"))
+        allowed = grouping + ("current_value", "reference_value", "difference")
+        node = self._apply_result_sort(node, payload, allowed)
+        return self._execute(node)
 
     def _percentile(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._filter_source(payload.get("filters")); entities = self._entity_fields(payload)
@@ -88,7 +97,10 @@ class AdvancedModesMixin:
         node = empirical_percentile(source, value_field=value_field, alias="percentile", partition_fields=entities)
         op = ">=" if str(payload.get("side", "high")) == "high" else "<="
         node = Filter(node, Binary(Column("percentile"), op, Literal(float(payload.get("threshold", 0.8)))))
-        return self._execute(self._result_projection(node, ("percentile",)))
+        fields = self._result_field_names(("percentile",))
+        node = self._result_projection(node, ("percentile",))
+        node = self._apply_result_sort(node, payload, fields)
+        return self._execute(node)
 
     def _cross_level(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._filter_source(payload.get("filters"))
@@ -111,7 +123,10 @@ class AdvancedModesMixin:
             NamedExpr("baseline_value", Column("baseline_value", "right")),
             NamedExpr("difference", Binary(Column("unit_value", "left"), "-", Column("baseline_value", "right"))),
         ))
-        return self._execute(Join(unit, baseline, on, tuple(fields), Grain(unit_fields, "cross_level")))
+        node = Join(unit, baseline, on, tuple(fields), Grain(unit_fields, "cross_level"))
+        allowed = unit_fields + ("unit_value", "baseline_value", "difference")
+        node = self._apply_result_sort(node, payload, allowed)
+        return self._execute(node)
 
     def _period_pitch_set(self, filters, start: str, end: str, entities: tuple[str, ...], min_usage: float):
         period_filters = list(filters or []) + [
@@ -131,7 +146,10 @@ class AdvancedModesMixin:
                 raise RequestError(f"Period {label} requires start and end dates")
         first = self._period_pitch_set(payload.get("filters"), str(a["start"]), str(a["end"]), entities, min_usage)
         second = self._period_pitch_set(payload.get("filters"), str(b["start"]), str(b["end"]), entities, min_usage)
+        allowed = entities + ("pitch_type",)
+        added = self._apply_result_sort(SetOperation(second, first, "except"), payload, allowed)
+        removed = self._apply_result_sort(SetOperation(first, second, "except"), payload, allowed)
         return {"sections": [
-            {"title": "新增球種 Added Pitches", **self._execute(SetOperation(second, first, "except"))},
-            {"title": "移除球種 Removed Pitches", **self._execute(SetOperation(first, second, "except"))},
+            {"title": "新增球種 Added Pitches", **self._execute(added)},
+            {"title": "移除球種 Removed Pitches", **self._execute(removed)},
         ]}

@@ -10,9 +10,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
+from .analysis_jobs import finish_analysis_job, get_analysis_job, start_analysis_job, update_analysis_job
 from .config import AppConfig
+from .duckdb_mirror import DuckDBMirror
 from .fast_status import prepare_fast_status, read_fast_status, rebuild_fast_status
 from .raw import RawArchive
 from .savant import SavantClient
@@ -27,10 +29,15 @@ STATIC_DIR = Path(__file__).with_name("web_static")
 class AppServices:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.analysis = AnalysisFacade(config.database_path)
+        self.analysis = AnalysisFacade(
+            config.database_path,
+            config.analytics_database_path,
+            backend=config.analysis_backend,
+        )
         self.sync_lock = threading.Lock()
         self._scheduler_started = False
         self._summary_bootstrap_started = False
+        self._analytics_bootstrap_started = False
 
     def _sync_engine(self):
         store = StatcastStore(self.config.database_path)
@@ -61,6 +68,22 @@ class AppServices:
 
         threading.Thread(target=worker, name="treepolo-status-bootstrap", daemon=True).start()
 
+    def start_analytics_bootstrap(self) -> None:
+        if self._analytics_bootstrap_started or self.config.analysis_backend not in {"duckdb", "auto"}:
+            return
+        self._analytics_bootstrap_started = True
+        if not self.config.database_path.exists():
+            return
+
+        def worker() -> None:
+            try:
+                DuckDBMirror(self.config.database_path, self.config.analytics_database_path).ensure()
+            except Exception as exc:
+                # UI remains usable; the first analysis can retry or fall back.
+                print(f"DuckDB analytical mirror bootstrap failed: {exc}")
+
+        threading.Thread(target=worker, name="treepolo-duckdb-bootstrap", daemon=True).start()
+
     def start_scheduler(self) -> None:
         if self._scheduler_started:
             return
@@ -74,6 +97,26 @@ class AppServices:
                 store.close()
 
         threading.Thread(target=worker, name="treepolo-auto-update", daemon=True).start()
+
+    def analyze(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mode = str(payload.get("mode", "basic"))
+        job_id = start_analysis_job(mode)
+
+        def progress(stage: str, percentage: float | None, detail: str | None) -> None:
+            update_analysis_job(job_id, stage=stage, percentage=percentage, detail=detail)
+
+        try:
+            result = self.analysis.analyze(payload, progress=progress)
+            backend = result.get("backend")
+            if backend is None and result.get("sections"):
+                backends = {section.get("backend") for section in result["sections"] if section.get("backend")}
+                backend = "+".join(sorted(backends)) if backends else None
+            finish_analysis_job(job_id, backend=str(backend) if backend else None)
+            result["job_id"] = job_id
+            return result
+        except Exception as exc:
+            finish_analysis_job(job_id, error=str(exc))
+            raise
 
     def status(self) -> dict[str, Any]:
         # Deliberately avoid StatcastStore.verify(): ordinary UI status must not
@@ -96,6 +139,9 @@ class AppServices:
         status["duplicate_pitch_uid"] = 0
         status["auto_update_enabled"] = enabled
         status["database_path"] = str(self.config.database_path)
+        status["analysis_backend"] = self.config.analysis_backend
+        status["analytics_database_path"] = str(self.config.analytics_database_path)
+        status["analytics_database_exists"] = self.config.analytics_database_path.exists()
         status["backfill_progress"] = get_sync_progress("backfill")
         return status
 
@@ -140,6 +186,10 @@ class AppServices:
                         path = Path(str(self.config.database_path) + suffix)
                         if path.exists():
                             path.unlink()
+                    for suffix in ("", ".wal"):
+                        path = Path(str(self.config.analytics_database_path) + suffix)
+                        if path.exists():
+                            path.unlink()
                     store = StatcastStore(self.config.database_path)
                     prepare_fast_status(self.config.database_path)
                     engine = SyncEngine(self.config, store, engine.fetcher, engine.archive)
@@ -182,10 +232,15 @@ class _Handler(BaseHTTPRequestHandler):
         return value
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path == "/api/meta":
                 self._json(HTTPStatus.OK, self.services.analysis.meta())
+                return
+            if path == "/api/analysis/progress":
+                job_id = (parse_qs(parsed.query).get("job_id") or [None])[0]
+                self._json(HTTPStatus.OK, {"progress": get_analysis_job(job_id)})
                 return
             if path == "/api/data/backfill-progress":
                 self._json(HTTPStatus.OK, {"progress": get_sync_progress("backfill")})
@@ -202,7 +257,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             if path == "/api/analyze":
-                self._json(HTTPStatus.OK, self.services.analysis.analyze(payload))
+                self._json(HTTPStatus.OK, self.services.analyze(payload))
                 return
             if path.startswith("/api/data/"):
                 action = path.removeprefix("/api/data/")
@@ -233,7 +288,11 @@ class _Handler(BaseHTTPRequestHandler):
         if relative == "index.html":
             body = body.replace(
                 b"</body>",
-                b'<script src="/backfill-progress.js"></script>\n<script src="/fast-status.js"></script>\n</body>',
+                b'<script src="/field-checklists.js"></script>\n'
+                b'<script src="/analysis-controls.js"></script>\n'
+                b'<script src="/analysis-progress.js"></script>\n'
+                b'<script src="/backfill-progress.js"></script>\n'
+                b'<script src="/fast-status.js"></script>\n</body>',
             )
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
@@ -248,6 +307,7 @@ def serve(config: AppConfig, host: str = "127.0.0.1", port: int = 8765, open_bro
         raise RuntimeError(f"Frontend assets are missing: {STATIC_DIR}")
     services = AppServices(config)
     services.start_summary_bootstrap()
+    services.start_analytics_bootstrap()
     services.start_scheduler()
     server = ThreadingHTTPServer((host, port), _Handler)
     server.services = services  # type: ignore[attr-defined]

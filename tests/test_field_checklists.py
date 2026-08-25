@@ -31,15 +31,15 @@ def test_all_current_field_multiselects_are_accounted_for():
     assert _multiple_field_select_ids(html) == EXPECTED_MULTIPLE_FIELD_SELECTS
 
 
-def test_remaining_field_multiselects_render_as_checklists():
+def test_every_field_multiselect_uses_one_generic_checklist_renderer():
     enhancer = (STATIC_DIR / "field-checklists.js").read_text(encoding="utf-8")
     app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    bootstrap = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
+    webapp = (STATIC_DIR.parent / "webapp.py").read_text(encoding="utf-8")
 
-    assert "renderBasicGroupChecklist" in app
     assert 'select[multiple][data-field-select]' in enhancer
-    assert 'select.id === "basic-group"' in enhancer
+    assert 'select.id === "basic-group"' not in enhancer
     assert 'checkbox.type = "checkbox"' in enhancer
     assert "option.selected = checkbox.checked" in enhancer
     assert 'host.className = "field-checklist"' in enhancer
-    assert '/field-checklists.js' in bootstrap
+    assert "renderBasicGroupChecklist" not in app
+    assert "/field-checklists.js" in webapp

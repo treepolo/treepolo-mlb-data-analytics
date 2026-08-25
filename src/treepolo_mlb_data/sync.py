@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .config import AppConfig
+from .duckdb_mirror import refresh_existing_mirror
 from .fast_status import update_fast_status_after_ingest
 from .raw import RawArchive
 from .storage import StatcastStore
@@ -76,6 +77,7 @@ class SyncEngine:
             self.store.finish_run(run_id, "failed", str(exc))
             finish_sync(kind, "failed")
             raise
+        refresh_existing_mirror(self.config.database_path, self.config.analytics_database_path)
         return SyncResult(run_id, overall_status, chunks, total_received, total_inserted, total_updated, skipped)
 
     def backfill(self, start: date, end: date, *, continue_on_error: bool = True, resume: bool = False) -> SyncResult:
@@ -104,6 +106,7 @@ class SyncEngine:
             stats = self.store.ingest_csv(payload, snapshot.snapshot_id)
             update_fast_status_after_ingest(self.config.database_path, payload, stats.inserted)
             count += 1
+        refresh_existing_mirror(self.config.database_path, self.config.analytics_database_path)
         return count
 
     def scheduler(self, stop_after_one: bool = False) -> None:

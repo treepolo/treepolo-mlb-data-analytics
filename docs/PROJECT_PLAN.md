@@ -1,8 +1,6 @@
 # treepolo MLB Data Analytics — 架構、驗收題目與未來規劃
 
-本文件是本專案的正式長期規劃來源，用來保存「為什麼這樣設計、哪些需求必須支援、哪些能力尚未完成、未來要往哪裡做」。
-
-除非後續明確修改本文件，聊天中的臨時討論不應取代這裡的既定方向。
+本文件是本專案的正式長期規劃來源，用來保存「為什麼這樣設計、哪些需求必須支援、哪些能力尚未完成、未來要往哪裡做」。重要產品方向與未來工作不得只存在聊天紀錄中。
 
 ---
 
@@ -10,7 +8,7 @@
 
 `treepolo MLB Data Analytics` 是一套以 Baseball Savant / Statcast 逐球資料為基礎的 MLB 分析應用。
 
-核心不是只提供幾個固定統計頁，而是讓使用者可以組合高度細緻的棒球問題，例如：
+核心不是固定報表，而是讓使用者可以組合高度細緻的棒球問題，例如：
 
 - 指定投打慣用手、球種、位置、球數、結果等條件。
 - 在同一打席內描述有順序的球序條件。
@@ -30,7 +28,7 @@
   ↓
 結果定義與統計
   ↓
-表格／未來圖表與其他輸出
+排序／表格／未來圖表與其他輸出
 ```
 
 對高度細分的比例或統計，應始終讓使用者看得到樣本數；未來可再加入信賴區間等不確定性資訊。
@@ -39,63 +37,76 @@
 
 ## 2. 完整系統架構
 
-目前確立的核心架構是 **Typed Analysis AST + Execution Planner**，而不是讓前端直接組 SQL，也不是再額外維護一套與 AST 重複的 Query Spec。
+核心架構是 **Typed Analysis AST + Execution Planner**。前端描述分析意圖，後端建立有型別、知道資料層級的分析運算樹，再由執行層選擇適合的執行器。
 
 ```text
 Baseball Savant / Statcast
           │
           ▼
-原始資料保存 Raw Archive
+原始資料保存 Raw Archive (.csv.gz)
           │
           ▼
-SQLite 正規化逐球資料庫
+SQLite 正規化主資料庫（source of truth）
           │
-          ▼
-前端分析建構器
-          │
-          ▼
-分析運算樹 Typed Analysis AST
-          │
-          ▼
-分析資料層級檢查 Grain Validation
-          │
-          ▼
-執行規劃器 Execution Planner
-          │
-     ┌────┴──────────────┐
-     ▼                   ▼
-資料庫執行器          數值計算執行器
-SQLite / future      Python numerical
-DuckDB optional      clustering / regression /
-                     resampling / models
-     └────┬──────────────┘
-          ▼
-      結果結構
-          │
-          ▼
-     CLI / Web UI
+          ├───────────────┐
+          │               ▼
+          │       DuckDB columnar analytical mirror
+          │               │
+          ▼               ▼
+前端分析建構器 → Typed Analysis AST
+                      │
+                      ▼
+               Grain Validation
+                      │
+                      ▼
+               Execution Planner
+                      │
+          ┌───────────┼──────────────┐
+          ▼           ▼              ▼
+     DuckDB SQL    SQLite SQL     未來 Numerical
+      Executor      fallback       Executor
+          │           │         clustering / regression /
+          │           │         bootstrap / models
+          └───────────┴──────────────┘
+                      ▼
+                  結果結構
+                      │
+                      ▼
+             共用排序／Job/Progress
+                      │
+                      ▼
+                   Web UI
 ```
 
 ### 2.1 資料層
 
-資料來源目前為 Baseball Savant Statcast CSV。
+資料來源為 Baseball Savant Statcast CSV。
 
 原始層：
 
 - 每次成功取得的 Savant CSV 原封保存。
-- 以 gzip 壓縮保存於 `data/raw/年/月/`。
+- gzip 壓縮保存於 `data/raw/年/月/`。
 - 保存 SHA-256、抓取時間、日期範圍等 manifest。
 - 相同日期範圍且內容完全相同的快照去重。
 
-正規化層：
+主資料層：
 
 - SQLite：`data/statcast.sqlite3`。
+- SQLite 是同步、修訂、完整性與重建的 **source of truth**。
 - 保留 Savant 回傳的全部合法欄位，不硬編碼固定欄位數。
 - 新增上游欄位時自動擴充 schema 並留下 schema event。
 - 舊年份不存在的欄位允許為 NULL。
 - 逐球自然鍵：`game_pk + at_bat_number + pitch_number`。
-- 缺自然鍵資料不靜默丟棄，而以 deterministic fallback ID 保存並在 integrity report 中揭露。
-- 增量抓取採 idempotent upsert；同一顆球不重複，Savant 事後修訂可更新既有資料。
+- 缺自然鍵資料以 deterministic fallback ID 保存並在 integrity report 揭露。
+- 增量抓取採 idempotent upsert，同一顆球不重複，Savant 事後修訂可更新既有資料。
+
+分析加速層：
+
+- DuckDB：預設 `data/statcast.duckdb`。
+- DuckDB 是 SQLite 的持久化 columnar analytical mirror，不取代 SQLite 的資料真本角色。
+- 第一次需要分析時可建立 mirror；之後依 SQLite `data_revision` / `_ingested_at` 增量刷新。
+- Update / Backfill / Retry / Rebuild 完成後，若 mirror 已存在，會 best-effort 同步。
+- DuckDB 無法使用時分析可安全 fallback 到 SQLite；加速層故障不得讓成功的資料匯入失敗。
 
 ### 2.2 同步／資料維護
 
@@ -107,27 +118,18 @@ DuckDB optional      clustering / regression /
 - Retry Failed：只重跑已記錄的失敗區段。
 - Incremental Update：更新新增日期並重抓最近修訂窗口。
 - Auto Update 開關與 scheduler。
-- Rebuild：從 raw archive 重新建立 SQLite。
+- Rebuild：從 raw archive 重新建立 SQLite；分析 mirror 隨之失效／重建。
 - 資料完整性檢查。
+- 快速持久化 Data Status，普通啟動不再掃描整張逐球大表。
 - 歷史回補即時進度：總區段、已完成、目前區段、接收逐球數、失敗數、耗時、粗略 ETA。
 
 ### 2.3 分析資料層級（Grain）
 
 每個分析節點都必須知道目前資料代表的層級，避免把不同層級的數值錯誤混用。
 
-典型層級包括：
+典型層級：Pitch、Plate Appearance、Game、Pitcher、Pitcher × Period、Pitcher × Pitch Type × Period、Arsenal、Cohort、Sequence / Pattern。
 
-- Pitch：逐球。
-- Plate Appearance：打席。
-- Game：比賽。
-- Pitcher。
-- Pitcher × Time Period。
-- Pitcher × Pitch Type × Time Period。
-- Arsenal：武器庫。
-- Cohort：樣本群組。
-- Sequence / Pattern：球序模式。
-
-目前實作採可組合的 grain keys，而不是把所有可能層級做成死板 enum。
+目前採可組合 grain keys，不把所有層級做成死板 enum。
 
 ### 2.4 分析運算樹（Typed Analysis AST）
 
@@ -147,258 +149,177 @@ DuckDB optional      clustering / regression /
 - Follow Event
 - 條件表達式、Boolean、Case、NULL、IN 等
 
-AST 可序列化為 JSON，作為前端與分析核心之間的正式資料契約，也為未來儲存分析設定與 AI 產生分析提供基礎。
+AST 可序列化為 JSON，作為前端與分析核心的正式契約，也為未來儲存分析設定與 AI 產生分析提供基礎。
 
-### 2.5 執行規劃器
+### 2.5 執行規劃器與執行器
 
-正式方向：
+關聯分析目前已有兩條 SQL 執行路徑：
 
-```text
-分析需求
-↓
-分析運算樹
-↓
-執行規劃器
-↓
-判斷每一段運算交給哪個執行器
-```
+1. **DuckDB analytical executor**：預設大型分析路徑，使用 columnar mirror。
+2. **SQLite executor**：可靠 fallback，也保留作為 correctness / benchmark 對照。
 
-目前只有 SQLite 關聯資料庫執行器。
+這不等於未來的 Numerical Executor 已完成。分群、迴歸、Bootstrap 等非關聯數值計算仍需建立正式的第二類計算執行契約，不能把 dataframe 當成無型別萬用層。
 
-未來不是要求所有 AST 節點都硬編成 SQL；分群、迴歸、重抽樣等運算可以由數值計算執行器負責，再與關聯結果組合。
+### 2.6 SQLite 快速路徑
 
-DuckDB 可作為未來大型關聯分析的選配執行器，但不是目前必要核心。
+SQLite 仍需維持合理效能，已加入／規劃維護：
 
-### 2.6 棒球語意層
+- `game_year` index。
+- `(game_pk, at_bat_number, pitch_number)` 球序 index。
+- `(game_year, pitch_type)`。
+- `(pitcher, game_year, pitch_type)`。
+- `(game_year, p_throws, stand)`。
+- `ANALYZE` / `PRAGMA optimize`。
+- `treepolo-mlb optimize` 可顯式建立／刷新分析索引與 planner statistics。
 
-棒球 Semantic Registry 只能是一層薄便利定義，不應變成限制分析能力的核心模型。
+原則：不為 119 個欄位所有排列組合建立索引；一般 OLAP 工作主要交給 DuckDB。
 
-目前例子：
+### 2.7 棒球語意層
 
-- 四縫線 fastball
-- sweeper
-- changeup
-- breaking ball
-- fastball family
-- 揮空
-- 揮棒
-- called strike
-- 好球帶
-- 右投對右打
+Baseball Semantic Registry 是薄便利層，不是封閉式 domain model。常用概念可重用，例如 fastball、sweeper、changeup、breaking ball、fastball family、swing / whiff / called strike、zone、RHP vs RHB；使用者仍可回到底層欄位與條件組合。
 
-原則：常用棒球概念可直接重用，但使用者仍能回到底層欄位與條件組合。
-
-### 2.7 前端
+### 2.8 前端共用能力
 
 前端原則：
 
-- 所有「對使用者有意義的分析意圖」應有前端表達方式。
-- 不把 Join、Window、Set Difference 等資料庫／程式底層概念原樣暴露給使用者。
-- 底層技術差異若會改變分析語意，前端要翻成使用者真正需要決定的選項，例如「保留並列」與「固定選出唯一順位」。
-- UI 中英文永久並列，不做語言切換；專有名詞也必須有中文名稱。
-- 視覺風格明確採 Windows XP + Windows 7 年代桌面軟體語言，復古感是目標的一部分，而不是要被現代化消除。
-- 第三階段刻意維持薄前端：先操作既有後端能力並忠實顯示表格，不在前端另造分析邏輯。
+- 所有對使用者有意義的分析意圖應有前端表達方式。
+- 不直接暴露 Join、Window、Set Difference 等底層資料庫概念。
+- UI 中英文永久並列。
+- 維持 Windows XP + Windows 7 視覺語言。
+- 圖表仍不建立第二套統計邏輯；未來只消費正式分析結果。
 
-目前已有資料管理與多種分析頁；圖表等視覺化仍刻意延後。
+目前共用 UI 基礎：
+
+- **8 個所有多選欄位共用同一 checklist renderer**，不再有 Basic Analysis 特例。
+- **9 個分析頁共用同一 Result Ordering 元件與後端排序層**；各分析只宣告可排序輸出欄位，不各自實作排序。
+- 可使用多重排序鍵；計算結果（例如平均球速、difference）可排序。
+- **所有分析共用 Analysis Job / Progress**；不再由各頁自行做進度機制。
+- DuckDB 可提供實際 query progress；SQLite fallback 無可靠百分比時顯示執行階段與耗時，禁止偽造百分比。
 
 ---
 
 ## 3. 十個架構壓力測試需求
 
-這十題是用來檢驗架構是否真的能承受未來複雜分析，而不是只會做固定報表。它們應長期保留作為驗收題目。
+這十題長期保留作為架構驗收題，不等於十題都已完整產品化。
 
 ### 1. 三顆 Sweeper 的兩個極端球序
 
-樣本宇宙：一個打席內總共恰好三顆 Sweeper，而且最後一球也是 Sweeper。
+同一打席總共恰好三顆 Sweeper，最後一球也是 Sweeper。比較：A 三顆完全連續；B 三顆彼此完全不相鄰。部分相鄰刻意排除。分析對象是第三顆 Sweeper。
 
-比較：
+需要：same-PA partition、pitch order、exact count、last-event、Nth event、adjacency classification。
 
-- A：三顆 Sweeper 完全連續。
-- B：三顆 Sweeper 彼此完全不相鄰。
-
-只比較兩個極端組；部分相鄰的打席可以刻意排除，不要求兩組涵蓋全部樣本。
-
-分析對象是該打席的第三顆 Sweeper，也就是最後一球。
-
-需要能力：same-PA partition、pitch order、exact count、last-event predicate、Nth matching event、adjacency / non-adjacency classification、選取特定事件後比較其欄位或結果。
-
-**狀態：第二階段關聯分析能力已覆蓋。**
+**狀態：第二階段關聯能力已覆蓋。**
 
 ### 2. 武器庫組成 + 四縫線相對角色
 
-自動依武器庫組成分組：
+球種使用率高於門檻才納入武器庫；依完全相同 pitch-type set 自動分組。各組再分 FF 是否最高使用率，並把 FF 與第二常用球種或最佳非 FF 指標球種比較。
 
-- 某球種使用率高於指定門檻（例：>5%）才算進武器庫。
-- 擁有完全相同 qualifying pitch-type set 的投手歸為同一武器庫組，例如 `{FF, SL, CH}`。
-- 武器庫組型應由資料自動發現，不是人工預先列舉。
+需要：usage、set signature、dynamic grouping、role selector、rank / tie、relative comparison。
 
-每個武器庫組內再分：
-
-- A：四縫線是最高使用率球種。
-- B：四縫線不是最高使用率球種。
-
-接著把 FF 與「相對角色球種」比較，例如：
-
-- 第二常用球種。
-- 排除 FF 後，在指定指標下表現最好的球種。
-
-最後比較 A/B 兩群的 FF 相對差值。
-
-需要能力：usage、set signature、dynamic grouping、pitch-role selector、rank、ties、relative comparison。
-
-**狀態：第二階段核心能力已覆蓋；實際分析仍需在前端逐步把完整使用流程做得更自然。**
+**狀態：第二階段核心能力已覆蓋；產品操作流程仍可強化。**
 
 ### 3. 跨打席／跨比賽時間序列
 
-若某投手某球種使用率連續三場上升，檢查第四場的球速、Stuff 類指標或揮空率是否改變。
+若某投手某球種使用率連續三場上升，檢查第四場球速／Stuff 類指標／揮空率是否改變。
 
-需要能力：pitcher-game aggregation、time ordering、lag / lead、rolling / consecutive-period logic、下一期結果比較。
+需要：pitcher-game aggregation、time order、lag / lead、rolling / consecutive-period logic。
 
-**狀態：lag / lead 與時間序列基礎已存在；完整「連續 N 期條件」未做成專用高階操作，未來可補 helper 或更完整 window-frame 能力。**
+**狀態：lag / lead 與時間序列基礎已有；完整「連續 N 期條件」仍待高階 helper / window-frame。**
 
 ### 4. 動態參考球種
 
-每位投手先找出「使用率最高的非 FF 球種」，再把 FF 與該球種比較球速、揮空率、xwOBA 等，最後依差值衍生分群或 cohort。
+每位投手找出使用率最高的非 FF 球種，再與 FF 比較球速、揮空率、xwOBA 等並依差值衍生 cohort。
 
-需要能力：per-entity argmax / role selector、排除指定球種、within-pitcher comparison、derived cohort。
+需要：per-entity argmax / role selector、exclude、within-pitcher comparison。
 
-**狀態：第二階段關聯分析能力已覆蓋主要需求。**
+**狀態：第二階段主要能力已覆蓋。**
 
 ### 5. 巢狀分組 + 群內百分位
 
-先依武器庫組成分組，再在每個武器庫組內依 FF 使用率百分位把投手分成高／中／低群，最後比較各群 changeup 表現。
+先依武器庫組成分組，再於每組依 FF 使用率百分位分高／中／低群，最後比較 changeup 表現。
 
-需要能力：group → within-group percentile → regroup → aggregate。
+需要：group → within-group percentile → regroup → aggregate。
 
-**狀態：第二階段已有 empirical percentile、group、join 等基礎；完整產品操作流程仍可再強化。**
+**狀態：empirical percentile、group、join 已有；產品流程仍可強化。**
 
 ### 6. 變動間距的條件球序
 
-每次出現 Sweeper 後，找接下來最多 3 球內第一顆再次出現的 Sweeper，並依兩顆 Sweeper 中間是否曾出現 FF 分組，比較第二顆 Sweeper 結果。
+每次 Sweeper 後，在最多 3 球內找第一顆再次出現的 Sweeper，依中間是否出現 FF 分組，比較第二顆 Sweeper 結果。
 
-需要能力：bounded lookahead、first matching subsequent event、variable gap、between-event classifier。
+需要：bounded lookahead、first subsequent match、variable gap、between-event classifier。
 
-**狀態：第二階段 `FollowEvent` 已覆蓋。**
+**狀態：`FollowEvent` 已覆蓋。**
 
 ### 7. 跨資料層級比較
 
-先算投手整季 FF 平均球速，再找單場 FF 平均球速低於整季平均至少 1.5 mph 的比賽，最後分析那些比賽中第三輪對打線時的 breaking-ball 使用率。
+先算投手整季 FF 平均球速，再找單場 FF 平均低於整季至少 1.5 mph 的比賽，分析那些比賽第三輪對打線時的 breaking-ball 使用率。
 
-需要能力：season → game → PA / pitch 的跨層級聚合、join、derived predicate、再回到更細層級分析。
+需要：season → game → PA / pitch 跨 grain 聚合、join、derived predicate。
 
-**狀態：第二階段已有 typed cross-grain join 與聚合基礎；第三輪打線等更高階棒球語意可後續補成便利操作。**
+**狀態：typed cross-grain join / aggregate 已有；第三輪打線等高階棒球語意 helper 未完成。**
 
 ### 8. 動態集合關係：武器庫變化
 
-比較同一投手上半季與下半季武器庫，找出後半季新進入使用率門檻的球種，再分析新增球種後其他球種的使用率或表現變化。
+比較同一投手上／下半季武器庫，找後半季新進入使用率門檻的球種，再分析新增球種後其他球種使用率或表現變化。
 
-需要能力：time-period cohort、arsenal sets、set difference、role change、前後期比較。
+需要：period cohort、arsenal sets、set difference、role change。
 
-**狀態：第二階段集合差與武器庫建構已覆蓋；第三階段已有 Arsenal Change 前端。**
+**狀態：集合差與武器庫建構已覆蓋；已有 Arsenal Change 前端。**
 
 ### 9. 每位投手自己的樣本門檻
 
-把「高球速 FF」定義成該投手自己的 FF 球速第 80 百分位以上，再比較高／非高球速樣本的數量與結果。
+「高球速 FF」定義成該投手自己的 FF 球速第 80 百分位以上，再比較高／非高樣本的數量與結果。
 
-需要能力：per-entity percentile、sample-derived threshold、derived predicate。
+需要：per-entity percentile、sample-derived threshold、derived predicate。
 
-**狀態：第二階段 empirical percentile 已覆蓋；第三階段已有 Individual Threshold 前端。**
+**狀態：empirical percentile 已覆蓋；已有 Individual Threshold 前端。**
 
 ### 10. 多階段選擇器 + 自動分群
 
-先在某武器庫組內，找出該組整體表現最佳的非 FF 球種；接著在擁有此球種的每位投手內，對該球種的 movement / velocity / release / spin 等特徵自動分群，選出每位投手表現最佳的 movement cluster，再與 FF 比較。
+先在某武器庫組找整體表現最佳的非 FF 球種；再於每位投手該球種的 movement / velocity / release / spin 特徵自動分群，選出每位投手表現最佳 cluster，再與 FF 比較。
 
-需要能力：group-level selector → entity-level selector → multivariate clustering → nested comparison。
+需要：group-level selector → entity-level selector → multivariate clustering → nested comparison。
 
-「分群」指依多個連續特徵自動找出不同子型，不是預先人工切區間。可考慮：
+候選方法：K-means、Gaussian Mixture、DBSCAN、HDBSCAN。
 
-- K-means 類中心分群。
-- Gaussian Mixture 類機率混合模型。
-- DBSCAN 類密度分群。
-- HDBSCAN 類階層式密度分群。
-
-**狀態：前半段關聯選擇器已有基礎；真正自動分群尚未實作，明確屬於第四階段數值計算能力。不得把第二階段測試數量「10 題」誤解為此題已全部完成。**
+**狀態：前半段關聯選擇器有基礎；真正自動分群尚未完成，仍是第四階段 Numerical Executor 的核心驗收題。**
 
 ---
 
 ## 4. 開發階段與目前狀態
 
-### 資料基礎（已完成系統實作；完整本機歷史人口仍在實際回補）
+### 資料基礎
 
-已完成：
+**系統實作已完成；完整本機資料集需以實際 persistent backfill 為準。**
 
-- Baseball Savant 下載器。
-- raw archive。
-- SQLite 儲存與 schema evolution。
-- idempotent upsert。
-- historical backfill / resume / retry。
-- incremental update。
-- auto update。
-- rebuild。
-- integrity report。
-- live Savant E2E / CI。
-- 歷史回補進度顯示。
+已完成：Savant 下載、raw archive、SQLite/schema evolution、idempotent upsert、backfill/resume/retry、incremental update、auto update、rebuild、integrity、fast status、live E2E、回補進度。
 
-尚需完成的實際驗證：
+仍需長期驗證：完整資料容量、季中 scheduler、真實 Savant 修訂案例、raw snapshot 長期成長。
 
-- 在真實本機把 2015 至現在完整資料回補完畢。
-- 完整資料量下檢查實際檔案容量、下載耗時、索引大小。
-- 完整資料量下重新跑代表性分析，取得真實查詢時間。
-- 長時間 scheduler / correction refresh 的實際運行驗證。
+### 第一階段：分析核心骨架 — 已完成
 
-### 第一階段：分析核心骨架（已完成）
+Grain model、Typed AST、filter/aggregate/project/sort/limit/set、ranking、semantic registry、SQLite compiler/executor、execution planner boundary、serialization。
 
-- Grain model。
-- Typed AST。
-- filter / aggregate / project / sort / limit / set basics。
-- ranking basics。
-- semantic registry。
-- SQLite compiler / executor。
-- execution planner boundary。
-- serialization。
+### 第二階段：高階關聯分析 — 已完成
 
-### 第二階段：高階關聯分析（已完成）
+Window / lag / lead / rank / percentile、cross-grain Join、CollectSet / arsenal signature、EventPattern、FollowEvent、pitch usage、arsenal、pitch-role ranking、tie-safe ranking、stress-test acceptance coverage。
 
-- Window / lag / lead / rank / cumulative percentile。
-- cross-grain Join。
-- deterministic CollectSet / arsenal signature。
-- EventPattern。
-- FollowEvent。
-- pitch usage builder。
-- arsenal builder。
-- pitch-role ranking。
-- tie-safe dense rank / explicit deterministic row-number mode。
-- acceptance tests covering the relational stress scenarios。
+### 第三階段：正式使用介面 — 第一版完成，持續改善
 
-### 第三階段：正式使用介面（第一版已完成，後續仍可改善）
+已完成九種分析頁與 Data Management、雙語 XP/7 UI、table result、回補進度。
 
-目前已完成：
+2026-08-25 使用實測後追加並完成：
 
-- 本機 Web UI。
-- Windows XP + Windows 7 視覺風格。
-- 中英文永久並列。
-- Data Management。
-- Basic Analysis。
-- Sequence Pattern。
-- Follow-up Event。
-- Pitch Arsenal。
-- Pitch Role。
-- Temporal Comparison。
-- Individual Threshold。
-- Level Comparison。
-- Arsenal Change。
-- table-only 結果。
-- 歷史回補進度條。
+- 8 個多選欄位統一 checklist renderer。
+- 9 個分析頁統一 Result Ordering 元件／後端排序層。
+- 所有分析統一 Analysis Job / Progress。
+- Basic Analysis 的中位數、母體／樣本標準差與 computed-metric sorting。
 
-第三階段原則仍是「薄前端」：不在前端重做分析邏輯、不先加圖表與大量產品功能。
+### 第四階段：進階計算與產品完善 — **已提前啟動部分工作**
 
-### 第四階段：進階計算與產品完善（尚未開始）
+#### 4.1 Numerical Executor — 未完成
 
-第四階段不是單一功能，而是把目前以關聯分析為主的系統擴展成完整的進階分析平台。
-
-#### 4.1 數值計算執行器
-
-建立 Execution Planner 的第二條正式執行路徑：
+仍需建立非 SQL 數值計算正式路徑：
 
 ```text
 AST / analysis plan
@@ -408,155 +329,120 @@ Execution Planner
 Numerical Executor
 ```
 
-需求：
+要求：明確 input/output schema 與 grain；可與關聯結果組合；不得讓 dataframe 變成無型別萬用層。
 
-- 從關聯執行器接收乾淨的分析中間資料。
-- 執行非 SQL 最適合的計算。
-- 回傳具明確欄位與 grain 的結果。
-- 可再交回關聯流程或直接形成最終結果。
-- 不把 Python dataframe 當成新的無型別「萬用層」，仍要維持分析契約與資料層級。
+**注意：2026-08-25 完成的 DuckDB executor 是關聯 analytical executor，不代表本節完成。**
 
-#### 4.2 自動分群
+#### 4.2 自動分群 — 未完成
 
-優先滿足壓力測試 #10。
+優先滿足壓力測試 #10。需支援：特徵選擇、標準化、K-means、Gaussian Mixture；DBSCAN / HDBSCAN 視需求與依賴評估；cluster label 可回接 pitch/entity 並成為後續 filter/group/selector；超參數可重現；輸出樣本數與 cluster 摘要。
 
-初期應支援：
+#### 4.3 迴歸與統計模型 — 未完成
 
-- 選擇分群特徵。
-- 特徵標準化。
-- K-means 類方法。
-- Gaussian Mixture 類方法。
-- DBSCAN / HDBSCAN 類方法視依賴與實際需求評估。
-- cluster label 回接原始 pitch / entity。
-- 群數或超參數的可重現設定。
-- 每群樣本數與中心／摘要。
+方向：線性／廣義線性等基礎模型；指定 dependent / independent variables；輸出係數、樣本數、必要統計量；實際模型依棒球問題收斂。
 
-需要避免「分群只是畫圖」：cluster 必須能成為後續 filter、group、selector 的正式資料。
+#### 4.4 重抽樣／Bootstrap — 未完成
 
-#### 4.3 迴歸與統計模型
+用途：比例／平均／差值不確定性、細分樣本 confidence interval、兩組差異重抽樣分布。必須明確指定重抽樣單位，不能在群聚逐球資料上錯誤假設每球獨立。
 
-方向：
+#### 4.5 更完整視窗／序列 — 部分完成、持續待辦
 
-- 線性／廣義線性模型等基礎回歸。
-- 可指定 dependent / independent variables。
-- entity / time grouping 視需求逐步擴充。
-- 結果輸出係數、樣本數、必要統計量，而不是只回傳一個預測值。
+候選：explicit rolling frame、連續 N 期上／下降 helper、first/last/nth value 一般化、更複雜跨 PA/game sequence。
 
-實際模型範圍待有具體棒球問題時再收斂，不預先堆大量無需求模型。
+#### 4.6 大型資料效能 — **第一輪已提前完成，仍需真實完整 DB 驗收與後續 profiling**
 
-#### 4.4 重抽樣／Bootstrap
+2026-08-25 已完成：
 
-用途：
+- SQLite 重要索引補強。
+- `ANALYZE` / `PRAGMA optimize` 與 `treepolo-mlb optimize`。
+- 持久化 DuckDB columnar analytical mirror。
+- DuckDB relational executor + SQLite fallback。
+- 資料 revision / incremental mirror refresh。
+- 共用分析 job/progress。
+- 可重複 benchmark harness。
+- `treepolo-mlb benchmark --year 2026 --backend both` 標準題：2026 各球種 Count + 平均球速。
 
-- 比例、平均、差值等指標的不確定性估計。
-- 細分樣本下的 confidence interval。
-- 兩組差異的重抽樣分布。
+**仍未完成：**
 
-必須能明確指定重抽樣單位，避免逐球資料有群聚結構時錯把每顆球視為完全獨立。
+- 在使用者完整 2015→現在數 GB SQLite 上跑 benchmark，取得 SQLite vs DuckDB 實測時間。
+- 明確驗收「2026 各球種平均球速」是否達互動式幾秒級；若未達標繼續 profiling，不接受分鐘級。
+- intermediate result caching / compiled-query cache / repeated-result cache 目前尚未實作；只有在 benchmark 證明需要時再做。
+- streaming / materialization strategy 仍依大結果實測決定。
 
-#### 4.5 更完整的視窗／序列能力
+#### 4.7 產品完善 — 多數未完成
 
-候選：
-
-- explicit rolling window frame。
-- 連續 N 期上升／下降的高階 helper。
-- first / last / nth value 類一般化能力。
-- 更複雜的跨 PA / game sequence。
-
-是否增加新 AST node，應依無法乾淨組合現有節點的實際需求決定。
-
-#### 4.6 大型資料效能
-
-完整 2015+ 資料建立後再依 profiling 決定，而不是先猜。
-
-候選：
-
-- query profiling。
-- SQLite index 調整。
-- intermediate result caching。
-- AST / compiled-query cache key。
-- repeated analysis result cache。
-- 必要時加入 DuckDB executor。
-- 大型分析的 streaming / materialization strategy。
-
-原則：先量測完整資料上的真實瓶頸，再優化。
-
-#### 4.7 產品完善
-
-在核心分析正確性與效能穩定後再做：
-
-- 圖表。
-- 更多結果視覺化。
-- 匯出。
-- 儲存／載入分析 AST。
-- 複製既有分析後修改。
-- 更完整的分析歷史／preset 管理。
-- 前端 sample-size 與錯誤提示的進一步強化。
-- 未來 AI 產生 AST（只產生分析規格，不讓 AI 直接寫任意 SQL）。
+未來：圖表、更多視覺化、匯出、儲存／載入 AST、複製分析、分析歷史/preset、sample-size / uncertainty UI、AI → AST。
 
 ---
 
 ## 5. 其他未來待辦
 
-以下項目不一定全部屬於第四階段，但必須保留：
-
 ### 資料與可靠性
 
-- 完成第一次 2015→現在的 persistent full backfill。
-- 記錄完整資料庫最終磁碟容量與 raw archive 容量。
-- 驗證季中長期 auto-update。
-- 驗證 Savant 真實歷史修訂造成 row update 的案例。
-- 檢視下載區段大小是否需依歷史實測動態調整；目前 5 天是可靠性折衷，不是 Savant 強制規格。
-- 若長期 raw snapshot 成長過快，再設計 retention / compaction；未量測前不先刪原始資料。
+- 完成／持續維護 2015→現在 persistent full backfill。
+- 記錄 SQLite、DuckDB mirror、raw archive 的實際磁碟容量。
+- 驗證季中長期 Auto Update。
+- 驗證 Savant 真實歷史修訂造成 row update 並正確刷新 DuckDB mirror。
+- 評估 5-day chunk 是否需依實測調整。
+- raw snapshot 長期成長過快時才設計 retention / compaction；未量測前不刪原始資料。
 
 ### 分析正確性
 
-- 所有細分統計結果持續顯示 sample size。
-- 未來加入 confidence interval / uncertainty 時，明確定義計算單位。
-- 對 ties、NULL、低樣本、球種分類變更、歷史欄位缺失建立一致政策。
-- 增加更多從真實棒球研究問題導出的 acceptance tests。
+- 所有細分統計持續顯示 sample size。
+- confidence interval / uncertainty 加入時明確定義計算單位。
+- ties、NULL、低樣本、球種分類變更、歷史欄位缺失保持一致政策。
+- 增加由真實棒球研究問題導出的 acceptance tests。
+- DuckDB 與 SQLite 對同一 AST 必須維持語意／結果一致性；複雜球序、Join、Window、Arsenal 皆需持續回歸測試。
 
 ### 前端／使用體驗
 
-- 繼續實際使用第三階段 UI，記錄難懂或不自然的操作。
-- 保持中英永久並列。
-- 保持 XP / 7 復古桌面軟體視覺方向；不改造成一般現代 SaaS 卡片風。
-- 不直接暴露 Join、Window、Set Difference 等底層名稱，除非未來有真正需要給進階使用者的 expert mode。
-- 增加說明／tooltip / 使用教學，尤其是高階球序與球種角色功能。
-- 圖表目前延後，等表格分析工作流驗證完成後再設計。
-- 評估儲存、載入、複製、修改分析設定的正式 UI。
-- 未來若加入圖表，圖表只消費分析結果，不建立另一套統計邏輯。
+- 持續依真實使用修正難懂操作，不自行堆額外功能。
+- 中英永久並列、XP/7 視覺方向保持。
+- 所有可共用的互動（多選、排序、Job/Progress）必須共用元件；除非存在無法抽象的真實語意差異，不各頁維護特殊版本。
+- 高階球序／球種角色持續補 tooltip / 使用教學。
+- 圖表延後；未來圖表只消費正式分析結果。
+- 評估儲存／載入／複製分析設定 UI。
+
+### 效能驗收
+
+- 標準 benchmark 必須保留，至少包含「指定球季 → pitch_type group → Count + Average release_speed → computed metric sort」。
+- benchmark 應分離第一次 DuckDB mirror build 時間與已建 mirror 的互動查詢時間。
+- 大型分析出現分鐘級延遲視為效能問題，不以「資料很多」直接合理化。
+- 所有可能長時間執行的分析都必須有共用進度／狀態顯示；沒有可信百分比時顯示 indeterminate，不偽造進度。
 
 ### 工程治理
 
-- GitHub `main` 維持可工作的正式版本。
-- 功能以 branch → tests → PR → CI → squash merge 為預設流程。
-- 真實 Savant smoke test 繼續保留，避免只靠 synthetic tests。
-- 重要架構變更要同步更新本文件，不只留在聊天紀錄。
+- `main` 維持可工作的正式版本。
+- branch → tests → PR → CI → squash merge 為預設流程。
+- 真實 Savant smoke test 保留。
+- 重要架構變更同步更新本文件。
 
 ---
 
-## 6. 不應被誤解的幾個決策
+## 6. 不應被誤解的決策
 
-1. **SQLite 是目前執行器，不是整個分析架構。** 未來可以增加 DuckDB 或 numerical executor，而不必重寫前端分析語意。
-2. **AST 是分析契約，不是要求所有東西都轉 SQL。**
-3. **Baseball Semantic Registry 是便利層，不是封閉式棒球 domain model。**
-4. **前端不需要替每個後端底層 operator 做一顆按鈕。** 使用者有意義的分析意圖才應直接出現在 UI。
-5. **十個壓力測試不代表十題都已完全實作。** 第 10 題自動分群明確未完成；部分題目的高階 convenience operation 仍可在第四階段補強。
+1. **SQLite 是資料 source of truth；DuckDB 是分析加速 mirror。** 不應倒過來讓同步與修訂依賴 DuckDB。
+2. **DuckDB executor 是關聯分析執行器，不是 Numerical Executor。** 自動分群／迴歸／Bootstrap 仍未完成。
+3. **AST 是分析契約，不要求所有運算都轉 SQL。**
+4. **Baseball Semantic Registry 是便利層，不是封閉 domain model。**
+5. **十個壓力測試不是十題皆完整產品化。** 尤其 #10 自動分群仍未完成。
 6. **第三階段不做圖表是刻意縮小範圍，不代表永久不要圖表。**
-7. **完整 2015+ 歷史資料程式已能回補，但「完整本機資料集」是否完成要以實際 persistent backfill 跑完為準。**
+7. **完整歷史資料能力已具備，但 persistent full dataset 狀態以實機為準。**
+8. **共用 UI 功能應維護一套元件。** Basic Analysis 不再因額外連動需求維護獨立 checklist／sorting renderer；差異應透過 callback / output schema 等參數化方式處理。
+9. **分析進度必須誠實。** DuckDB 可顯示實際 query progress；SQLite 無可信百分比時用不定進度與 elapsed time。
+10. **效能優化以 benchmark 驗收。** 不以單純新增某個 index 就宣告完成，也不在沒有量測前建立 119 欄位所有索引排列。
 
 ---
 
 ## 7. 更新規則
 
-後續每當出現以下情況，應更新本文件：
+出現以下情況必須更新本文件：
 
-- 新增一個確定要做的未來功能。
-- 某個待辦被取消或改變定義。
+- 新增／取消／重新定義確定要做的未來功能。
 - 架構邊界改變。
-- 某個壓力測試被正式完整支援。
-- 第四階段拆出新的正式子階段。
-- 真實完整資料量測後，效能策略有所改變。
+- 某壓力測試被正式完整支援。
+- 第四階段某項提前實作或完成。
+- 真實完整資料 benchmark 後效能策略改變。
+- 新增另一個持久資料層或執行器。
 
-本文件的目的不是凍結所有產品細節，而是確保重要的未來工作與設計理由不會只存在於單一聊天上下文中。
+本文件的目的不是凍結所有細節，而是確保架構、驗收題與未來工作不會因聊天上下文變長而遺失。
