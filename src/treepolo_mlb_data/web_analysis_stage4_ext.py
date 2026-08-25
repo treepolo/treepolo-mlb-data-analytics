@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from .analysis import (
     Aggregate, Binary, Boolean, Case, Column, Filter, Grain, InList, Join, Literal,
-    Metric, NamedExpr, Project, arsenal_table, pitch_usage, rank_pitch_roles,
+    Metric, NamedExpr, arsenal_table, pitch_usage, rank_pitch_roles,
 )
 from .analysis.numerical import ClusteringSpec, NumericalExecutor
 from .analysis.workflow import DerivedStage, WorkflowPlanner, WorkflowState
@@ -24,12 +26,7 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
             raise RequestError("Workflow metric condition must be an object")
         predicate = self._workflow_condition(condition_spec, fields)
         value = metric.expr if metric.expr is not None else Literal(1)
-        return Metric(
-            metric.alias,
-            metric.function,
-            Case(((predicate, value),), Literal(None)),
-            metric.distinct,
-        )
+        return Metric(metric.alias, metric.function, Case(((predicate, value),), Literal(None)), metric.distinct)
 
     def _stage_entity_fields(self, raw: Any, fields: tuple[str, ...], label: str) -> tuple[str, ...]:
         if not isinstance(raw, list) or not raw:
@@ -53,24 +50,16 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
             raise RequestError("Arsenal minimum usage must be between 0 and 1")
         usage = pitch_usage(state.node, entity_fields=entities, pitch_field=pitch_field)
         signature = arsenal_table(
-            usage,
-            entity_fields=entities,
-            pitch_field=pitch_field,
-            min_usage=min_usage,
-            alias=alias,
+            usage, entity_fields=entities, pitch_field=pitch_field,
+            min_usage=min_usage, alias=alias,
         )
         fields = tuple(NamedExpr(field, Column(field, "left")) for field in state.fields) + (
             NamedExpr(alias, Column(alias, "right")),
         )
-        node = Join(
-            state.node,
-            signature,
-            self._join_predicate(entities),
-            fields,
-            state.grain,
-            "inner",
+        planner.state = WorkflowState(
+            Join(state.node, signature, self._join_predicate(entities), fields, state.grain, "inner"),
+            state.fields + (alias,), state.grain,
         )
-        planner.state = WorkflowState(node, state.fields + (alias,), state.grain)
 
     def _apply_pitch_role_selector_stage(self, planner: WorkflowPlanner, spec: dict[str, Any]) -> None:
         state = planner.state
@@ -112,15 +101,10 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
         if not isinstance(exclude, list):
             raise RequestError("Relative pitch excluded types must be a list")
         if exclude:
-            relation = Filter(
-                relation,
-                InList(Column(pitch_field), tuple(Literal(str(value)) for value in exclude), True),
-            )
+            relation = Filter(relation, InList(Column(pitch_field), tuple(Literal(str(value)) for value in exclude), True))
 
         ranked = rank_pitch_roles(
-            relation,
-            entity_fields=entities,
-            metric=metric_name,
+            relation, entity_fields=entities, metric=metric_name,
             alias="__ta_selected_role_rank",
             descending=str(spec.get("direction", "desc")) != "asc",
             method=tie_method,
@@ -137,15 +121,10 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
         output_fields = tuple(NamedExpr(field, Column(field, "left")) for field in state.fields) + (
             NamedExpr(alias, Column("__ta_selected_role_rank", "right")),
         )
-        node = Join(
-            state.node,
-            selected,
-            self._join_predicate(join_keys),
-            output_fields,
-            state.grain,
-            "inner",
+        planner.state = WorkflowState(
+            Join(state.node, selected, self._join_predicate(join_keys), output_fields, state.grain, "inner"),
+            state.fields + (alias,), state.grain,
         )
-        planner.state = WorkflowState(node, state.fields + (alias,), state.grain)
 
     def _apply_workflow_stages(self, planner: WorkflowPlanner, raw_stages: Any):
         if raw_stages in (None, []):
@@ -179,10 +158,6 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
                 if "right_value" not in spec:
                     raise RequestError("Derived field requires right_field or right_value")
                 right = _literal(spec.get("right_value"))
-
-            # SQLite performs integer division when both operands are integers,
-            # while DuckDB promotes `/` to a fractional result. Research metrics
-            # such as pitch usage must be identical across both relational paths.
             left_expr = Column(left)
             if op == "/":
                 left_expr = Binary(left_expr, "*", Literal(1.0))
@@ -211,16 +186,188 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
         result = NumericalExecutor().clustering(
             table,
             ClusteringSpec(
-                features=features,
-                method=method,
-                clusters=int(payload.get("clusters", 3)),
-                standardize=bool(payload.get("standardize", True)),
-                seed=int(payload.get("seed", 42)),
-                id_fields=id_fields,
-                partition_fields=partition_fields,
+                features=features, method=method, clusters=int(payload.get("clusters", 3)),
+                standardize=bool(payload.get("standardize", True)), seed=int(payload.get("seed", 42)),
+                id_fields=id_fields, partition_fields=partition_fields,
                 assignment_limit=max(0, min(int(payload.get("assignment_limit", 5000)), 50_000)),
             ),
             progress,
         )
         result["input_backend"] = input_backend
         return result
+
+    def _cluster_compare(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run stress-test #10 as a reusable multi-stage research analysis.
+
+        1) annotate each entity's arsenal signature;
+        2) within each arsenal group select the best non-reference pitch type;
+        3) cluster that selected pitch separately inside every entity;
+        4) select the best cluster by a numeric evaluation field;
+        5) compare that cluster with the reference pitch for the same entity.
+        """
+        schema = self.schema()
+        raw_entities = payload.get("entity_fields", ["pitcher"])
+        if not isinstance(raw_entities, list) or not raw_entities:
+            raise RequestError("Cluster comparison requires entity fields")
+        entities = tuple(self._field(str(field)) for field in raw_entities if field)
+        if not entities:
+            raise RequestError("Cluster comparison requires at least one entity field")
+        reference_pitch = str(payload.get("reference_pitch_type", "FF") or "FF")
+        selection_field = self._field(str(payload.get("selection_value_field") or "release_speed"))
+        evaluation_field = self._field(str(payload.get("evaluation_field") or selection_field))
+        features_raw = payload.get("features", [])
+        if not isinstance(features_raw, list) or not features_raw:
+            raise RequestError("Cluster comparison requires movement/shape feature fields")
+        features = tuple(self._field(str(field)) for field in features_raw)
+        selection_function = str(payload.get("selection_function", "avg"))
+        if selection_function not in {"avg", "min", "max", "sum", "median"}:
+            raise RequestError("Cluster comparison selection function must be avg/min/max/sum/median")
+        selection_direction = str(payload.get("selection_direction", "asc"))
+        evaluation_direction = str(payload.get("evaluation_direction", "asc"))
+        if selection_direction not in {"asc", "desc"} or evaluation_direction not in {"asc", "desc"}:
+            raise RequestError("Cluster comparison directions must be asc or desc")
+        arsenal_alias = "arsenal"
+
+        candidate_payload = {
+            "mode": "clustering",
+            "filters": payload.get("filters", []),
+            "input_stages": [
+                {
+                    "kind": "arsenal_signature",
+                    "entity_fields": list(entities),
+                    "pitch_field": "pitch_type",
+                    "min_usage": float(payload.get("min_usage", 0.05)),
+                    "alias": arsenal_alias,
+                },
+                {
+                    "kind": "pitch_role_select",
+                    "entity_fields": [arsenal_alias],
+                    "pitch_field": "pitch_type",
+                    "metric_kind": "field_metric",
+                    "value_field": selection_field,
+                    "function": selection_function,
+                    "direction": selection_direction,
+                    "exclude_pitch_types": [reference_pitch],
+                    "rank": 1,
+                    "tie_method": str(payload.get("tie_method", "row_number")),
+                    "alias": "selected_role_rank",
+                },
+            ] + list(payload.get("candidate_stages") or []),
+            "max_input_rows": int(payload.get("max_input_rows", 200_000)),
+        }
+        required = tuple(dict.fromkeys(
+            entities + (arsenal_alias, "pitch_type", selection_field, evaluation_field) + features
+        ))
+        progress = _PROGRESS.get()
+        if progress is not None:
+            progress("numerical_prepare", 5.0, "Selecting arsenal-group pitch and preparing per-entity clustering")
+        candidate_table, input_backend = self._numerical_input(candidate_payload, required)
+        cluster_spec = ClusteringSpec(
+            features=features,
+            method=str(payload.get("method", "kmeans")),
+            clusters=int(payload.get("clusters", 3)),
+            standardize=bool(payload.get("standardize", True)),
+            seed=int(payload.get("seed", 42)),
+            id_fields=(arsenal_alias, "pitch_type", evaluation_field),
+            partition_fields=entities,
+            assignment_limit=0,
+        )
+        if cluster_spec.method not in {"kmeans", "gmm"}:
+            raise RequestError("Cluster comparison method must be kmeans or gmm")
+        clustered = NumericalExecutor().cluster_table(candidate_table, cluster_spec, progress)
+
+        cluster_values: dict[tuple[tuple[Any, ...], int], list[float]] = {}
+        cluster_rows: dict[tuple[tuple[Any, ...], int], list[dict[str, Any]]] = {}
+        for row in clustered.assignments.rows:
+            value = row.get(evaluation_field)
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(number):
+                continue
+            entity_key = tuple(row.get(field) for field in entities)
+            key = (entity_key, int(row["cluster"]))
+            cluster_values.setdefault(key, []).append(number)
+            cluster_rows.setdefault(key, []).append(row)
+        if not cluster_values:
+            raise RequestError("No complete evaluation values remain after clustering")
+
+        best: dict[tuple[Any, ...], tuple[int, float, list[dict[str, Any]]]] = {}
+        for (entity_key, cluster), values in cluster_values.items():
+            score = float(np.mean(values))
+            current = best.get(entity_key)
+            better = current is None or (score < current[1] if evaluation_direction == "asc" else score > current[1])
+            if better:
+                best[entity_key] = (cluster, score, cluster_rows[(entity_key, cluster)])
+
+        reference_filters = list(payload.get("filters") or []) + [
+            {"field": "pitch_type", "op": "eq", "value": reference_pitch}
+        ]
+        reference_source = self._filter_source(reference_filters)
+        reference_node = Aggregate(
+            reference_source,
+            tuple(NamedExpr(field, Column(field)) for field in entities),
+            (
+                Metric("reference_sample_size", "count"),
+                Metric("reference_value", "avg", Column(evaluation_field)),
+            ),
+            Grain(entities, "cluster_reference"),
+        )
+        reference_result = self._execute(reference_node)
+        reference_by_entity = {
+            tuple(row.get(field) for field in entities): row for row in reference_result.get("rows", [])
+        }
+
+        comparison_rows: list[dict[str, Any]] = []
+        for entity_key, (cluster, candidate_value, rows) in best.items():
+            sample = rows
+            arsenal_values = {row.get(arsenal_alias) for row in sample if row.get(arsenal_alias) is not None}
+            pitch_values = {row.get("pitch_type") for row in sample if row.get("pitch_type") is not None}
+            reference = reference_by_entity.get(entity_key, {})
+            reference_value = reference.get("reference_value")
+            row = {field: value for field, value in zip(entities, entity_key)}
+            row.update({
+                "arsenal": " | ".join(sorted(str(value) for value in arsenal_values)),
+                "candidate_pitch_type": " | ".join(sorted(str(value) for value in pitch_values)),
+                "best_cluster": cluster,
+                "candidate_sample_size": len(sample),
+                "candidate_value": candidate_value,
+                "reference_pitch_type": reference_pitch,
+                "reference_sample_size": reference.get("reference_sample_size"),
+                "reference_value": reference_value,
+                "difference": candidate_value - float(reference_value) if reference_value is not None else None,
+            })
+            comparison_rows.append(row)
+
+        columns = entities + (
+            "arsenal", "candidate_pitch_type", "best_cluster", "candidate_sample_size",
+            "candidate_value", "reference_pitch_type", "reference_sample_size",
+            "reference_value", "difference",
+        )
+        comparison_rows.sort(key=lambda row: tuple(str(row.get(field)) for field in entities))
+        return {
+            "sections": [
+                {
+                    "title": "最佳分群與參考球種比較 Best Cluster vs Reference Pitch",
+                    "columns": list(columns),
+                    "rows": comparison_rows,
+                    "grain": {"keys": list(entities), "label": "entity_cluster_comparison"},
+                    "row_count": len(comparison_rows),
+                    "backend": "numerical",
+                },
+                clustered.summary.to_dict(),
+            ],
+            "backend": "numerical",
+            "input_backend": input_backend,
+            "numerical": {
+                "method": "cluster_compare",
+                "features": list(features),
+                "partition_fields": list(entities),
+                "selection_field": selection_field,
+                "selection_direction": selection_direction,
+                "evaluation_field": evaluation_field,
+                "evaluation_direction": evaluation_direction,
+                "reference_pitch_type": reference_pitch,
+            },
+        }
