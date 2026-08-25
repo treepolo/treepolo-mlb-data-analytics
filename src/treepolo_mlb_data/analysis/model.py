@@ -82,7 +82,9 @@ class NamedExpr:
 @dataclass(frozen=True, slots=True)
 class Metric:
     alias: str
-    function: TypingLiteral["count", "sum", "avg", "min", "max"]
+    function: TypingLiteral[
+        "count", "sum", "avg", "min", "max", "median", "stddev_pop", "stddev_samp"
+    ]
     expr: Expr | None = None
     distinct: bool = False
 
