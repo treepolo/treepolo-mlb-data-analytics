@@ -70,6 +70,7 @@ class BaseAnalysisMixin:
             "capabilities": [
                 "basic", "sequence_pattern", "follow_event", "arsenal", "pitch_role",
                 "temporal", "percentile", "cross_level", "arsenal_change",
+                "workflow", "clustering", "regression", "bootstrap",
             ],
         }
 
