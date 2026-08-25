@@ -29,6 +29,12 @@ class FilterStage:
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedStage:
+    alias: str
+    expr: Expr
+
+
+@dataclass(frozen=True, slots=True)
 class RollingStage:
     alias: str
     function: TypingLiteral["sum", "avg", "count", "min", "max"]
@@ -86,7 +92,7 @@ class SortStage:
     order_by: tuple[OrderKey, ...]
 
 
-WorkflowStage = AggregateStage | FilterStage | RollingStage | OffsetStage | TrendStage | NthStage | RankStage | ProjectStage | SortStage
+WorkflowStage = AggregateStage | FilterStage | DerivedStage | RollingStage | OffsetStage | TrendStage | NthStage | RankStage | ProjectStage | SortStage
 
 
 def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
@@ -125,6 +131,14 @@ class WorkflowPlanner:
 
         if isinstance(stage, FilterStage):
             self.state = WorkflowState(Filter(state.node, stage.predicate), state.fields, state.grain)
+            return self.state
+
+        if isinstance(stage, DerivedStage):
+            if not stage.alias or stage.alias in state.fields:
+                raise ValueError(f"workflow output field already exists or is empty: {stage.alias}")
+            projected_fields = tuple(NamedExpr(field, Column(field)) for field in state.fields) + (NamedExpr(stage.alias, stage.expr),)
+            node = Project(state.node, projected_fields, state.grain)
+            self.state = WorkflowState(node, state.fields + (stage.alias,), state.grain)
             return self.state
 
         if isinstance(stage, RollingStage):
