@@ -98,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
             prepare_fast_status(config.database_path)
             print(json.dumps(read_fast_status(config.database_path), indent=2, ensure_ascii=False))
         elif args.command == "optimize":
-            store.optimize()
+            from .cli_progress import optimize_with_progress
+            optimize_with_progress(store)
             print("SQLite analysis indexes and statistics optimized")
         elif args.command == "auto-update":
             value = "true" if args.enable else "false"
