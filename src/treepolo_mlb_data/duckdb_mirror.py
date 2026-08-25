@@ -68,10 +68,54 @@ def _duckdb_type(sqlite_type: str) -> str:
     return "VARCHAR"
 
 
+def _execute_with_progress(
+    conn,
+    sql: str,
+    params: list | None,
+    progress: ProgressCallback | None,
+    *,
+    stage: str,
+    base: float,
+    span: float,
+    detail: str,
+) -> None:
+    if progress is None:
+        conn.execute(sql, params or [])
+        return
+    holder: dict[str, BaseException] = {}
+    done = threading.Event()
+
+    def worker() -> None:
+        try:
+            conn.execute(sql, params or [])
+        except BaseException as exc:
+            holder["error"] = exc
+        finally:
+            done.set()
+
+    _notify(progress, stage, base, detail)
+    thread = threading.Thread(target=worker, name=f"treepolo-{stage}", daemon=True)
+    thread.start()
+    while not done.wait(0.15):
+        value: float | None = None
+        try:
+            raw = float(conn.query_progress())
+            if raw >= 0:
+                if raw <= 1.0:
+                    raw *= 100.0
+                value = base + max(0.0, min(raw, 100.0)) * span / 100.0
+        except Exception:
+            pass
+        _notify(progress, stage, value, detail)
+    thread.join()
+    if "error" in holder:
+        raise holder["error"]
+
+
 class DuckDBMirror:
     """Persistent columnar analytical mirror of the normalized SQLite pitches table.
 
-    SQLite remains the source of truth.  DuckDB is rebuilt once for an existing
+    SQLite remains the source of truth. DuckDB is rebuilt once for an existing
     installation and then refreshed incrementally from rows whose `_ingested_at`
     changed after the last mirror refresh.
     """
@@ -135,10 +179,18 @@ class DuckDBMirror:
         conn.execute(f"ATTACH {_sql_string(self.sqlite_path.resolve())} AS sqlite_src (TYPE sqlite, READ_ONLY)")
 
     def _rebuild(self, conn, source_token: str, progress: ProgressCallback | None) -> dict:
-        _notify(progress, "analytics_mirror_rebuild", None, "Building DuckDB analytical mirror")
         self._attach_source(conn)
         conn.execute("DROP TABLE IF EXISTS pitches")
-        conn.execute("CREATE TABLE pitches AS SELECT * FROM sqlite_src.pitches")
+        _execute_with_progress(
+            conn,
+            "CREATE TABLE pitches AS SELECT * FROM sqlite_src.pitches",
+            None,
+            progress,
+            stage="analytics_mirror_rebuild",
+            base=4.0,
+            span=15.0,
+            detail="Building one-time DuckDB analytical mirror",
+        )
         last = conn.execute('SELECT MAX("_ingested_at") FROM pitches').fetchone()[0]
         self._set_meta(conn, "source_token", source_token)
         self._set_meta(conn, "last_ingested_at", str(last) if last is not None else "")
@@ -171,12 +223,17 @@ class DuckDBMirror:
                 if last_ingested is None:
                     return self._rebuild(conn, source_token, progress)
 
-                _notify(progress, "analytics_mirror_sync", 8.0, "Refreshing changed rows in DuckDB mirror")
                 self._attach_source(conn)
                 conn.execute("DROP TABLE IF EXISTS changed_pitches")
-                conn.execute(
+                _execute_with_progress(
+                    conn,
                     'CREATE TEMP TABLE changed_pitches AS SELECT * FROM sqlite_src.pitches WHERE "_ingested_at" > ?',
                     [last_ingested],
+                    progress,
+                    stage="analytics_mirror_sync",
+                    base=5.0,
+                    span=10.0,
+                    detail="Refreshing changed rows in DuckDB mirror",
                 )
                 changed = int(conn.execute("SELECT COUNT(*) FROM changed_pitches").fetchone()[0])
                 if changed:
