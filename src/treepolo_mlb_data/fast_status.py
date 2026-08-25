@@ -88,10 +88,14 @@ def rebuild_fast_status(path: Path) -> dict[str, Any]:
     try:
         with _connect(path) as conn:
             _ensure_tables(conn)
+            # Serialize this one-time snapshot against writers. This is never on
+            # the HTTP request path; UI startup remains immediate.
+            conn.execute("BEGIN IMMEDIATE")
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pitches'"
             ).fetchone()
             if not exists:
+                conn.rollback()
                 prepare_fast_status(path)
                 return read_fast_status(path)
             cols = {row[1] for row in conn.execute("PRAGMA table_info(pitches)")}
