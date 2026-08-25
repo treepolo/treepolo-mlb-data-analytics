@@ -11,6 +11,16 @@ from .model import (
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BINARY_OPS = {"=", "!=", "<>", ">", ">=", "<", "<=", "+", "-", "*", "/", "%"}
+_AGGREGATE_SQL_FUNCTIONS = {
+    "count": "COUNT",
+    "sum": "SUM",
+    "avg": "AVG",
+    "min": "MIN",
+    "max": "MAX",
+    "median": "TA_MEDIAN",
+    "stddev_pop": "TA_STDDEV_POP",
+    "stddev_samp": "TA_STDDEV_SAMP",
+}
 
 
 def quote_ident(name: str) -> str:
@@ -167,7 +177,9 @@ class SQLCompiler:
             for item in node.group_by:
                 sql, ep = self._expr(item.expr); select.append(f"{sql} AS {quote_ident(item.alias)}"); groups.append(quote_ident(item.alias)); sp.extend(ep)
             for metric in node.metrics:
-                fn = metric.function.upper()
+                if metric.function not in _AGGREGATE_SQL_FUNCTIONS:
+                    raise ValueError(f"unsupported aggregate function: {metric.function}")
+                fn = _AGGREGATE_SQL_FUNCTIONS[metric.function]
                 if metric.expr is None:
                     if metric.function != "count": raise ValueError(f"{metric.function} requires an expression")
                     body, mp = "*", []
