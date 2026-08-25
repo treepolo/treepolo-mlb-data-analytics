@@ -4,7 +4,6 @@ from typing import Any
 
 from .analysis import (
     Aggregate, Column, EventPattern, FollowEvent, Grain, Limit, Metric, NamedExpr,
-    OrderKey, Sort,
 )
 from .web_analysis_common import RequestError
 
@@ -45,16 +44,10 @@ class CoreModesMixin:
                 tuple(metrics),
                 Grain(group_by, "grouped" if group_by else "scalar"),
             )
-        sort = payload.get("sort") or {}
-        sort_field = str(sort.get("field", ""))
-        if sort_field:
-            if group_by or metric_specs:
-                output_fields = set(group_by) | {metric.alias for metric in metrics}
-                if sort_field not in output_fields:
-                    raise RequestError("Grouped results can be sorted only by selected group fields or computed metrics")
-            else:
-                sort_field = self._field(sort_field)
-            node = Sort(node, (OrderKey(Column(sort_field), bool(sort.get("descending", False))),))
+            allowed = tuple(group_by) + tuple(metric.alias for metric in metrics)
+        else:
+            allowed = tuple(self.schema())
+        node = self._apply_result_sort(node, payload, allowed)
         return self._execute(Limit(node, max(0, min(int(payload.get("limit", 200)), 5000))))
 
     def _sequence_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -65,14 +58,17 @@ class CoreModesMixin:
         node = EventPattern(
             self._filter_source(payload.get("filters")),
             (NamedExpr("game_pk", Column("game_pk")), NamedExpr("at_bat_number", Column("at_bat_number"))),
-            (OrderKey(Column("pitch_number")),),
+            (self._pitch_order_key(),),
             self._condition(payload.get("event") or {}),
             int(payload.get("occurrence", 1)),
             int(exact_raw) if exact_raw not in (None, "") else None,
             bool(payload.get("require_last_event", False)),
             arrangement,
         )
-        return self._execute(self._result_projection(node))
+        fields = self._result_field_names()
+        node = self._result_projection(node)
+        node = self._apply_result_sort(node, payload, fields)
+        return self._execute(node)
 
     def _follow_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         between: list[NamedExpr] = []
@@ -86,10 +82,18 @@ class CoreModesMixin:
         node = FollowEvent(
             self._filter_source(payload.get("filters")),
             (NamedExpr("game_pk", Column("game_pk")), NamedExpr("at_bat_number", Column("at_bat_number"))),
-            (OrderKey(Column("pitch_number")),),
+            (self._pitch_order_key(),),
             self._condition(payload.get("anchor") or {}),
             self._condition(payload.get("target") or {}),
             int(payload.get("max_gap", 3)),
             tuple(between),
         )
-        return self._execute(self._result_projection(node, tuple(extra)))
+        fields = self._result_field_names(tuple(extra))
+        node = self._result_projection(node, tuple(extra))
+        node = self._apply_result_sort(node, payload, fields)
+        return self._execute(node)
+
+    @staticmethod
+    def _pitch_order_key():
+        from .analysis import OrderKey
+        return OrderKey(Column("pitch_number"))
