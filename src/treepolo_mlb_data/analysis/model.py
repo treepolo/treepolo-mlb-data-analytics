@@ -96,6 +96,26 @@ class OrderKey:
 
 
 @dataclass(frozen=True, slots=True)
+class WindowFrame:
+    """Explicit SQL window frame with offsets relative to the current row.
+
+    `None` means unbounded. Negative offsets are PRECEDING, zero is CURRENT
+    ROW, and positive offsets are FOLLOWING. The first release supports ROWS
+    frames because those map directly to ordered baseball periods/pitches.
+    """
+
+    start: int | None = None
+    end: int | None = 0
+    unit: TypingLiteral["rows"] = "rows"
+
+    def __post_init__(self) -> None:
+        if self.unit != "rows":
+            raise ValueError("only ROWS window frames are currently supported")
+        if self.start is not None and self.end is not None and self.start > self.end:
+            raise ValueError("window frame start cannot be after end")
+
+
+@dataclass(frozen=True, slots=True)
 class WindowField:
     alias: str
     function: TypingLiteral[
@@ -105,6 +125,7 @@ class WindowField:
     args: tuple[Expr, ...] = ()
     partition_by: tuple[Expr, ...] = ()
     order_by: tuple[OrderKey, ...] = ()
+    frame: WindowFrame | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +303,11 @@ def validate(node: Node) -> Grain:
         aliases = [field.alias for field in node.fields]
         if not aliases or len(set(aliases)) != len(aliases):
             raise ValueError("window fields require unique aliases")
+        for field in node.fields:
+            if field.frame is not None and field.function not in {"sum", "avg", "count", "min", "max"}:
+                raise ValueError("explicit window frames are only valid for aggregate window functions")
+            if field.frame is not None and not field.order_by:
+                raise ValueError("explicit window frame requires order_by")
         return grain
     if isinstance(node, Project):
         source_grain = validate(node.source)
