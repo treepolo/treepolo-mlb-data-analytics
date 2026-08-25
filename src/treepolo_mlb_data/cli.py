@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import AppConfig, load_config, save_config
+from .fast_status import prepare_fast_status, read_fast_status
 from .raw import RawArchive
 from .savant import SavantClient
 from .storage import StatcastStore
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.config.exists(): save_config(args.config, config)
         config.root.mkdir(parents=True, exist_ok=True)
         with StatcastStore(config.database_path): pass
+        prepare_fast_status(config.database_path)
         print(f"Initialized {config.database_path}")
         return 0
     if args.command == "ui":
@@ -67,8 +69,11 @@ def main(argv: list[str] | None = None) -> int:
             print(engine.update(through))
         elif args.command == "retry-failed":
             print(engine.retry_failed())
-        elif args.command in {"verify", "status"}:
+        elif args.command == "verify":
             print(json.dumps(store.verify(), indent=2, ensure_ascii=False))
+        elif args.command == "status":
+            prepare_fast_status(config.database_path)
+            print(json.dumps(read_fast_status(config.database_path), indent=2, ensure_ascii=False))
         elif args.command == "auto-update":
             value = "true" if args.enable else "false"
             store.set_setting("auto_update_enabled", value)
@@ -83,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                 p = Path(str(db) + suffix)
                 if p.exists(): p.unlink()
             store = StatcastStore(db)
+            prepare_fast_status(db)
             engine = SyncEngine(config, store, engine.fetcher, engine.archive)
             print(f"Reingested {engine.rebuild_from_raw()} raw snapshots")
         return 0
