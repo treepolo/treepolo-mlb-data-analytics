@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .config import AppConfig
+from .fast_status import update_fast_status_after_ingest
 from .raw import RawArchive
 from .storage import StatcastStore
 from .sync_progress import complete_chunk, finish_sync, set_current_chunk, start_sync
@@ -57,6 +58,7 @@ class SyncEngine:
                     snapshot = self.archive.save(cstart, cend, payload)
                     self.store.record_snapshot(snapshot)
                     stats = self.store.ingest_csv(payload, snapshot.snapshot_id)
+                    update_fast_status_after_ingest(self.config.database_path, payload, stats.inserted)
                     self.store.record_chunk(run_id, cstart.isoformat(), cend.isoformat(), "success", snapshot.snapshot_id, stats)
                     total_received += stats.received
                     total_inserted += stats.inserted
@@ -99,7 +101,8 @@ class SyncEngine:
         for path in self.archive.iter_snapshots():
             snapshot, payload = self.archive.read_verified(path)
             self.store.record_snapshot(snapshot)
-            self.store.ingest_csv(payload, snapshot.snapshot_id)
+            stats = self.store.ingest_csv(payload, snapshot.snapshot_id)
+            update_fast_status_after_ingest(self.config.database_path, payload, stats.inserted)
             count += 1
         return count
 
