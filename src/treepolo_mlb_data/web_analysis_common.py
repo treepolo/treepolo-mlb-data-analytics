@@ -70,7 +70,7 @@ class BaseAnalysisMixin:
             "capabilities": [
                 "basic", "sequence_pattern", "follow_event", "arsenal", "pitch_role",
                 "temporal", "percentile", "cross_level", "arsenal_change",
-                "workflow", "clustering", "regression", "bootstrap",
+                "workflow", "clustering", "regression", "bootstrap", "cluster_compare",
             ],
         }
 
@@ -141,7 +141,6 @@ class BaseAnalysisMixin:
     def _apply_result_sort(self, node, payload: dict[str, Any], allowed_fields: tuple[str, ...] | list[str] | set[str]):
         raw = payload.get("result_sort")
         if raw is None:
-            # Backward compatibility for the pre-shared Basic Analysis sorter.
             legacy = payload.get("sort") or {}
             raw = [legacy] if legacy.get("field") else []
         if isinstance(raw, dict):
