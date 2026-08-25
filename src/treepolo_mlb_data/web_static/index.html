@@ -12,18 +12,10 @@
       <header class="title-bar">
         <div class="title-icon">⚾</div>
         <div class="title-text">treepolo MLB Data Analytics</div>
-        <div class="window-buttons" aria-hidden="true">
-          <span>＿</span><span>□</span><span class="close">×</span>
-        </div>
+        <div class="window-buttons" aria-hidden="true"><span>＿</span><span>□</span><span class="close">×</span></div>
       </header>
 
-      <div class="menu-bar">
-        <span>檔案 File</span>
-        <span>分析 Analysis</span>
-        <span>資料 Data</span>
-        <span>說明 Help</span>
-      </div>
-
+      <div class="menu-bar"><span>檔案 File</span><span>分析 Analysis</span><span>資料 Data</span><span>說明 Help</span></div>
       <div class="toolbar">
         <button id="refresh-meta" class="tool-button">⟳ <span>重新整理 Refresh</span></button>
         <div class="toolbar-separator"></div>
@@ -102,9 +94,8 @@
                     <div class="subheading">統計指標 Metrics</div>
                     <div id="basic-metrics" class="repeat-list"></div>
                     <button type="button" data-add-metric>＋ 新增指標 Add Metric</button>
+                    <p class="hint"><strong>不重複 Distinct：</strong>先去除重複值再計算。最常用於 Count 不同比賽／球員；一般平均球速、中位數、標準差通常不要勾。 Count unique IDs with Distinct; normally leave it off for averages, medians, and standard deviations.</p>
                   </div>
-                  <label>排序欄位 Sort Field<select id="basic-sort" data-field-select data-allow-empty></select></label>
-                  <label>排序方向 Sort Direction<select id="basic-sort-direction"><option value="asc">由小到大 Ascending</option><option value="desc">由大到小 Descending</option></select></label>
                   <label>最多回傳列數 Row Limit<input id="basic-limit" type="number" min="1" max="5000" value="200"></label>
                 </div>
                 <div class="button-row"><button class="primary" data-run="basic">執行分析 Run Analysis</button></div>
@@ -258,21 +249,13 @@
           </div>
 
           <section id="result-window" class="result-window">
-            <div class="result-title-bar">
-              <span>分析結果 Analysis Result</span>
-              <span id="result-summary">尚未執行 Not Run</span>
-            </div>
-            <div id="result-content" class="result-content">
-              <div class="empty-state">請從上方設定分析條件後執行。 Configure an analysis above and run it.</div>
-            </div>
+            <div class="result-title-bar"><span>分析結果 Analysis Result</span><span id="result-summary">尚未執行 Not Run</span></div>
+            <div id="result-content" class="result-content"><div class="empty-state">請從上方設定分析條件後執行。 Configure an analysis above and run it.</div></div>
           </section>
         </section>
       </div>
 
-      <footer class="status-bar">
-        <span id="status-message">就緒 Ready</span>
-        <span id="status-clock"></span>
-      </footer>
+      <footer class="status-bar"><span id="status-message">就緒 Ready</span><span id="status-clock"></span></footer>
     </main>
   </div>
 
@@ -288,16 +271,11 @@
     <div class="condition-row">
       <select class="condition-field" data-field-select></select>
       <select class="condition-op">
-        <option value="eq">等於 Equals</option>
-        <option value="ne">不等於 Not Equal</option>
-        <option value="gt">大於 Greater Than</option>
-        <option value="ge">大於等於 At Least</option>
-        <option value="lt">小於 Less Than</option>
-        <option value="le">小於等於 At Most</option>
-        <option value="in">包含於清單 In List</option>
-        <option value="not_in">不包含於清單 Not In List</option>
-        <option value="is_null">沒有資料 Is Null</option>
-        <option value="not_null">有資料 Is Not Null</option>
+        <option value="eq">等於 Equals</option><option value="ne">不等於 Not Equal</option>
+        <option value="gt">大於 Greater Than</option><option value="ge">大於等於 At Least</option>
+        <option value="lt">小於 Less Than</option><option value="le">小於等於 At Most</option>
+        <option value="in">包含於清單 In List</option><option value="not_in">不包含於清單 Not In List</option>
+        <option value="is_null">沒有資料 Is Null</option><option value="not_null">有資料 Is Not Null</option>
       </select>
       <input class="condition-value" type="text" placeholder="數值 Value">
       <button type="button" class="remove-row" title="移除 Remove">×</button>
@@ -307,11 +285,8 @@
   <template id="metric-template">
     <div class="metric-row">
       <select class="metric-function">
-        <option value="count">筆數 Count</option>
-        <option value="avg">平均 Average</option>
-        <option value="max">最大 Maximum</option>
-        <option value="min">最小 Minimum</option>
-        <option value="sum">總和 Sum</option>
+        <option value="count">筆數 Count</option><option value="avg">平均 Average</option>
+        <option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option>
       </select>
       <select class="metric-field" data-field-select data-allow-empty></select>
       <label class="checkbox-line mini"><input class="metric-distinct" type="checkbox"> 不重複 Distinct</label>
