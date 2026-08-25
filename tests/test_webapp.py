@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from treepolo_mlb_data.web_analysis import AnalysisFacade
 from treepolo_mlb_data.webapp import STATIC_DIR
 
@@ -49,6 +51,62 @@ def test_meta_and_basic_analysis(tmp_path):
     by_type = {row["pitch_type"]: row for row in result["rows"]}
     assert by_type["FF"]["row_count"] == 4
     assert by_type["ST"]["row_count"] == 6
+
+
+def test_basic_statistics_distinct_nulls_and_metric_sorting(tmp_path):
+    path = tmp_path / "db.sqlite"; make_db(path)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO pitches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("n1", 4, 1, 1, "2026-04-04", 2026, 30, 105, "FF", None, "ball", 12, "R", "R"),
+    )
+    conn.commit(); conn.close()
+    facade = AnalysisFacade(path)
+
+    result = facade.analyze({
+        "mode": "basic",
+        "group_by": ["pitch_type"],
+        "metrics": [
+            {"function": "avg", "field": "release_speed"},
+            {"function": "median", "field": "release_speed"},
+            {"function": "stddev_pop", "field": "release_speed"},
+            {"function": "stddev_samp", "field": "release_speed"},
+        ],
+        "sort": {"field": "avg_release_speed", "descending": True},
+        "limit": 20,
+    })
+    assert [row["pitch_type"] for row in result["rows"]] == ["FF", "CH", "SL", "ST"]
+    ff = result["rows"][0]
+    assert ff["avg_release_speed"] == pytest.approx(95.25)
+    assert ff["median_release_speed"] == pytest.approx(95.5)
+    assert ff["stddev_pop_release_speed"] == pytest.approx(0.8291561976)
+    assert ff["stddev_samp_release_speed"] == pytest.approx(0.9574271078)
+
+    distinct = facade.analyze({
+        "mode": "basic",
+        "filters": [{"field": "pitch_type", "op": "eq", "value": "FF"}],
+        "metrics": [
+            {"function": "median", "field": "release_speed", "distinct": True},
+            {"function": "stddev_pop", "field": "release_speed", "distinct": True},
+        ],
+        "sort": {"field": "median_release_speed", "descending": True},
+        "limit": 20,
+    })
+    assert distinct["rows"][0]["median_release_speed"] == pytest.approx(95.0)
+    assert distinct["rows"][0]["stddev_pop_release_speed"] == pytest.approx(0.8164965809)
+
+    duplicate_alias = facade.analyze({
+        "mode": "basic",
+        "group_by": ["pitch_type"],
+        "metrics": [
+            {"function": "avg", "field": "release_speed"},
+            {"function": "avg", "field": "release_speed"},
+        ],
+        "sort": {"field": "avg_release_speed_2", "descending": True},
+        "limit": 1,
+    })
+    assert duplicate_alias["columns"] == ["pitch_type", "avg_release_speed", "avg_release_speed_2"]
+    assert duplicate_alias["rows"][0]["pitch_type"] == "FF"
 
 
 def test_sequence_pattern_and_follow_event(tmp_path):
@@ -122,3 +180,8 @@ def test_static_ui_is_bilingual_and_chart_free():
     assert "<canvas" not in html.lower()
     assert "new Chart" not in js
     assert "title-bar" in css and "window-buttons" in css
+    assert "field-checklist" in js and "field-check-item" in css
+    assert "中位數 Median" in js
+    assert "母體標準差 Population SD" in js
+    assert "樣本標準差 Sample SD" in js
+    assert "metricOutputSpecs" in js

@@ -140,6 +140,28 @@ legend { padding: 0 5px; color: #164079; font-weight: 700; }
 .form-grid > label, .inline-controls label, .short-label { display: flex; flex-direction: column; gap: 4px; font-weight: 700; color: #333; }
 .checkbox-line { display: flex !important; flex-direction: row !important; align-items: center; gap: 5px !important; font-weight: 400 !important; }
 .checkbox-line.mini { white-space: nowrap; }
+.field-checklist {
+  min-height: 112px;
+  max-height: 178px;
+  overflow: auto;
+  border: 1px solid #7f9db9;
+  background: #fff;
+  box-shadow: inset 1px 1px 1px rgba(0,0,0,.08);
+  padding: 1px;
+}
+.field-check-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  padding: 2px 5px;
+  font-weight: 400;
+  cursor: pointer;
+  user-select: none;
+}
+.field-check-item:hover { background: #e8f1ff; }
+.field-check-item:has(input:checked) { color: #fff; background: var(--selection); }
+.field-check-item input { margin: 0; flex: 0 0 auto; }
 .button-row { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 9px; }
 .inline-controls { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
 .hint { margin: 7px 0 0; color: #555; line-height: 1.45; }

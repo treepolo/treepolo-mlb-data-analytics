@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const state = { meta: null, busy: false };
+  const state = { meta: null, busy: false, metricLabels: {} };
 
   const FIELD_LABELS = {
     pitch_uid: "逐球識別碼 Pitch ID",
@@ -45,6 +45,17 @@
     between_1: "中間條件是否出現 Between Condition Present",
   };
 
+  const METRIC_FUNCTION_LABELS = {
+    count: "筆數 Count",
+    avg: "平均 Average",
+    max: "最大 Maximum",
+    min: "最小 Minimum",
+    sum: "總和 Sum",
+    median: "中位數 Median",
+    stddev_pop: "母體標準差 Population SD",
+    stddev_samp: "樣本標準差 Sample SD",
+  };
+
   const STATUS_LABELS = {
     pitch_rows: "逐球資料筆數 Pitch Rows",
     games: "比賽數 Games",
@@ -82,7 +93,7 @@
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
   function fieldLabel(name) {
-    return FIELD_LABELS[name] || `資料欄位 Data Field · ${name}`;
+    return FIELD_LABELS[name] || state.metricLabels[name] || `資料欄位 Data Field · ${name}`;
   }
 
   function setStatus(message) {
@@ -132,8 +143,101 @@
     }
   }
 
+  function renderBasicGroupChecklist() {
+    const select = $("#basic-group");
+    if (!select) return;
+    select.hidden = true;
+    let host = $("#basic-group-checklist");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "basic-group-checklist";
+      host.className = "field-checklist";
+      select.insertAdjacentElement("afterend", host);
+    }
+    host.innerHTML = "";
+    for (const option of Array.from(select.options)) {
+      if (!option.value) continue;
+      const label = document.createElement("label");
+      label.className = "field-check-item";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = option.selected;
+      checkbox.addEventListener("change", () => {
+        option.selected = checkbox.checked;
+        refreshBasicSortOptions();
+      });
+      const text = document.createElement("span");
+      text.textContent = option.textContent;
+      label.append(checkbox, text);
+      host.append(label);
+    }
+  }
+
+  function metricOutputSpecs() {
+    const used = new Set(selectedValues($("#basic-group")));
+    const outputs = [];
+    for (const row of $$(".metric-row", $("#basic-metrics"))) {
+      const spec = metricData(row);
+      const hasExpression = spec.function !== "count" || Boolean(spec.field);
+      const base = hasExpression ? `${spec.function}_${spec.field}` : "row_count";
+      let alias = base;
+      let suffix = 2;
+      while (used.has(alias)) {
+        alias = `${base}_${suffix}`;
+        suffix += 1;
+      }
+      used.add(alias);
+      let label = METRIC_FUNCTION_LABELS[spec.function] || spec.function;
+      if (spec.field) label += ` · ${FIELD_LABELS[spec.field] || spec.field}`;
+      if (alias !== base) label += ` · ${alias}`;
+      outputs.push({ alias, label });
+    }
+    return outputs;
+  }
+
+  function refreshBasicSortOptions() {
+    const sort = $("#basic-sort");
+    if (!sort) return;
+    const previous = sort.value;
+    const groupFields = selectedValues($("#basic-group"));
+    const metricOutputs = metricOutputSpecs();
+    state.metricLabels = Object.fromEntries(metricOutputs.map(item => [item.alias, item.label]));
+
+    sort.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "不指定 None";
+    sort.append(none);
+
+    if (groupFields.length || metricOutputs.length) {
+      for (const field of groupFields) {
+        const option = document.createElement("option");
+        option.value = field;
+        option.textContent = `${fieldLabel(field)} (${field})`;
+        sort.append(option);
+      }
+      for (const item of metricOutputs) {
+        const option = document.createElement("option");
+        option.value = item.alias;
+        option.textContent = `${item.label} (${item.alias})`;
+        sort.append(option);
+      }
+    } else if (state.meta) {
+      for (const field of state.meta.fields) {
+        const option = document.createElement("option");
+        option.value = field.name;
+        option.textContent = `${fieldLabel(field.name)} (${field.name})`;
+        sort.append(option);
+      }
+    }
+
+    if (Array.from(sort.options).some(option => option.value === previous)) sort.value = previous;
+  }
+
   function fillAllFieldSelects() {
     $$('[data-field-select]').forEach(fillFieldSelect);
+    renderBasicGroupChecklist();
+    refreshBasicSortOptions();
   }
 
   function cloneCondition(removable = true) {
@@ -198,12 +302,29 @@
     });
   }
 
+  function addMetricFunctionOptions(select) {
+    for (const [value, label] of Object.entries(METRIC_FUNCTION_LABELS)) {
+      if (Array.from(select.options).some(option => option.value === value)) continue;
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+  }
+
   function addMetric() {
     const fragment = $("#metric-template").content.cloneNode(true);
     const row = $(".metric-row", fragment);
-    $(".remove-row", row).addEventListener("click", () => row.remove());
+    addMetricFunctionOptions($(".metric-function", row));
+    $(".remove-row", row).addEventListener("click", () => {
+      row.remove();
+      refreshBasicSortOptions();
+    });
+    $(".metric-function", row).addEventListener("change", refreshBasicSortOptions);
+    $(".metric-field", row).addEventListener("change", refreshBasicSortOptions);
     if (state.meta) fillFieldSelect($(".metric-field", row));
     $("#basic-metrics").append(row);
+    refreshBasicSortOptions();
   }
 
   function metricData(row) {
