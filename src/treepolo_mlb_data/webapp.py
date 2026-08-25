@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .config import AppConfig
+from .fast_status import prepare_fast_status, read_fast_status, rebuild_fast_status
 from .raw import RawArchive
 from .savant import SavantClient
 from .storage import StatcastStore
@@ -29,6 +30,7 @@ class AppServices:
         self.analysis = AnalysisFacade(config.database_path)
         self.sync_lock = threading.Lock()
         self._scheduler_started = False
+        self._summary_bootstrap_started = False
 
     def _sync_engine(self):
         store = StatcastStore(self.config.database_path)
@@ -40,6 +42,24 @@ class AppServices:
             self.config.request_pause_seconds,
         )
         return store, SyncEngine(self.config, store, client, archive)
+
+    def start_summary_bootstrap(self) -> None:
+        if self._summary_bootstrap_started:
+            return
+        self._summary_bootstrap_started = True
+        if not prepare_fast_status(self.config.database_path):
+            return
+
+        def worker() -> None:
+            # One-time migration for databases created before fast status existed.
+            # Keep it off the request path so the UI opens immediately.
+            with self.sync_lock:
+                try:
+                    rebuild_fast_status(self.config.database_path)
+                except Exception as exc:
+                    print(f"fast status bootstrap failed: {exc}")
+
+        threading.Thread(target=worker, name="treepolo-status-bootstrap", daemon=True).start()
 
     def start_scheduler(self) -> None:
         if self._scheduler_started:
@@ -56,23 +76,28 @@ class AppServices:
         threading.Thread(target=worker, name="treepolo-auto-update", daemon=True).start()
 
     def status(self) -> dict[str, Any]:
+        # Deliberately avoid StatcastStore.verify(): ordinary UI status must not
+        # scan the multi-million-row pitches table.
+        status = read_fast_status(self.config.database_path)
         with StatcastStore(self.config.database_path) as store:
-            try:
-                verify = store.verify()
-            except sqlite3.OperationalError:
-                verify = {
-                    "pitch_rows": 0,
-                    "games": 0,
-                    "latest_game_date": None,
-                    "failed_chunks": 0,
-                }
             enabled = store.get_setting(
                 "auto_update_enabled", str(self.config.auto_update_enabled).lower()
             ) == "true"
-        verify["auto_update_enabled"] = enabled
-        verify["database_path"] = str(self.config.database_path)
-        verify["backfill_progress"] = get_sync_progress("backfill")
-        return verify
+            status["failed_chunks"] = store.conn.execute(
+                "SELECT COUNT(*) FROM sync_chunks WHERE status='failed'"
+            ).fetchone()[0]
+            status["schema_columns"] = store.conn.execute(
+                "SELECT COUNT(*) FROM schema_registry"
+            ).fetchone()[0]
+            status["raw_snapshots"] = store.conn.execute(
+                "SELECT COUNT(*) FROM raw_snapshots"
+            ).fetchone()[0]
+        # pitch_uid is a primary key, so duplicate pitch_uid rows cannot exist.
+        status["duplicate_pitch_uid"] = 0
+        status["auto_update_enabled"] = enabled
+        status["database_path"] = str(self.config.database_path)
+        status["backfill_progress"] = get_sync_progress("backfill")
+        return status
 
     def data_action(self, action: str, payload: dict[str, Any]) -> Any:
         if action == "status":
@@ -100,6 +125,13 @@ class AppServices:
                     enabled = bool(payload.get("enabled", False))
                     store.set_setting("auto_update_enabled", "true" if enabled else "false")
                     return {"auto_update_enabled": enabled}
+                if action == "verify":
+                    # Explicitly requested deep verification is allowed to scan
+                    # the full pitch table. Refresh the persistent summary too.
+                    result = store.verify()
+                    store.close()
+                    rebuild_fast_status(self.config.database_path)
+                    return result
                 if action == "rebuild":
                     if payload.get("confirmation") != "REBUILD":
                         raise RequestError("Rebuild requires explicit confirmation")
@@ -109,6 +141,7 @@ class AppServices:
                         if path.exists():
                             path.unlink()
                     store = StatcastStore(self.config.database_path)
+                    prepare_fast_status(self.config.database_path)
                     engine = SyncEngine(self.config, store, engine.fetcher, engine.archive)
                     return {"snapshots_reingested": engine.rebuild_from_raw()}
                 raise RequestError(f"Unknown data action: {action}")
@@ -214,6 +247,7 @@ def serve(config: AppConfig, host: str = "127.0.0.1", port: int = 8765, open_bro
     if not STATIC_DIR.exists():
         raise RuntimeError(f"Frontend assets are missing: {STATIC_DIR}")
     services = AppServices(config)
+    services.start_summary_bootstrap()
     services.start_scheduler()
     server = ThreadingHTTPServer((host, port), _Handler)
     server.services = services  # type: ignore[attr-defined]
