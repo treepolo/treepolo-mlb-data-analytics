@@ -11,6 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
   "requests>=2.31,<3",
   "duckdb>=1.4,<2",
+  "numpy>=2,<3",
+  "scipy>=1.14,<2",
+  "scikit-learn>=1.6,<2",
 ]
 
 [project.optional-dependencies]
