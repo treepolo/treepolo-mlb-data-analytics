@@ -9,7 +9,17 @@ from .web_analysis_common import RequestError
 
 
 _BASIC_METRIC_FUNCTIONS = {"count", "sum", "avg", "min", "max", "median", "stddev_pop", "stddev_samp"}
-_NUMERIC_ONLY_METRICS = {"median", "stddev_pop", "stddev_samp"}
+_NUMERIC_ONLY_METRICS = {"avg", "sum", "median", "stddev_pop", "stddev_samp"}
+_METRIC_LABELS = {
+    "count": ("Count", "筆數"),
+    "sum": ("Sum", "總和"),
+    "avg": ("Average", "平均值"),
+    "min": ("Minimum", "最小值"),
+    "max": ("Maximum", "最大值"),
+    "median": ("Median", "中位數"),
+    "stddev_pop": ("Population standard deviation", "母體標準差"),
+    "stddev_samp": ("Sample standard deviation", "樣本標準差"),
+}
 
 
 class CoreModesMixin:
@@ -24,12 +34,16 @@ class CoreModesMixin:
                 function = str(spec.get("function", "count"))
                 if function not in _BASIC_METRIC_FUNCTIONS:
                     raise RequestError(f"Unsupported metric function: {function}")
-                field = str(spec.get("field", ""))
+                field = str(spec.get("field", "")).strip()
                 expr = None
+                if function != "count" and not field:
+                    english, chinese = _METRIC_LABELS[function]
+                    raise RequestError(f"{english} requires a metric field / {chinese}必須指定計算欄位")
                 if function != "count" or field:
                     field = self._field(field)
                     if function in _NUMERIC_ONLY_METRICS and self.schema().get(field) not in {"INTEGER", "REAL"}:
-                        raise RequestError(f"{function} requires a numeric field")
+                        english, chinese = _METRIC_LABELS[function]
+                        raise RequestError(f"{english} requires a numeric field / {chinese}必須使用數值欄位")
                     expr = Column(field)
                 base = "row_count" if expr is None else f"{function}_{field}"
                 alias = base
