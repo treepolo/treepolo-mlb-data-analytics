@@ -89,6 +89,14 @@ def _notify(callback: ProgressCallback | None, percentage: float | None, detail:
         callback("numerical_compute", percentage, detail)
 
 
+def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
+    out: list[str] = []
+    for item in items:
+        if item not in out:
+            out.append(item)
+    return tuple(out)
+
+
 def _finite_number(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return float(value) if isinstance(value, bool) else None
@@ -131,6 +139,16 @@ def _statistic(values: np.ndarray, kind: str, success_value: Any) -> float:
     raise ValueError(f"unsupported bootstrap statistic: {kind}")
 
 
+def _bootstrap_unit_parts(
+    rows: list[dict[str, Any]], value_field: str, statistic: str, success_value: Any
+) -> tuple[float, int]:
+    if statistic == "proportion":
+        return float(sum(row.get(value_field) == success_value for row in rows)), len(rows)
+    values = [_finite_number(row.get(value_field)) for row in rows]
+    numeric = [value for value in values if value is not None]
+    return float(sum(numeric)), len(numeric)
+
+
 class NumericalExecutor:
     """Strict numerical execution boundary consuming a typed relational result."""
 
@@ -144,13 +162,16 @@ class NumericalExecutor:
             raise ValueError("clustering requires at least one feature")
         if not 2 <= spec.clusters <= 50:
             raise ValueError("cluster count must be between 2 and 50")
-        missing = [field for field in spec.features + spec.id_fields if field not in table.columns]
+
+        identity_fields = _unique(table.grain.keys + spec.id_fields)
+        missing = [field for field in spec.features + identity_fields if field not in table.columns]
         if missing:
             raise ValueError(f"clustering fields are missing from input: {missing}")
         rows, raw = _numeric_rows(table, spec.features)
         if len(rows) < spec.clusters:
             raise ValueError("cluster count cannot exceed complete input rows")
         _notify(progress, 25.0, f"Preparing {len(rows)} complete rows for clustering")
+
         scaler = StandardScaler() if spec.standardize else None
         matrix = scaler.fit_transform(raw) if scaler is not None else raw
         if spec.method == "kmeans":
@@ -183,7 +204,7 @@ class NumericalExecutor:
         assignment_rows: list[dict[str, Any]] = []
         limit = max(0, int(spec.assignment_limit))
         for index, source in enumerate(rows[:limit] if limit else []):
-            row = {field: source.get(field) for field in spec.id_fields}
+            row = {field: source.get(field) for field in identity_fields}
             row.update({field: float(raw[index, feature_index]) for feature_index, field in enumerate(spec.features)})
             row["cluster"] = int(labels[index])
             if probabilities is not None:
@@ -193,7 +214,9 @@ class NumericalExecutor:
         summary_columns = ("cluster", "sample_size") + tuple(
             name for field in spec.features for name in (f"center_{field}", f"mean_{field}", f"std_{field}")
         )
-        assignment_columns = spec.id_fields + spec.features + ("cluster",) + (("cluster_probability",) if probabilities is not None else ())
+        assignment_columns = identity_fields + tuple(
+            field for field in spec.features if field not in identity_fields
+        ) + ("cluster",) + (("cluster_probability",) if probabilities is not None else ())
         sections = [
             NumericalSection("分群摘要 Cluster Summary", summary_columns, tuple(summary_rows), Grain(("cluster",), "cluster")),
             NumericalSection("分群指派 Cluster Assignments", assignment_columns, tuple(assignment_rows), table.grain),
@@ -210,6 +233,7 @@ class NumericalExecutor:
                 "input_rows": len(table.rows),
                 "complete_rows": len(rows),
                 "assignment_rows_returned": len(assignment_rows),
+                "identity_fields": list(identity_fields),
             },
         }
 
@@ -243,7 +267,8 @@ class NumericalExecutor:
             beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
             fitted = design @ beta
             residuals = y - fitted
-            n = len(y); p = design.shape[1]
+            n = len(y)
+            p = design.shape[1]
             df = n - p
             sse = float(np.sum(residuals ** 2))
             sst = float(np.sum((y - np.mean(y)) ** 2))
@@ -256,21 +281,32 @@ class NumericalExecutor:
             critical = float(stats.t.ppf(1 - alpha / 2, df)) if df > 0 else float("nan")
             names = ("intercept",) + spec.independent
             for index, name in enumerate(names):
-                estimate = float(beta[index]); se = float(standard_errors[index])
+                estimate = float(beta[index])
+                se = float(standard_errors[index])
                 t_stat = estimate / se if se > 0 else None
                 p_value = float(2 * stats.t.sf(abs(t_stat), df)) if t_stat is not None and df > 0 else None
                 coefficient_rows.append({
-                    "term": name, "estimate": estimate, "std_error": se,
-                    "statistic": t_stat, "p_value": p_value,
+                    "term": name,
+                    "estimate": estimate,
+                    "std_error": se,
+                    "statistic": t_stat,
+                    "p_value": p_value,
                     "ci_lower": estimate - critical * se if np.isfinite(critical) else None,
                     "ci_upper": estimate + critical * se if np.isfinite(critical) else None,
                 })
             summary_rows.append({
-                "model": "linear", "sample_size": n, "predictors": len(spec.independent),
-                "r_squared": r2, "rmse": rmse, "degrees_of_freedom": df,
+                "model": "linear",
+                "sample_size": n,
+                "predictors": len(spec.independent),
+                "r_squared": r2,
+                "rmse": rmse,
+                "degrees_of_freedom": df,
                 "standardized_predictors": int(spec.standardize_predictors),
             })
-            summary_columns = ("model", "sample_size", "predictors", "r_squared", "rmse", "degrees_of_freedom", "standardized_predictors")
+            summary_columns = (
+                "model", "sample_size", "predictors", "r_squared", "rmse",
+                "degrees_of_freedom", "standardized_predictors",
+            )
         elif spec.model == "logistic":
             unique = np.unique(y)
             if unique.size != 2:
@@ -280,29 +316,45 @@ class NumericalExecutor:
             predicted = model.predict(x_fit)
             probabilities = model.predict_proba(x_fit)
             classes = model.classes_
-            positive_index = 1
             for name, estimate in zip(spec.independent, model.coef_[0]):
                 coefficient_rows.append({
-                    "term": name, "estimate": float(estimate), "std_error": None,
-                    "statistic": None, "p_value": None, "ci_lower": None, "ci_upper": None,
+                    "term": name,
+                    "estimate": float(estimate),
+                    "std_error": None,
+                    "statistic": None,
+                    "p_value": None,
+                    "ci_lower": None,
+                    "ci_upper": None,
                 })
             coefficient_rows.insert(0, {
-                "term": "intercept", "estimate": float(model.intercept_[0]), "std_error": None,
-                "statistic": None, "p_value": None, "ci_lower": None, "ci_upper": None,
+                "term": "intercept",
+                "estimate": float(model.intercept_[0]),
+                "std_error": None,
+                "statistic": None,
+                "p_value": None,
+                "ci_lower": None,
+                "ci_upper": None,
             })
             summary_rows.append({
-                "model": "logistic", "sample_size": len(y), "predictors": len(spec.independent),
+                "model": "logistic",
+                "sample_size": len(y),
+                "predictors": len(spec.independent),
                 "accuracy": float(accuracy_score(y, predicted)),
                 "log_loss": float(log_loss(y, probabilities, labels=classes)),
-                "positive_class": float(classes[positive_index]),
+                "positive_class": float(classes[1]),
                 "standardized_predictors": int(spec.standardize_predictors),
             })
-            summary_columns = ("model", "sample_size", "predictors", "accuracy", "log_loss", "positive_class", "standardized_predictors")
+            summary_columns = (
+                "model", "sample_size", "predictors", "accuracy", "log_loss",
+                "positive_class", "standardized_predictors",
+            )
         else:
             raise ValueError(f"unsupported regression model: {spec.model}")
 
         _notify(progress, 96.0, "Regression complete")
-        coefficient_columns = ("term", "estimate", "std_error", "statistic", "p_value", "ci_lower", "ci_upper")
+        coefficient_columns = (
+            "term", "estimate", "std_error", "statistic", "p_value", "ci_lower", "ci_upper",
+        )
         sections = [
             NumericalSection("模型摘要 Model Summary", summary_columns, tuple(summary_rows), Grain((), "model")),
             NumericalSection("迴歸係數 Coefficients", coefficient_columns, tuple(coefficient_rows), Grain(("term",), "coefficient")),
@@ -335,6 +387,8 @@ class NumericalExecutor:
         missing = [field for field in required if field not in table.columns]
         if missing:
             raise ValueError(f"bootstrap fields are missing from input: {missing}")
+        if spec.group_field is not None and spec.group_a == spec.group_b:
+            raise ValueError("bootstrap group_a and group_b must be different")
 
         usable: list[dict[str, Any]] = []
         for row in table.rows:
@@ -365,27 +419,97 @@ class NumericalExecutor:
             b = [row.get(spec.value_field) for row in rows if row.get(spec.group_field) == spec.group_b]
             if not a or not b:
                 return float("nan")
-            av = np.asarray(a, dtype=object); bv = np.asarray(b, dtype=object)
+            av = np.asarray(a, dtype=object)
+            bv = np.asarray(b, dtype=object)
             if spec.statistic in {"mean", "median"}:
-                av = av.astype(float); bv = bv.astype(float)
+                av = av.astype(float)
+                bv = bv.astype(float)
             return _statistic(av, spec.statistic, spec.success_value) - _statistic(bv, spec.statistic, spec.success_value)
 
         estimate = calculate(usable)
         rng = np.random.default_rng(spec.seed)
         distribution = np.empty(spec.iterations, dtype=float)
-        _notify(progress, 20.0, f"Resampling {len(unit_values)} explicit units")
         notify_every = max(1, spec.iterations // 20)
-        for iteration in range(spec.iterations):
-            indices = rng.integers(0, len(unit_values), size=len(unit_values))
-            sampled: list[dict[str, Any]] = []
-            for index in indices:
-                sampled.extend(unit_values[int(index)])
-            distribution[iteration] = calculate(sampled)
-            if iteration % notify_every == 0:
-                _notify(progress, 20.0 + 70.0 * iteration / spec.iterations, f"Bootstrap iteration {iteration + 1}/{spec.iterations}")
+
+        # If each cluster belongs to exactly one comparison group, resample the
+        # A and B unit sets independently. This preserves group sample sizes and
+        # avoids invalid bootstrap draws that contain only one group. If units
+        # contain both groups, use a pooled cluster bootstrap so within-unit
+        # dependence between groups is preserved.
+        exclusive_group_units = False
+        group_a_units: list[list[dict[str, Any]]] = []
+        group_b_units: list[list[dict[str, Any]]] = []
+        if spec.group_field is not None:
+            unit_group_sets = [
+                {row.get(spec.group_field) for row in unit if row.get(spec.group_field) in {spec.group_a, spec.group_b}}
+                for unit in unit_values
+            ]
+            exclusive_group_units = all(len(groups) <= 1 for groups in unit_group_sets)
+            if exclusive_group_units:
+                group_a_units = [unit for unit, groups in zip(unit_values, unit_group_sets) if groups == {spec.group_a}]
+                group_b_units = [unit for unit, groups in zip(unit_values, unit_group_sets) if groups == {spec.group_b}]
+                if not group_a_units or not group_b_units:
+                    raise ValueError("bootstrap comparison requires resampling units in both groups")
+
+        fast_scalar = spec.statistic in {"mean", "proportion"}
+        if fast_scalar and spec.group_field is None:
+            parts = np.asarray([
+                _bootstrap_unit_parts(unit, spec.value_field, spec.statistic, spec.success_value)
+                for unit in unit_values
+            ], dtype=float)
+            _notify(progress, 20.0, f"Resampling {len(unit_values)} explicit units")
+            for iteration in range(spec.iterations):
+                indices = rng.integers(0, len(parts), size=len(parts))
+                picked = parts[indices]
+                denominator = float(np.sum(picked[:, 1]))
+                distribution[iteration] = float(np.sum(picked[:, 0]) / denominator) if denominator else float("nan")
+                if iteration % notify_every == 0:
+                    _notify(progress, 20.0 + 70.0 * iteration / spec.iterations, f"Bootstrap iteration {iteration + 1}/{spec.iterations}")
+        elif fast_scalar and spec.group_field is not None and exclusive_group_units:
+            a_parts = np.asarray([
+                _bootstrap_unit_parts(unit, spec.value_field, spec.statistic, spec.success_value)
+                for unit in group_a_units
+            ], dtype=float)
+            b_parts = np.asarray([
+                _bootstrap_unit_parts(unit, spec.value_field, spec.statistic, spec.success_value)
+                for unit in group_b_units
+            ], dtype=float)
+            _notify(progress, 20.0, f"Stratified resampling of {len(a_parts)} A units and {len(b_parts)} B units")
+            for iteration in range(spec.iterations):
+                a_pick = a_parts[rng.integers(0, len(a_parts), size=len(a_parts))]
+                b_pick = b_parts[rng.integers(0, len(b_parts), size=len(b_parts))]
+                a_den = float(np.sum(a_pick[:, 1]))
+                b_den = float(np.sum(b_pick[:, 1]))
+                a_stat = float(np.sum(a_pick[:, 0]) / a_den) if a_den else float("nan")
+                b_stat = float(np.sum(b_pick[:, 0]) / b_den) if b_den else float("nan")
+                distribution[iteration] = a_stat - b_stat
+                if iteration % notify_every == 0:
+                    _notify(progress, 20.0 + 70.0 * iteration / spec.iterations, f"Bootstrap iteration {iteration + 1}/{spec.iterations}")
+        else:
+            estimated_row_work = len(usable) * spec.iterations
+            if estimated_row_work > 50_000_000:
+                raise ValueError(
+                    "Bootstrap median/mixed-group workload is too large for row-wise resampling. "
+                    "Reduce input rows or iterations, or aggregate to an appropriate resampling unit first."
+                )
+            _notify(progress, 20.0, f"Resampling {len(unit_values)} explicit units")
+            for iteration in range(spec.iterations):
+                sampled: list[dict[str, Any]] = []
+                if spec.group_field is not None and exclusive_group_units:
+                    for index in rng.integers(0, len(group_a_units), size=len(group_a_units)):
+                        sampled.extend(group_a_units[int(index)])
+                    for index in rng.integers(0, len(group_b_units), size=len(group_b_units)):
+                        sampled.extend(group_b_units[int(index)])
+                else:
+                    for index in rng.integers(0, len(unit_values), size=len(unit_values)):
+                        sampled.extend(unit_values[int(index)])
+                distribution[iteration] = calculate(sampled)
+                if iteration % notify_every == 0:
+                    _notify(progress, 20.0 + 70.0 * iteration / spec.iterations, f"Bootstrap iteration {iteration + 1}/{spec.iterations}")
+
         finite = distribution[np.isfinite(distribution)]
         if finite.size < max(20, int(spec.iterations * 0.5)):
-            raise ValueError("too many bootstrap samples lacked both required groups")
+            raise ValueError("too many bootstrap samples lacked valid observations or both required groups")
         alpha = 1.0 - spec.confidence
         lower, upper = np.quantile(finite, [alpha / 2, 1 - alpha / 2])
         q05, q25, q50, q75, q95 = np.quantile(finite, [.05, .25, .5, .75, .95])
@@ -402,18 +526,26 @@ class NumericalExecutor:
             "group_b": spec.group_b if spec.group_field else None,
         }
         distribution_row = {
-            "q05": float(q05), "q25": float(q25), "median": float(q50),
-            "q75": float(q75), "q95": float(q95), "finite_iterations": int(finite.size),
+            "q05": float(q05),
+            "q25": float(q25),
+            "median": float(q50),
+            "q75": float(q75),
+            "q95": float(q95),
+            "finite_iterations": int(finite.size),
         }
         _notify(progress, 98.0, "Bootstrap confidence interval complete")
         sections = [
             NumericalSection(
                 "Bootstrap 結果 Bootstrap Result",
-                tuple(result_row), (result_row,), Grain((), "bootstrap"),
+                tuple(result_row),
+                (result_row,),
+                Grain((), "bootstrap"),
             ),
             NumericalSection(
                 "重抽樣分布摘要 Resampling Distribution Summary",
-                tuple(distribution_row), (distribution_row,), Grain((), "bootstrap_distribution"),
+                tuple(distribution_row),
+                (distribution_row,),
+                Grain((), "bootstrap_distribution"),
             ),
         ]
         return {
@@ -424,5 +556,6 @@ class NumericalExecutor:
                 "value_field": spec.value_field,
                 "resample_unit_fields": list(spec.resample_unit_fields),
                 "seed": spec.seed,
+                "stratified_group_units": bool(spec.group_field is not None and exclusive_group_units),
             },
         }
