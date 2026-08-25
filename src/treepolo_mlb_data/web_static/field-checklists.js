@@ -2,9 +2,7 @@
   "use strict";
 
   function renderChecklist(select) {
-    // Basic Analysis already owns its checklist because it must also refresh
-    // the computed-metric sort selector when Group By changes.
-    if (!select || select.id === "basic-group") return;
+    if (!select) return;
 
     select.hidden = true;
     const hostId = `${select.id}-checklist`;
@@ -43,6 +41,7 @@
     renderChecklist(select);
     const observer = new MutationObserver(() => renderChecklist(select));
     observer.observe(select, { childList: true });
+    select.addEventListener("treepolo:checklist-refresh", () => renderChecklist(select));
   }
 
   function init() {
