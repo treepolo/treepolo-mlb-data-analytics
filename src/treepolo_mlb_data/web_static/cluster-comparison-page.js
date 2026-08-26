@@ -214,7 +214,7 @@
           <label>最佳 Cluster 評估欄位 Evaluation Field<select id="cc-evaluation-field" class="cc-field"></select></label>
           <label>最佳 Cluster 方向 Best Cluster Direction<select id="cc-evaluation-direction"><option value="asc">越低越好 Lower</option><option value="desc">越高越好 Higher</option></select></label>
           <label>最大輸入列數 Max Input Rows<input id="cc-max-rows" type="number" min="100" max="1000000" value="200000"></label>
-        </div><p class="hint">分群會依「分析個體」分開建模，不會把不同投手混成同一組 cluster。 Cluster labels are fitted independently inside each entity.</p>
+        </div><p class="hint">每個個體獨立建模：分群會依「分析個體」分開建模，不會把不同投手混成同一組 cluster。 Cluster labels are fitted independently inside each entity.</p>
         <div class="button-row"><button id="cc-run" class="primary" type="button">執行多階段比較 Run Cluster Comparison</button></div></fieldset>
       </div>`;
     document.querySelector(".main-pane")?.insertBefore(panel, document.querySelector("#result-window"));
