@@ -31,6 +31,14 @@
     document.head.append(style);
   }
 
+  function loadLibraryStatus() {
+    if (document.getElementById("analysis-library-status-script")) return;
+    const script = document.createElement("script");
+    script.id = "analysis-library-status-script";
+    script.src = "/analysis-library-status.js";
+    document.head.append(script);
+  }
+
   function fieldOptions() {
     const source = document.querySelector("#basic-group");
     const options = source ? Array.from(source.options) : [];
@@ -181,6 +189,7 @@
   }
 
   function inject() {
+    loadLibraryStatus();
     if (document.getElementById(PANEL_ID)) return;
     injectStyles();
     const analysisGroup = Array.from(document.querySelectorAll(".task-group")).find(group => group.querySelector(".task-group-title")?.textContent.includes("進階研究"));
