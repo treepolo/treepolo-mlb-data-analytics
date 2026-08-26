@@ -39,6 +39,16 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _data_revision(conn: sqlite3.Connection) -> str | None:
+    settings = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'"
+    ).fetchone()
+    if not settings:
+        return None
+    row = conn.execute("SELECT value FROM settings WHERE key='data_revision'").fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def prepare_fast_status(path: Path) -> bool:
     """Prepare the cache and return True when an existing DB needs one background bootstrap."""
     path = Path(path)
@@ -164,6 +174,7 @@ def read_fast_status(path: Path) -> dict[str, Any]:
     path = Path(path)
     with _connect(path) as conn:
         _ensure_tables(conn)
+        revision = _data_revision(conn)
         cache = conn.execute(f"SELECT * FROM {_CACHE_TABLE} WHERE id=1").fetchone()
         if cache is None:
             return {
@@ -173,6 +184,7 @@ def read_fast_status(path: Path) -> dict[str, Any]:
                 "latest_game_date": None,
                 "missing_natural_key": None,
                 "integrity_stale": True,
+                "data_revision": revision,
             }
         return {
             "summary_state": cache["state"],
@@ -182,4 +194,5 @@ def read_fast_status(path: Path) -> dict[str, Any]:
             "missing_natural_key": cache["missing_natural_key"],
             "integrity_stale": bool(cache["integrity_stale"]),
             "summary_updated_at": cache["updated_at"],
+            "data_revision": revision,
         }
