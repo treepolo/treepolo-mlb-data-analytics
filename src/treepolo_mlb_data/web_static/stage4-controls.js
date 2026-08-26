@@ -74,13 +74,16 @@
     const fn=row.querySelector(".metric-function")?.value||"count";
     const field=row.querySelector(".metric-field"); if(!field)return;
     const empty=Array.from(field.options).find(o=>o.value==="");
-    if(empty) empty.textContent=fn==="count"?"不指定 None":"請選擇欄位 Select Field";
+    const emptyLabel=fn==="count"?"不指定 None":"請選擇欄位 Select Field";
+    if(empty && empty.textContent!==emptyLabel) empty.textContent=emptyLabel;
     field.required=fn!=="count"; row.classList.toggle("metric-invalid",fn!=="count"&&!field.value);
   }
   function installMetricValidation() {
     const host=document.querySelector("#basic-metrics"); if(!host)return;
     const sync=()=>host.querySelectorAll(".metric-row").forEach(syncMetricRow); sync();
-    new MutationObserver(sync).observe(host,{childList:true,subtree:true});
+    // Watch only metric rows being added/removed. Observing the full subtree caused
+    // syncMetricRow()'s option-label update to trigger itself indefinitely.
+    new MutationObserver(sync).observe(host,{childList:true});
     host.addEventListener("change",e=>syncMetricRow(e.target.closest?.(".metric-row")));
     document.addEventListener("click",e=>{
       if(!e.target.closest?.('[data-run="basic"]'))return;
