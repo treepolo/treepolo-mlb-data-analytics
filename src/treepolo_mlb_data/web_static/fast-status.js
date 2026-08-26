@@ -1,9 +1,10 @@
 (() => {
   "use strict";
 
-  const checklistScript = document.createElement("script");
-  checklistScript.src = "/field-checklists.js";
-  document.head.append(checklistScript);
+  const acceptanceScript = document.createElement("script");
+  acceptanceScript.src = "/acceptance-fixes.js";
+  acceptanceScript.dataset.acceptanceFixes = "1";
+  document.head.append(acceptanceScript);
 
   let timer = null;
 
