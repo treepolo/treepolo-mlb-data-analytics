@@ -6,9 +6,10 @@ from typing import Any, Callable
 from .web_analysis_advanced import AdvancedModesMixin
 from .web_analysis_common import BaseAnalysisMixin, RequestError, _PROGRESS, _jsonable
 from .web_analysis_modes import CoreModesMixin
+from .web_analysis_stage4_ext import Stage4ExtendedModesMixin
 
 
-class AnalysisFacade(BaseAnalysisMixin, CoreModesMixin, AdvancedModesMixin):
+class AnalysisFacade(BaseAnalysisMixin, CoreModesMixin, AdvancedModesMixin, Stage4ExtendedModesMixin):
     def __init__(
         self,
         database_path: Path,
@@ -38,6 +39,11 @@ class AnalysisFacade(BaseAnalysisMixin, CoreModesMixin, AdvancedModesMixin):
             "percentile": self._percentile,
             "cross_level": self._cross_level,
             "arsenal_change": self._arsenal_change,
+            "workflow": self._workflow,
+            "clustering": self._clustering,
+            "regression": self._regression,
+            "bootstrap": self._bootstrap,
+            "cluster_compare": self._cluster_compare,
         }
         token = _PROGRESS.set(progress)
         try:

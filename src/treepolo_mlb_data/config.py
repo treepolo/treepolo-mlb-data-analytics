@@ -10,6 +10,7 @@ class AppConfig:
     data_dir: str = "data"
     database_name: str = "statcast.sqlite3"
     analytics_database_name: str = "statcast.duckdb"
+    analysis_state_database_name: str = "analysis_state.sqlite3"
     analysis_backend: str = "duckdb"
     earliest_date: str = "2015-01-01"
     backfill_chunk_days: int = 5
@@ -32,6 +33,10 @@ class AppConfig:
     @property
     def analytics_database_path(self) -> Path:
         return self.root / self.analytics_database_name
+
+    @property
+    def analysis_state_database_path(self) -> Path:
+        return self.root / self.analysis_state_database_name
 
 
 def load_config(path: Path) -> AppConfig:

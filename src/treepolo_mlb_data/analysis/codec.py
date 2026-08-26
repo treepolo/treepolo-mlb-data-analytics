@@ -6,7 +6,7 @@ from .model import (
     Aggregate, Binary, Boolean, Case, CollectSet, Column, EventPattern, Expr,
     Filter, FollowEvent, Grain, InList, IsNull, Join, Limit, Literal, Metric,
     NamedExpr, Node, Not, OrderKey, Project, Rank, SetOperation, Sort, Source,
-    Window, WindowField,
+    Window, WindowField, WindowFrame,
 )
 
 
@@ -51,12 +51,25 @@ def _order_to_dict(item: OrderKey) -> dict[str, Any]: return {"expr": expr_to_di
 def _order_from_dict(data: dict[str, Any]) -> OrderKey: return OrderKey(expr_from_dict(data["expr"]), bool(data.get("descending", False)))
 
 
+def _frame_to_dict(frame: WindowFrame | None) -> dict[str, Any] | None:
+    if frame is None:
+        return None
+    return {"start": frame.start, "end": frame.end, "unit": frame.unit}
+
+
+def _frame_from_dict(data: dict[str, Any] | None) -> WindowFrame | None:
+    if not data:
+        return None
+    return WindowFrame(data.get("start"), data.get("end", 0), data.get("unit", "rows"))
+
+
 def _window_to_dict(item: WindowField) -> dict[str, Any]:
     return {
         "alias": item.alias, "function": item.function,
         "args": [expr_to_dict(x) for x in item.args],
         "partition_by": [expr_to_dict(x) for x in item.partition_by],
         "order_by": [_order_to_dict(x) for x in item.order_by],
+        "frame": _frame_to_dict(item.frame),
     }
 
 
@@ -65,6 +78,7 @@ def _window_from_dict(data: dict[str, Any]) -> WindowField:
         data["alias"], data["function"], tuple(expr_from_dict(x) for x in data.get("args", [])),
         tuple(expr_from_dict(x) for x in data.get("partition_by", [])),
         tuple(_order_from_dict(x) for x in data.get("order_by", [])),
+        _frame_from_dict(data.get("frame")),
     )
 
 

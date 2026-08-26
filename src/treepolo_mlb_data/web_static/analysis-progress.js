@@ -6,6 +6,7 @@
 
   const STAGE_LABELS = {
     queued: "等待開始 Queued",
+    cache_hit: "直接讀取快取 Loading Cached Result",
     building_analysis: "建立分析計畫 Building Analysis Plan",
     planning: "規劃執行 Preparing Execution",
     analytics_mirror_wait: "檢查分析資料庫 Checking Analytics Database",
@@ -16,6 +17,8 @@
     sqlite_fallback: "SQLite 備援分析 SQLite Fallback",
     sqlite_query: "執行 SQLite 分析 Running SQLite Query",
     formatting: "整理結果 Formatting Result",
+    numerical_prepare: "準備數值資料 Preparing Numerical Data",
+    numerical_compute: "執行數值分析 Running Numerical Analysis",
     completed: "分析完成 Analysis Complete",
     failed: "分析失敗 Analysis Failed",
   };
@@ -97,7 +100,16 @@
     setTimeout(poll, 0);
   }
 
+  function loadStage4Pages() {
+    if (document.querySelector('script[data-treepolo-stage4-pages]')) return;
+    const script = document.createElement("script");
+    script.src = "/stage4-analysis-pages.js";
+    script.dataset.treepoloStage4Pages = "true";
+    document.head.append(script);
+  }
+
   window.treepoloAnalysisProgress = { start, finish };
+  loadStage4Pages();
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ensurePanel, { once: true });
   else ensurePanel();
 })();

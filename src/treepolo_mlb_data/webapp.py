@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .analysis_jobs import finish_analysis_job, get_analysis_job, start_analysis_job, update_analysis_job
+from .analysis_state import AnalysisStateStore, analysis_cache_key, read_data_revision
 from .config import AppConfig
 from .duckdb_mirror import DuckDBMirror
 from .fast_status import prepare_fast_status, read_fast_status, rebuild_fast_status
@@ -34,6 +35,7 @@ class AppServices:
             config.analytics_database_path,
             backend=config.analysis_backend,
         )
+        self.analysis_state = AnalysisStateStore(config.analysis_state_database_path)
         self.sync_lock = threading.Lock()
         self._scheduler_started = False
         self._summary_bootstrap_started = False
@@ -72,7 +74,10 @@ class AppServices:
         if self._analytics_bootstrap_started or self.config.analysis_backend not in {"duckdb", "auto"}:
             return
         self._analytics_bootstrap_started = True
-        if not self.config.database_path.exists():
+        # Never make first-time mirror construction surprise the user at UI startup.
+        # Existing mirrors may refresh opportunistically; a missing mirror is built by
+        # the first explicit analysis so its progress remains visible.
+        if not self.config.database_path.exists() or not self.config.analytics_database_path.exists():
             return
 
         def worker() -> None:
@@ -98,25 +103,126 @@ class AppServices:
 
         threading.Thread(target=worker, name="treepolo-auto-update", daemon=True).start()
 
+    @staticmethod
+    def _result_backend(result: dict[str, Any]) -> str | None:
+        backend = result.get("backend")
+        if backend is None and result.get("sections"):
+            backends = {section.get("backend") for section in result["sections"] if section.get("backend")}
+            backend = "+".join(sorted(backends)) if backends else None
+        return str(backend) if backend else None
+
+    @staticmethod
+    def _result_row_count(result: dict[str, Any]) -> int | None:
+        if isinstance(result.get("row_count"), int):
+            return int(result["row_count"])
+        if result.get("sections"):
+            return sum(int(section.get("row_count") or 0) for section in result["sections"])
+        return None
+
     def analyze(self, payload: dict[str, Any]) -> dict[str, Any]:
         mode = str(payload.get("mode", "basic"))
         job_id = start_analysis_job(mode)
+        data_revision = read_data_revision(self.config.database_path)
+        cache_key = analysis_cache_key(
+            payload=payload,
+            data_revision=data_revision,
+            backend=self.config.analysis_backend,
+        )
 
         def progress(stage: str, percentage: float | None, detail: str | None) -> None:
             update_analysis_job(job_id, stage=stage, percentage=percentage, detail=detail)
 
+        cached = self.analysis_state.get_cached_result(cache_key)
+        if cached is not None:
+            progress("cache_hit", 100.0, "Loaded identical analysis from persistent result cache")
+            backend = self._result_backend(cached)
+            history_id = self.analysis_state.record_history(
+                payload=payload,
+                data_revision=data_revision,
+                cache_key=cache_key,
+                backend=backend,
+                row_count=self._result_row_count(cached),
+                status="success",
+            )
+            finish_analysis_job(job_id, backend=backend)
+            cached["cache"] = {"hit": True, "stored": True, "key": cache_key, "data_revision": data_revision}
+            cached["history_id"] = history_id
+            cached["job_id"] = job_id
+            return cached
+
         try:
             result = self.analysis.analyze(payload, progress=progress)
-            backend = result.get("backend")
-            if backend is None and result.get("sections"):
-                backends = {section.get("backend") for section in result["sections"] if section.get("backend")}
-                backend = "+".join(sorted(backends)) if backends else None
-            finish_analysis_job(job_id, backend=str(backend) if backend else None)
+            backend = self._result_backend(result)
+            cache_result = dict(result)
+            stored = self.analysis_state.put_cached_result(
+                cache_key,
+                data_revision=data_revision,
+                backend=backend or self.config.analysis_backend,
+                payload=payload,
+                result=cache_result,
+            )
+            history_id = self.analysis_state.record_history(
+                payload=payload,
+                data_revision=data_revision,
+                cache_key=cache_key if stored else None,
+                backend=backend,
+                row_count=self._result_row_count(result),
+                status="success",
+            )
+            finish_analysis_job(job_id, backend=backend)
+            result["cache"] = {"hit": False, "stored": stored, "key": cache_key, "data_revision": data_revision}
+            result["history_id"] = history_id
             result["job_id"] = job_id
             return result
         except Exception as exc:
+            self.analysis_state.record_history(
+                payload=payload,
+                data_revision=data_revision,
+                cache_key=None,
+                backend=None,
+                row_count=None,
+                status="failed",
+                error=str(exc),
+            )
             finish_analysis_job(job_id, error=str(exc))
             raise
+
+    def history(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.analysis_state.list_history(limit)
+
+    def history_item(self, history_id: int) -> dict[str, Any] | None:
+        return self.analysis_state.get_history(history_id)
+
+    def saved_analyses(self) -> list[dict[str, Any]]:
+        return self.analysis_state.list_saved()
+
+    def saved_analysis(self, saved_id: int) -> dict[str, Any] | None:
+        return self.analysis_state.get_saved(saved_id)
+
+    def save_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
+        analysis_payload = payload.get("analysis_payload")
+        if not isinstance(analysis_payload, dict):
+            raise RequestError("analysis_payload must be an object")
+        return self.analysis_state.save_analysis(
+            name=str(payload.get("name", "")),
+            notes=str(payload.get("notes", "")),
+            payload=analysis_payload,
+            cache_key=str(payload.get("cache_key")) if payload.get("cache_key") else None,
+            data_revision=str(payload.get("data_revision")) if payload.get("data_revision") else None,
+        )
+
+    def update_saved_analysis(self, saved_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+        analysis_payload = payload.get("analysis_payload")
+        if analysis_payload is not None and not isinstance(analysis_payload, dict):
+            raise RequestError("analysis_payload must be an object")
+        return self.analysis_state.update_saved(
+            saved_id,
+            name=payload.get("name"),
+            notes=payload.get("notes"),
+            payload=analysis_payload,
+            cache_key=str(payload.get("cache_key")) if payload.get("cache_key") else None,
+            data_revision=str(payload.get("data_revision")) if payload.get("data_revision") else None,
+        )
 
     def status(self) -> dict[str, Any]:
         # Deliberately avoid StatcastStore.verify(): ordinary UI status must not
@@ -142,6 +248,7 @@ class AppServices:
         status["analysis_backend"] = self.config.analysis_backend
         status["analytics_database_path"] = str(self.config.analytics_database_path)
         status["analytics_database_exists"] = self.config.analytics_database_path.exists()
+        status["analysis_state_database_path"] = str(self.config.analysis_state_database_path)
         status["backfill_progress"] = get_sync_progress("backfill")
         return status
 
@@ -231,6 +338,16 @@ class _Handler(BaseHTTPRequestHandler):
             raise RequestError("JSON request must be an object")
         return value
 
+    @staticmethod
+    def _path_id(path: str, prefix: str) -> int | None:
+        suffix = path.removeprefix(prefix).strip("/")
+        if not suffix:
+            return None
+        try:
+            return int(suffix)
+        except ValueError as exc:
+            raise RequestError("Invalid analysis item id") from exc
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -241,6 +358,23 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/analysis/progress":
                 job_id = (parse_qs(parsed.query).get("job_id") or [None])[0]
                 self._json(HTTPStatus.OK, {"progress": get_analysis_job(job_id)})
+                return
+            if path == "/api/analysis/history":
+                limit_raw = (parse_qs(parsed.query).get("limit") or ["50"])[0]
+                self._json(HTTPStatus.OK, {"history": self.services.history(int(limit_raw))})
+                return
+            if path.startswith("/api/analysis/history/"):
+                history_id = self._path_id(path, "/api/analysis/history/")
+                item = self.services.history_item(int(history_id)) if history_id is not None else None
+                self._json(HTTPStatus.OK if item is not None else HTTPStatus.NOT_FOUND, {"item": item})
+                return
+            if path == "/api/analysis/saved":
+                self._json(HTTPStatus.OK, {"saved": self.services.saved_analyses()})
+                return
+            if path.startswith("/api/analysis/saved/"):
+                saved_id = self._path_id(path, "/api/analysis/saved/")
+                item = self.services.saved_analysis(int(saved_id)) if saved_id is not None else None
+                self._json(HTTPStatus.OK if item is not None else HTTPStatus.NOT_FOUND, {"item": item})
                 return
             if path == "/api/data/backfill-progress":
                 self._json(HTTPStatus.OK, {"progress": get_sync_progress("backfill")})
@@ -259,9 +393,29 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/analyze":
                 self._json(HTTPStatus.OK, self.services.analyze(payload))
                 return
+            if path == "/api/analysis/saved":
+                self._json(HTTPStatus.OK, {"item": self.services.save_analysis(payload)})
+                return
+            if path.startswith("/api/analysis/saved/"):
+                saved_id = self._path_id(path, "/api/analysis/saved/")
+                item = self.services.update_saved_analysis(int(saved_id), payload) if saved_id is not None else None
+                self._json(HTTPStatus.OK if item is not None else HTTPStatus.NOT_FOUND, {"item": item})
+                return
             if path.startswith("/api/data/"):
                 action = path.removeprefix("/api/data/")
                 self._json(HTTPStatus.OK, self.services.data_action(action, payload))
+                return
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown API endpoint"})
+        except Exception as exc:
+            self._error(exc)
+
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        try:
+            if path.startswith("/api/analysis/saved/"):
+                saved_id = self._path_id(path, "/api/analysis/saved/")
+                deleted = self.services.analysis_state.delete_saved(int(saved_id)) if saved_id is not None else False
+                self._json(HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND, {"deleted": deleted})
                 return
             self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown API endpoint"})
         except Exception as exc:
@@ -291,6 +445,8 @@ class _Handler(BaseHTTPRequestHandler):
                 b'<script src="/field-checklists.js"></script>\n'
                 b'<script src="/analysis-controls.js"></script>\n'
                 b'<script src="/analysis-progress.js"></script>\n'
+                b'<script src="/stage4-analysis-pages.js"></script>\n'
+                b'<script src="/stage4-controls.js"></script>\n'
                 b'<script src="/backfill-progress.js"></script>\n'
                 b'<script src="/fast-status.js"></script>\n</body>',
             )
@@ -322,3 +478,4 @@ def serve(config: AppConfig, host: str = "127.0.0.1", port: int = 8765, open_bro
         pass
     finally:
         server.server_close()
+        services.analysis_state.close()
