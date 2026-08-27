@@ -36,7 +36,7 @@ def test_large_single_field_selectors_are_one_editable_combo_not_select_plus_sea
     assert "搜尋欄位 Search field" not in unified
 
 
-def test_editable_field_controls_use_real_native_select_arrow_donors():
+def test_editable_field_controls_use_real_visible_native_select_arrow_donors():
     unified = read("field-controls-unified.js")
     arrows_js = read("field-controls-native-arrow.js")
     arrows_css = read("field-controls-native-arrow.css")
@@ -47,6 +47,7 @@ def test_editable_field_controls_use_real_native_select_arrow_donors():
     assert 'donor.setAttribute("aria-hidden", "true")' in arrows_js
     assert "pointer-events: none" in arrows_css
     assert "clip-path: inset(0 0 0 calc(100% - 24px))" in arrows_css
+    assert "color: transparent" not in arrows_css
     assert ".xp-field-shell::after" not in arrows_css
     assert ".xp-field-input-shell::after" not in arrows_css
     assert ".xp-semantic-shell.xp-has-domain::after" not in arrows_css
