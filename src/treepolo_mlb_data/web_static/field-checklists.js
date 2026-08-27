@@ -24,6 +24,16 @@
     return /(?:^|-)group$/i.test(select.id || "") || select.dataset.searchMode === "locate";
   }
 
+  function legalValues(select) {
+    const provider = window.treepoloLegalFieldOptions?.available;
+    if (typeof provider !== "function") return null;
+    try {
+      return new Set(provider(select) || []);
+    } catch {
+      return null;
+    }
+  }
+
   function renderChecklist(select) {
     if (!select) return;
     select.hidden = true;
@@ -56,9 +66,18 @@
     tools.append(search, summary);
     host.append(tools, items);
 
+    const allowed = legalValues(select);
     const rows = [];
+    let selectionChanged = false;
     for (const option of Array.from(select.options)) {
       if (!option.value) continue;
+      if (allowed && !allowed.has(option.value)) {
+        if (option.selected) {
+          option.selected = false;
+          selectionChanged = true;
+        }
+        continue;
+      }
       const label = document.createElement("label");
       label.className = "field-check-item";
       label.dataset.searchText = normalize(`${option.textContent || ""} ${option.value}`);
@@ -138,6 +157,7 @@
 
     updateSummary();
     if (previousQuery) applySearch(false);
+    if (selectionChanged) select.dispatchEvent(new Event("change", { bubbles:true }));
   }
 
   function observeSelect(select) {
@@ -149,15 +169,19 @@
     select.addEventListener("treepolo:checklist-refresh", () => renderChecklist(select));
   }
 
+  function refreshAll() {
+    document.querySelectorAll('select[multiple][data-field-select]').forEach(select => {
+      observeSelect(select);
+      renderChecklist(select);
+    });
+  }
+
   function init() {
     injectStyles();
-    document.querySelectorAll('select[multiple][data-field-select]').forEach(observeSelect);
-    document.addEventListener("treepolo:fields-updated", () => {
-      document.querySelectorAll('select[multiple][data-field-select]').forEach(select => {
-        observeSelect(select);
-        renderChecklist(select);
-      });
-    });
+    refreshAll();
+    document.addEventListener("treepolo:fields-updated", refreshAll);
+    document.addEventListener("treepolo:field-legality-ready", refreshAll);
+    document.addEventListener("treepolo:analysis-options-changed", refreshAll);
   }
 
   if (document.readyState === "loading") {

@@ -95,17 +95,18 @@ def test_numeric_and_type_compatible_controls_are_narrowed():
     assert "compatible(map,source)" in source
 
 
-def test_advanced_popup_is_owned_by_legal_option_provider():
-    source = read("field-option-legality-v3.js")
+def test_every_ui_field_control_consumes_the_legality_provider():
+    legality = read("field-option-legality-v3.js")
+    unified = read("field-controls-unified.js")
 
-    assert "renderOwnedPopup" in source
-    assert "legalDescriptors(input)" in source
-    assert "沒有合法項目 No legal matches" in source
-    assert "window.treepoloLegalFieldOptions" in source
-    assert ".xp-edit-shell > .xp-popup" in source
+    assert "window.treepoloLegalFieldOptions={available:control=>legalDescriptors(control).map(item=>item.value),refresh}" in legality
+    assert "window.treepoloLegalFieldOptions?.available" in unified
+    assert "function legalFieldOptions(control)" in unified
+    assert "legalFieldOptions(select)" in unified
+    assert "legalFieldOptions(input)" in unified
 
 
-def test_native_single_selects_are_rebuilt_from_legal_descriptors():
+def test_native_single_selects_that_need_capability_narrowing_are_rebuilt_from_legal_descriptors():
     source = read("field-option-legality-v3.js")
 
     assert "rebuildSelect" in source
@@ -114,34 +115,35 @@ def test_native_single_selects_are_rebuilt_from_legal_descriptors():
 
 
 def test_semantic_value_lists_remain_domain_scoped_not_field_scoped():
-    classic = read("field-controls-classic.js")
+    unified = read("field-controls-unified.js")
 
-    assert "function domain(field)" in classic
-    assert "VALUE_DOMAINS[String(field||'').trim()]" in classic
-    assert "pitch_type: PITCH_TYPES" in classic
-    assert "valueField(input)" in classic
-    assert "#role-exclude,.ta-role-exclude" in classic
-    assert "#cc-reference" in classic
+    assert "function domain(field)" in unified
+    assert "pitch_type: PITCH_TYPES" in unified
+    assert "valueField(input)" in unified
+    assert "#role-exclude,.ta-role-exclude" in unified
+    assert "#cc-reference" in unified
 
 
-def test_legality_layer_loads_after_classic_controls():
+def test_legality_provider_loads_before_unified_ui_controls():
     fast = read("fast-status.js")
 
     acceptance = fast.index('/acceptance-fixes.js')
     cluster = fast.index('/cluster-comparison-page.js')
-    classic = fast.index('/field-controls-classic.js')
     legality = fast.index('/field-option-legality-v3.js')
-    assert acceptance < cluster < classic < legality
+    unified = fast.index('/field-controls-unified.js')
+    assert acceptance < cluster < legality < unified
     assert '/field-option-legality-v2.js' not in fast
+    assert '/field-controls-classic.js' not in fast
 
 
-def test_legality_javascript_syntax():
+def test_legality_and_unified_control_javascript_syntax():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not installed")
-    subprocess.run(
-        [node, "--check", str(STATIC / "field-option-legality-v3.js")],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    for filename in ("field-option-legality-v3.js", "field-controls-unified.js"):
+        subprocess.run(
+            [node, "--check", str(STATIC / filename)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
