@@ -21,13 +21,13 @@
   }
 
   async function loadUiEnhancements() {
-    // Dynamic pages are created first. The classic control layer restores the XP
-    // visual language, then the legality layer narrows every field list using
-    // backend schema capabilities plus the current pipeline output shape.
+    // Dynamic pages are created first. The legality layer owns the field-option
+    // contract; the unified control layer then renders every field chooser from
+    // that contract with one editable/searchable XP-style control.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
-    await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
+    await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
   }
   loadUiEnhancements();
 
