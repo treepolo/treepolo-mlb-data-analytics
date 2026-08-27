@@ -8,7 +8,7 @@ This audit defines the field-control contract after UI acceptance found two sepa
 
 1. **Multiple-field checkbox selectors** keep the existing checkbox-list UI, search box, and selected-item summary. They are not converted to text inputs.
 2. **Large single-field selectors are one editable combo control.** The visible row both displays the current field and accepts typing. Clicking/focusing that same row opens the legal option list directly below it. Typing filters that list. Typing an exact legal field name or exact displayed label commits the selection immediately; Enter or an extra click is not required.
-3. **There is no separate field-search button and no second search input.** Search belongs to the editable field row itself. A small arrow may be rendered as a decorative affordance, but it is not a second control.
+3. **There is no separate field-search button, second search input, or decorative dropdown arrow.** Search and list opening belong to the editable field row itself.
 4. **Pipeline-aware single-field references use the same interaction.** They remain editable because they may reference aliases created by earlier stages, but the current input itself is also the search input and legal-choice popup owner.
 5. **Pipeline-aware multi-field references** remain comma-separated editable inputs where required by the backend contract. Their candidate list is supplied by the same legality provider and reflects the current pipeline shape.
 6. **Small fixed-option selects remain ordinary legacy selects.** Operators, aggregation choices, direction/method choices and similar short enumerations are not data-field selectors and do not receive field search behavior.
