@@ -97,13 +97,9 @@
       .xp-field-shell,.xp-field-input-shell,.xp-semantic-shell{position:relative;display:block;width:100%;min-width:0}
       .xp-field-shell>select{display:none!important}
       .xp-field-entry,.xp-field-input-shell>input,.xp-semantic-shell>input{
-        box-sizing:border-box;width:100%;min-width:0;min-height:24px;padding:2px 19px 2px 4px;
+        box-sizing:border-box;width:100%;min-width:0;min-height:24px;padding:2px 4px;
         border:1px solid #7f9db9;border-radius:0;background:#fff;color:#111;
         font:inherit;box-shadow:inset 1px 1px 1px rgba(0,0,0,.08)
-      }
-      .xp-field-shell::after,.xp-field-input-shell::after,.xp-semantic-shell.xp-has-domain::after{
-        content:"▼";position:absolute;right:4px;top:50%;transform:translateY(-50%);
-        font-size:9px;color:#333;pointer-events:none
       }
       .xp-field-entry.ta-invalid,.xp-field-input-shell>input.ta-invalid{outline:2px solid #b12828;background:#fff3f3}
       .xp-field-popup{
