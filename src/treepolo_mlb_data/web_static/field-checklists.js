@@ -20,6 +20,10 @@
     document.head.append(style);
   }
 
+  function locateOnlySearch(select) {
+    return /(?:^|-)group$/i.test(select.id || "") || select.dataset.searchMode === "locate";
+  }
+
   function renderChecklist(select) {
     if (!select) return;
     select.hidden = true;
@@ -33,6 +37,7 @@
       select.insertAdjacentElement("afterend", host);
     }
 
+    const locateOnly = locateOnlySearch(select);
     const previousQuery = host.querySelector(".field-checklist-search")?.value || "";
     host.innerHTML = "";
     const tools = document.createElement("div");
@@ -40,7 +45,7 @@
     const search = document.createElement("input");
     search.type = "search";
     search.className = "field-checklist-search";
-    search.placeholder = select.id === "basic-group"
+    search.placeholder = locateOnly
       ? "搜尋並定位欄位 Search & locate field"
       : "搜尋欄位 Search fields";
     search.value = previousQuery;
@@ -103,7 +108,7 @@
     let locateIndex = -1;
     function applySearch(advance = false) {
       const query = normalize(search.value);
-      if (select.id === "basic-group") {
+      if (locateOnly) {
         const matches = query ? rows.filter(row => row.label.dataset.searchText.includes(query)) : [];
         if (!matches.length) {
           locateIndex = -1;
@@ -121,7 +126,7 @@
 
     search.addEventListener("input", () => { locateIndex = -1; applySearch(false); });
     search.addEventListener("keydown", event => {
-      if (event.key === "Enter" && select.id === "basic-group") {
+      if (event.key === "Enter" && locateOnly) {
         event.preventDefault();
         applySearch(true);
       }
