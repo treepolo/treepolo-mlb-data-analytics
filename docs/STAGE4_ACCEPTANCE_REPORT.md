@@ -60,6 +60,7 @@ This batch intentionally fixes the acceptance findings together rather than spli
 
 ### Data semantics
 - `pitch_usage()` excludes NULL pitch types before counts, usage rates, arsenal signatures, role selection and arsenal-change set operations.
+- Arsenal Change compares only entities with pitch samples in both requested periods; an entity absent from either period produces neither Added nor Removed pitches.
 
 ### Result safety and history behavior
 - Add a generic **Result Row Limit** to every analysis page; the server trims returned rows while preserving the full `row_count`.
@@ -79,5 +80,4 @@ This batch intentionally fixes the acceptance findings together rather than spli
 - Rename Follow-up gap wording to **往後最多幾球內 Target Within Next N Pitches**.
 
 ## Deferred / not silently changed
-- Whether Arsenal Change should exclude entities that have no pitches at all in one comparison period remains a semantic product decision. This acceptance run only confirmed the NULL-pitch-type bug; the batch does not silently redefine absence-in-period semantics.
 - Full export/visualization/uncertainty presentation remains Stage 4D scope and is not part of this acceptance repair batch.
