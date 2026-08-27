@@ -22,12 +22,12 @@
 
   async function loadUiEnhancements() {
     // Dynamic pages are created first. The classic control layer restores the XP
-    // visual language, then the legality layer narrows every field list to fields
-    // that actually exist at that pipeline point and are valid for that control.
+    // visual language, then the legality layer narrows every field list using
+    // backend schema capabilities plus the current pipeline output shape.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
-    await loadScriptOnce("/field-option-legality-v2.js", "fieldOptionLegality");
+    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
   }
   loadUiEnhancements();
 
