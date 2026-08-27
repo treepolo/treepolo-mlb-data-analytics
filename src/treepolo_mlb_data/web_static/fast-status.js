@@ -1,6 +1,5 @@
 (() => {
   "use strict";
-
   function loadScriptOnce(src, marker) {
     const existing = Array.from(document.scripts).find(script => script.src.endsWith(src));
     if (existing) {
@@ -19,7 +18,6 @@
       document.head.append(script);
     });
   }
-
   async function loadUiEnhancements() {
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
@@ -27,7 +25,6 @@
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
   }
   loadUiEnhancements();
-
   let timer = null;
   function ensureNotice() {
     const host = document.querySelector("#data-status");
