@@ -4,14 +4,16 @@ from dataclasses import dataclass
 from math import sqrt
 from typing import Any, Callable, Literal as TypingLiteral
 
-import numpy as np
-from scipy import stats
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, log_loss
-from sklearn.mixture import GaussianMixture
-from sklearn.preprocessing import StandardScaler
-
+from ._lazy_scientific import (
+    GaussianMixture,
+    KMeans,
+    LogisticRegression,
+    StandardScaler,
+    accuracy_score,
+    log_loss,
+    np,
+    stats,
+)
 from .model import Grain
 
 ProgressCallback = Callable[[str, float | None, str | None], None]

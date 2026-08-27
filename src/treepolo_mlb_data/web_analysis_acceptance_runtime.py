@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
+from .analysis._lazy_scientific import np
 from .analysis import (
     Aggregate, Binary, Boolean, Column, Filter, Grain, InList, IsNull, Limit,
     Literal, Metric, NamedExpr, Project, Window, WindowField, pitch_usage,
