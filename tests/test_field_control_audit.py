@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).parents[1]
@@ -7,6 +11,14 @@ STATIC = ROOT / "src/treepolo_mlb_data/web_static"
 
 def read(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
+
+
+def test_classic_field_control_javascript_parses():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    subprocess.run([node, "--check", str(STATIC / "field-controls-classic.js")], check=True)
+    subprocess.run([node, "--check", str(STATIC / "fast-status.js")], check=True)
 
 
 def test_classic_layer_restores_single_selects_without_touching_multiple_checklists():
