@@ -35,14 +35,19 @@ def test_large_single_field_selectors_are_one_editable_combo_not_select_plus_sea
     assert "搜尋欄位 Search field" not in unified
 
 
-def test_editable_field_controls_do_not_render_decorative_dropdown_arrows():
+def test_editable_field_controls_render_native_style_chevrons_not_text_glyphs():
     unified = read("field-controls-unified.js")
+    arrows = read("field-controls-native-arrow.css")
 
-    assert '.xp-field-shell::after' not in unified
-    assert '.xp-field-input-shell::after' not in unified
-    assert '.xp-semantic-shell.xp-has-domain::after' not in unified
     assert 'content:"▼"' not in unified
-    assert "padding:2px 4px" in unified
+    assert 'content: "▼"' not in arrows
+    assert ".xp-field-shell::after" in arrows
+    assert ".xp-field-input-shell::after" in arrows
+    assert ".xp-semantic-shell.xp-has-domain::after" in arrows
+    assert "border-right: 1.5px solid #111" in arrows
+    assert "border-bottom: 1.5px solid #111" in arrows
+    assert "rotate(45deg)" in arrows
+    assert "padding-right: 24px !important" in arrows
 
 
 def test_exact_typed_single_field_commits_without_enter_or_click():
@@ -149,5 +154,6 @@ def test_unified_layer_loads_after_dynamic_pages_and_legality_provider():
     cluster = fast.index('/cluster-comparison-page.js')
     legality = fast.index('/field-option-legality-v3.js')
     unified = fast.index('/field-controls-unified.js')
-    assert acceptance < cluster < legality < unified
+    arrows = fast.index('/field-controls-native-arrow.css')
+    assert acceptance < cluster < legality < unified < arrows
     assert '/field-controls-classic.js' not in fast
