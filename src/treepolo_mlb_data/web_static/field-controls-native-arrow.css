@@ -1,16 +1,20 @@
-.xp-field-shell::after,
-.xp-field-input-shell::after,
-.xp-semantic-shell.xp-has-domain::after {
-  content: "";
+.xp-native-select-arrow {
   position: absolute;
-  right: 8px;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid #111;
-  border-bottom: 1.5px solid #111;
-  transform: translateY(-70%) rotate(45deg);
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   pointer-events: none;
+  color: transparent;
+  clip-path: inset(0 0 0 calc(100% - 24px));
+}
+
+body .xp-field-shell > select.xp-native-select-arrow,
+body .xp-field-input-shell > select.xp-native-select-arrow,
+body .xp-semantic-shell > select.xp-native-select-arrow {
+  display: block !important;
 }
 
 body .xp-field-entry,
