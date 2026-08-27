@@ -25,6 +25,21 @@ def test_current_result_save_resolves_canonical_history_cache_metadata():
     assert "cache_key: resolved.cache_key || null" in save_ui
 
 
+def test_library_load_preserves_result_metadata_for_later_result_area_save():
+    helper = (STATIC_DIR / "analysis-load-metadata.js").read_text(encoding="utf-8")
+    loader = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
+
+    assert 'api("/api/analysis/saved")' in helper
+    assert 'api("/api/analysis/history?limit=100")' in helper
+    assert '#saved-analysis-list button,#analysis-history-list button' in helper
+    assert 'current !== previousCurrent' in helper
+    assert 'history_id: source.history_id || current.history_id || null' in helper
+    assert 'cache_key: source.cache_key || current.cache_key || null' in helper
+    assert 'data_revision: source.data_revision || current.data_revision || null' in helper
+    assert 'window.treepoloLastAnalysis = {' in helper
+    assert '/analysis-load-metadata.js' in loader
+
+
 def test_save_entry_points_are_result_toolbar_and_history_rows():
     save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
     loader = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
