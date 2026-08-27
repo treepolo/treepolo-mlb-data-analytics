@@ -21,9 +21,6 @@
   }
 
   async function loadUiEnhancements() {
-    // Dynamic pages are created first. The classic control layer restores the XP
-    // visual language, then the legality layer narrows every field list by backend
-    // schema capabilities plus the fields actually present at that pipeline point.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
@@ -32,7 +29,6 @@
   loadUiEnhancements();
 
   let timer = null;
-
   function ensureNotice() {
     const host = document.querySelector("#data-status");
     if (!host) return null;
@@ -45,7 +41,6 @@
     }
     return notice;
   }
-
   async function poll() {
     try {
       const response = await fetch("/api/data/status", { cache: "no-store" });
@@ -69,6 +64,5 @@
       timer = setTimeout(poll, 2000);
     }
   }
-
   document.addEventListener("DOMContentLoaded", () => setTimeout(poll, 300));
 })();
