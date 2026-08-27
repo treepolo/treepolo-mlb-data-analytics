@@ -43,6 +43,7 @@
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
+    await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     document.dispatchEvent(new Event("treepolo:field-legality-ready"));
   }
   loadUiEnhancements();
