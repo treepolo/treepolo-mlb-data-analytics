@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal as TypingLiteral
 
 from .model import (
-    Aggregate, Binary, CollectSet, Column, Filter, Grain, Literal, Metric,
+    Aggregate, Binary, CollectSet, Column, Filter, Grain, IsNull, Literal, Metric,
     NamedExpr, Node, OrderKey, Project, Rank, Window, WindowField,
 )
 
@@ -14,10 +14,16 @@ def pitch_usage(
     entity_fields: tuple[str, ...] = ("pitcher",),
     pitch_field: str = "pitch_type",
 ) -> Node:
-    """Build per-entity pitch counts and usage rates from any pitch-grain relation."""
+    """Build per-entity pitch counts and usage rates from any pitch-grain relation.
+
+    NULL pitch types are not a baseball pitch category, so exclude them before
+    usage/arsenal calculations. This prevents missing Statcast classifications
+    from appearing as an arsenal member or relative-pitch candidate.
+    """
+    clean_source = Filter(source, IsNull(Column(pitch_field), True))
     group_names = entity_fields + (pitch_field,)
     grouped = Aggregate(
-        source,
+        clean_source,
         tuple(NamedExpr(name, Column(name)) for name in group_names),
         (Metric("pitch_count", "count"),),
         Grain(group_names, "pitch_usage"),
