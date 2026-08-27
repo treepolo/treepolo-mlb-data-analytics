@@ -20,6 +20,20 @@
     });
   }
 
+  function loadStyleOnce(href, marker) {
+    const existing = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).find(link => link.href.endsWith(href));
+    if (existing) return Promise.resolve();
+    return new Promise(resolve => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.dataset[marker] = "1";
+      link.addEventListener("load", resolve, { once:true });
+      link.addEventListener("error", resolve, { once:true });
+      document.head.append(link);
+    });
+  }
+
   async function loadUiEnhancements() {
     // Dynamic pages are created first. The legality layer owns the field-option
     // contract; the unified control layer then renders every field chooser from
@@ -28,6 +42,7 @@
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
+    await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     document.dispatchEvent(new Event("treepolo:field-legality-ready"));
   }
   loadUiEnhancements();
