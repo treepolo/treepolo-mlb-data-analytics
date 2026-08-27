@@ -21,13 +21,13 @@
   }
 
   async function loadUiEnhancements() {
-    // Dynamic pages are created first. Classic controls restore the XP-style
-    // presentation. The legality layer runs last and derives each field list from
-    // the live schema, the current pipeline output, and the operation's type rules.
+    // Dynamic pages are created first. The classic control layer restores the XP
+    // visual language, then the legality layer narrows every field list by backend
+    // schema capabilities plus the fields actually present at that pipeline point.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
-    await loadScriptOnce("/field-legality.js", "fieldLegality");
+    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
   }
   loadUiEnhancements();
 
