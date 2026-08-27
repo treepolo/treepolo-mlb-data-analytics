@@ -8,7 +8,7 @@ This audit defines the field-control contract after UI acceptance found two sepa
 
 1. **Multiple-field checkbox selectors** keep the existing checkbox-list UI, search box, and selected-item summary. They are not converted to text inputs.
 2. **Large single-field selectors are one editable combo control.** The visible row both displays the current field and accepts typing. Clicking/focusing that same row opens the legal option list directly below it. Typing filters that list. Typing an exact legal field name or exact displayed label commits the selection immediately; Enter or an extra click is not required.
-3. **There is no separate field-search button, second search input, or decorative dropdown arrow.** Search and list opening belong to the editable field row itself.
+3. **There is no separate field-search button or second search input.** Search and list opening belong to the editable field row itself. Editable/list-backed controls show a native-select-style right-side chevron as a visual affordance; it is CSS-drawn rather than a text `▼` glyph and does not create a second interactive control.
 4. **Pipeline-aware single-field references use the same interaction.** They remain editable because they may reference aliases created by earlier stages, but the current input itself is also the search input and legal-choice popup owner.
 5. **Pipeline-aware multi-field references** remain comma-separated editable inputs where required by the backend contract. Their candidate list is supplied by the same legality provider and reflects the current pipeline shape.
 6. **Small fixed-option selects remain ordinary legacy selects.** Operators, aggregation choices, direction/method choices and similar short enumerations are not data-field selectors and do not receive field search behavior.
@@ -33,6 +33,7 @@ The field UI and field legality have separate responsibilities:
 
 - `field-option-legality-v3.js` derives the legal field set from runtime schema capabilities, current pipeline/output shape and the control’s semantic contract.
 - `field-controls-unified.js` owns the interaction/rendering for field-name controls and finite semantic-value controls. It does not maintain per-control field allowlists.
+- `field-controls-native-arrow.css` supplies the shared native-select-style chevron for list-backed editable controls without changing their interaction or legality behavior.
 - Dynamic controls are discovered by a shared selector registry plus a DOM observer, so fields created after adding workflow stages, filters, metrics or Cluster Comparison controls receive the same behavior.
 - The prior `field-controls-classic.js` implementation remains in repository history but is no longer loaded by the application; it is not a second active field-control path.
 
