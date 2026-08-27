@@ -232,6 +232,7 @@ def test_acceptance_ui_bundle_contains_required_controls():
     ):
         assert token in acceptance
     assert "field-checklist-search" in checklists
-    assert 'select.id === "basic-group"' in checklists
+    assert "locateOnlySearch" in checklists
+    assert 'select.id === "basic-group"' not in checklists
     assert "已選" in checklists
     assert "/acceptance-fixes.js" in fast_status
