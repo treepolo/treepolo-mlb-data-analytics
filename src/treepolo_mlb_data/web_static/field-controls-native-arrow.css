@@ -1,0 +1,20 @@
+.xp-field-shell::after,
+.xp-field-input-shell::after,
+.xp-semantic-shell.xp-has-domain::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid #111;
+  border-bottom: 1.5px solid #111;
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+body .xp-field-entry,
+body .xp-field-input-shell > input,
+body .xp-semantic-shell.xp-has-domain > input {
+  padding-right: 24px !important;
+}
