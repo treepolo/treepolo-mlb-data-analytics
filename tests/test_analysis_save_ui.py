@@ -11,6 +11,20 @@ def test_unified_analysis_save_ui_reuses_one_saved_analysis_endpoint():
     assert "openSaveDialog(source)" in save_ui
 
 
+def test_current_result_save_resolves_canonical_history_cache_metadata():
+    save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
+
+    assert "async function resolveSource" in save_ui
+    assert "current.result?.history_id" in save_ui
+    assert "history_id: item.id || null" in save_ui
+    assert "`/api/analysis/history/${historyId}`" in save_ui
+    assert "cache_key: item.cache_key || null" in save_ui
+    assert "data_revision: item.data_revision || null" in save_ui
+    assert "const resolved = await resolveSource(source)" in save_ui
+    assert "analysis_payload: resolved.payload" in save_ui
+    assert "cache_key: resolved.cache_key || null" in save_ui
+
+
 def test_save_entry_points_are_result_toolbar_and_history_rows():
     save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
     loader = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
