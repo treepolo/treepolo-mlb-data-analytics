@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-import duckdb
+from ._lazy_duckdb import duckdb
 
 ProgressCallback = Callable[[str, float | None, str | None], None]
 
