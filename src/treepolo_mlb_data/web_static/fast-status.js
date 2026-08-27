@@ -28,6 +28,7 @@
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
+    document.dispatchEvent(new Event("treepolo:field-legality-ready"));
   }
   loadUiEnhancements();
 
