@@ -70,6 +70,31 @@ def sqlite_type(column: str) -> str:
     return "TEXT"
 
 
+def field_capabilities(column: str, sql_type: str | None = None) -> tuple[str, ...]:
+    """Return semantic/type capabilities for a schema field.
+
+    UI controls ask for capabilities instead of owning lists of allowed column
+    names. New numeric/date-like fields therefore become eligible automatically.
+    Baseball semantic roles are declared once at the schema boundary, which is
+    also where the backend's canonical field contract lives.
+    """
+    resolved = (sql_type or sqlite_type(column) or "TEXT").upper()
+    capabilities = {"reference", "filter", "group", "order", "id"}
+    if any(token in resolved for token in ("INT", "REAL", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC")):
+        capabilities.update({"numeric", "trend_orderable"})
+    if "DATE" in resolved or column.endswith("_date"):
+        capabilities.update({"temporal", "trend_orderable"})
+
+    # Pitch classifications are semantic schema roles, not UI-owned allowlists.
+    # The pattern naturally covers the public Statcast pitch_type/pitch_name
+    # classification columns while excluding identifiers such as pitch_uid.
+    if resolved == "TEXT" and column.startswith("pitch_") and column.endswith(("_type", "_name")):
+        capabilities.add("pitch_classification")
+    if column == "pitch_type":
+        capabilities.add("canonical_pitch_type")
+    return tuple(sorted(capabilities))
+
+
 def quote_ident(name: str) -> str:
     if not SAFE_COLUMN.fullmatch(name):
         raise ValueError(f"Unsafe column name from upstream CSV: {name!r}")

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from treepolo_mlb_data.schema import field_capabilities
+from treepolo_mlb_data.web_analysis import AnalysisFacade
 
 
 ROOT = Path(__file__).parents[1]
@@ -15,68 +19,84 @@ def read(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
 
 
-def test_legality_layer_tracks_pipeline_shape_and_prior_stage_outputs():
-    source = read("field-option-legality-v2.js")
+def test_schema_capabilities_are_derived_centrally():
+    numeric = set(field_capabilities("new_numeric_metric", "REAL"))
+    dated = set(field_capabilities("custom_game_date", "TEXT"))
+    pitch_class = set(field_capabilities("pitch_name", "TEXT"))
+    canonical = set(field_capabilities("pitch_type", "TEXT"))
 
-    # Aggregate and Project are shape-changing stages: fields that no longer exist
-    # must not remain in later popups. Other stages add typed aliases.
+    assert {"numeric", "trend_orderable"} <= numeric
+    assert {"temporal", "trend_orderable"} <= dated
+    assert "pitch_classification" in pitch_class
+    assert {"pitch_classification", "canonical_pitch_type"} <= canonical
+
+
+def test_meta_exposes_capabilities_for_runtime_schema(tmp_path):
+    db = tmp_path / "meta.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE pitches (pitch_uid TEXT PRIMARY KEY, pitch_type TEXT, game_date TEXT, custom_metric REAL)")
+    conn.commit()
+    conn.close()
+
+    fields = {item["name"]: item for item in AnalysisFacade(db).meta()["fields"]}
+    assert "numeric" in fields["custom_metric"]["capabilities"]
+    assert "temporal" in fields["game_date"]["capabilities"]
+    assert "canonical_pitch_type" in fields["pitch_type"]["capabilities"]
+
+
+def test_legality_layer_tracks_pipeline_shape_and_prior_stage_outputs():
+    source = read("field-option-legality-v3.js")
+
     assert 'kind === "aggregate"' in source
-    assert 'const out = new Map()' in source
+    assert 'const out=new Map()' in source
     assert 'kind === "project"' in source
-    assert 'kind === "derive"' in source
-    assert 'kind === "rolling"' in source
-    assert 'kind === "offset"' in source
-    assert 'kind === "trend"' in source
-    assert 'kind === "rank"' in source
-    assert 'kind === "arsenal_signature"' in source
-    assert 'kind === "pitch_role_select"' in source
-    assert 'kind === "pitch_role_annotate"' in source
-    assert 'kind === "empirical_percentile"' in source
-    assert 'kind === "event_pattern_cohorts"' in source
+    for kind in (
+        "derive", "rolling", "offset", "trend", "rank", "arsenal_signature",
+        "pitch_role_select", "pitch_role_annotate", "empirical_percentile", "event_pattern_cohorts",
+    ):
+        assert f'kind === "{kind}"' in source
     assert "beforeStage" in source
     assert "afterPreparation" in source
 
 
-def test_numeric_and_type_compatible_controls_are_narrowed():
-    source = read("field-option-legality-v2.js")
+def test_field_lists_use_capabilities_not_frontend_field_allowlists():
+    source = read("field-option-legality-v3.js")
 
-    for selector in (
-        ".s4-metric-field",
-        ".s4-left,.s4-right-field",
-        ".s4-value-field",
-        ".ta-metric-cond-value-field",
-        ".ta-value-field",
-        ".ta-percentile-field",
-        "#s4-cluster-features",
-        "#s4-reg-dependent",
-        "#s4-reg-independent",
-        "#s4-boot-value",
-        "#cc-features",
-        "#cc-selection-field",
-        "#cc-evaluation-field",
-        ".metric-field",
-        "#role-value-field",
-        "#percentile-value",
-        "#temporal-value",
-        "#cross-value",
-    ):
-        assert selector in source
-    assert "numericOnly" in source
-    assert "compatible(map, source)" in source
-    assert "NUMERIC_SQL" in source
+    assert 'withCapability(all,"numeric")' in source
+    assert 'withCapability(all,"trend_orderable")' in source
+    assert '"pitch_classification":"canonical_pitch_type"' in source
+    assert "canonical_pitch_type" in source
+    assert "pitch_classification" in source
+    assert 'new Set(["pitch_type"' not in source
+    assert 'new Set(["pitch_type", "pitch_name"' not in source
+    assert "ORDERABLE_TEXT_FIELDS" not in source
     assert 'fetch("/api/meta"' in source
 
 
-def test_pitch_field_lists_are_pitch_fields_only():
-    source = read("field-option-legality-v2.js")
+def test_filter_fields_are_not_accidentally_restricted_to_numeric():
+    source = read("field-option-legality-v3.js")
 
-    assert 'control.matches(".ta-pitch-field")' in source
-    assert 'new Set(["pitch_type", "pitch_name"])' in source
-    assert 'new Set(["pitch_type"])' in source
+    assert 'control.matches(".cc-filter-field,.s4-filter-field,.condition-field")' in source
+    assert '.cc-field"))return numeric()' not in source
+    assert "#cc-selection-field,#cc-evaluation-field" in source
+
+
+def test_numeric_and_type_compatible_controls_are_narrowed():
+    source = read("field-option-legality-v3.js")
+
+    for selector in (
+        ".s4-metric-field", ".s4-left,.s4-right-field", ".s4-value-field",
+        ".ta-metric-cond-value-field", ".ta-value-field", ".ta-percentile-field",
+        "#s4-cluster-features", "#s4-reg-dependent", "#s4-reg-independent",
+        "#s4-boot-value", "#cc-features", "#cc-selection-field", "#cc-evaluation-field",
+        ".metric-field", "#role-value-field", "#percentile-value", "#temporal-value", "#cross-value",
+    ):
+        assert selector in source
+    assert "compatible(map,source)" in source
 
 
 def test_advanced_popup_is_owned_by_legal_option_provider():
-    source = read("field-option-legality-v2.js")
+    source = read("field-option-legality-v3.js")
 
     assert "renderOwnedPopup" in source
     assert "legalDescriptors(input)" in source
@@ -86,11 +106,10 @@ def test_advanced_popup_is_owned_by_legal_option_provider():
 
 
 def test_native_single_selects_are_rebuilt_from_legal_descriptors():
-    source = read("field-option-legality-v2.js")
+    source = read("field-option-legality-v3.js")
 
     assert "rebuildSelect" in source
-    assert ".metric-field,#role-value-field,#percentile-value,#temporal-value,#cross-value,.cc-field" in source
-    assert "actual.length === allowed.length" in source
+    assert "#cc-selection-field,#cc-evaluation-field" in source
     assert "descriptors.forEach" in source
 
 
@@ -111,8 +130,9 @@ def test_legality_layer_loads_after_classic_controls():
     acceptance = fast.index('/acceptance-fixes.js')
     cluster = fast.index('/cluster-comparison-page.js')
     classic = fast.index('/field-controls-classic.js')
-    legality = fast.index('/field-option-legality-v2.js')
+    legality = fast.index('/field-option-legality-v3.js')
     assert acceptance < cluster < classic < legality
+    assert '/field-option-legality-v2.js' not in fast
 
 
 def test_legality_javascript_syntax():
@@ -120,7 +140,7 @@ def test_legality_javascript_syntax():
     if not node:
         pytest.skip("Node.js is not installed")
     subprocess.run(
-        [node, "--check", str(STATIC / "field-option-legality-v2.js")],
+        [node, "--check", str(STATIC / "field-option-legality-v3.js")],
         check=True,
         capture_output=True,
         text=True,
