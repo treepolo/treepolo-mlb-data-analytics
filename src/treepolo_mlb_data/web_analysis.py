@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .schema import field_capabilities
 from .web_analysis_acceptance import AcceptanceFixesMixin
 from .web_analysis_acceptance_runtime import AcceptanceRuntimeFixesMixin
 from .web_analysis_advanced import AdvancedModesMixin
@@ -31,6 +32,14 @@ class AnalysisFacade(
         self.database_path = Path(database_path)
         self.analytics_database_path = Path(analytics_database_path) if analytics_database_path is not None else None
         self.analysis_backend = backend
+
+    def meta(self) -> dict[str, Any]:
+        result = super().meta()
+        for item in result.get("fields", []):
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            item["capabilities"] = list(field_capabilities(str(item["name"]), str(item.get("type") or "TEXT")))
+        return result
 
     @staticmethod
     def _apply_result_limit(result: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
