@@ -188,15 +188,33 @@
     activeSource = null;
   }
 
+  async function resolveSource(source) {
+    const historyId = Number(source?.history_id || 0);
+    if (!historyId) return source;
+
+    const body = await api(`/api/analysis/history/${historyId}`);
+    const item = body.item;
+    if (!item?.payload) throw new Error("找不到此分析的歷史紀錄。 Analysis history record is unavailable.");
+
+    return {
+      ...source,
+      payload: item.payload,
+      cache_key: item.cache_key || null,
+      data_revision: item.data_revision || null,
+      result_available: Boolean(item.result_available),
+    };
+  }
+
   async function saveSource(source, name, notes) {
+    const resolved = await resolveSource(source);
     return api("/api/analysis/saved", {
       method: "POST",
       body: JSON.stringify({
         name,
         notes,
-        analysis_payload: source.payload,
-        cache_key: source.cache_key || null,
-        data_revision: source.data_revision || null,
+        analysis_payload: resolved.payload,
+        cache_key: resolved.cache_key || null,
+        data_revision: resolved.data_revision || null,
       }),
     });
   }
@@ -225,8 +243,9 @@
     return {
       kind: "current",
       payload: current.payload,
-      cache_key: current.result?.cache?.key || null,
-      data_revision: current.result?.cache?.data_revision || null,
+      history_id: current.result?.history_id || current.history_id || null,
+      cache_key: current.result?.cache?.key || current.cache_key || null,
+      data_revision: current.result?.cache?.data_revision || current.data_revision || null,
     };
   }
 
@@ -263,6 +282,7 @@
     return {
       kind: "history",
       payload: item.payload,
+      history_id: item.id || null,
       cache_key: item.cache_key || null,
       data_revision: item.data_revision || null,
       label: `${modeLabel(item.mode)} · ${item.created_at || ""}`,
