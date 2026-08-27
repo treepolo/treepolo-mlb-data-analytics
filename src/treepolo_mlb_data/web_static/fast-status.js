@@ -21,12 +21,13 @@
   }
 
   async function loadUiEnhancements() {
-    // Acceptance controls create the Stage 4 fields first. Cluster Comparison is
-    // another dynamic page. The classic control layer must run last so no native
-    // datalist can replace the XP-style selects or produce browser-positioned popups.
+    // Dynamic pages are created first. Classic controls restore the XP-style
+    // presentation. The legality layer runs last and derives each field list from
+    // the live schema, the current pipeline output, and the operation's type rules.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
+    await loadScriptOnce("/field-legality.js", "fieldLegality");
   }
   loadUiEnhancements();
 
