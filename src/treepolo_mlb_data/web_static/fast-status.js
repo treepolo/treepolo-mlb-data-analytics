@@ -45,6 +45,7 @@
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
+    await loadScriptOnce("/analysis-load-metadata.js", "analysisLoadMetadata");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
     document.dispatchEvent(new Event("treepolo:field-legality-ready"));
   }
