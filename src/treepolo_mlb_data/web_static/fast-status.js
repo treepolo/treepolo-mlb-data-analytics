@@ -1,10 +1,34 @@
 (() => {
   "use strict";
 
-  const acceptanceScript = document.createElement("script");
-  acceptanceScript.src = "/acceptance-fixes.js";
-  acceptanceScript.dataset.acceptanceFixes = "1";
-  document.head.append(acceptanceScript);
+  function loadScriptOnce(src, marker) {
+    const existing = Array.from(document.scripts).find(script => script.src.endsWith(src));
+    if (existing) {
+      if (existing.dataset.loaded === "1" || existing.readyState === "complete") return Promise.resolve();
+      return new Promise(resolve => {
+        existing.addEventListener("load", resolve, { once:true });
+        existing.addEventListener("error", resolve, { once:true });
+      });
+    }
+    return new Promise(resolve => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.dataset[marker] = "1";
+      script.addEventListener("load", () => { script.dataset.loaded = "1"; resolve(); }, { once:true });
+      script.addEventListener("error", resolve, { once:true });
+      document.head.append(script);
+    });
+  }
+
+  async function loadUiEnhancements() {
+    // Acceptance controls create the Stage 4 fields first. Cluster Comparison is
+    // another dynamic page. The classic control layer must run last so no native
+    // datalist can replace the XP-style selects or produce browser-positioned popups.
+    await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
+    await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
+    await loadScriptOnce("/field-controls-classic.js", "classicFieldControls");
+  }
+  loadUiEnhancements();
 
   let timer = null;
 
