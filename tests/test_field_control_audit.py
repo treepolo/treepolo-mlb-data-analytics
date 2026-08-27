@@ -35,6 +35,16 @@ def test_large_single_field_selectors_are_one_editable_combo_not_select_plus_sea
     assert "搜尋欄位 Search field" not in unified
 
 
+def test_editable_field_controls_do_not_render_decorative_dropdown_arrows():
+    unified = read("field-controls-unified.js")
+
+    assert '.xp-field-shell::after' not in unified
+    assert '.xp-field-input-shell::after' not in unified
+    assert '.xp-semantic-shell.xp-has-domain::after' not in unified
+    assert 'content:"▼"' not in unified
+    assert "padding:2px 4px" in unified
+
+
 def test_exact_typed_single_field_commits_without_enter_or_click():
     unified = read("field-controls-unified.js")
 
