@@ -118,7 +118,7 @@ class AnalysisStateStore:
                     updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_saved_analyses_updated
-                    ON saved_analyses(updated_at DESC,id DESC);
+                    ON saved_analyses(updated_at DESC);
                 """
             )
             self.conn.commit()
