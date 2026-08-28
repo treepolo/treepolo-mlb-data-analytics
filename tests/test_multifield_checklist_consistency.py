@@ -62,12 +62,24 @@ def test_checklists_are_lazy_and_skip_dom_rebuild_when_shape_is_unchanged():
     assert "syncState(state);" in checklist
 
 
-def test_checklist_observer_only_reacts_to_new_controls_not_its_own_row_dom():
+def test_checklist_selection_sync_is_idempotent_and_emits_one_commit_event():
+    checklist = source("field-checklists.js")
+
+    assert "state.selectionSignature === selectionSignature" in checklist
+    assert "state.summary.replaceChildren(fragment)" in checklist
+    assert 'control.dispatchEvent(new Event("change", { bubbles:true }))' in checklist
+    assert 'control.dispatchEvent(new Event("input", { bubbles:true }))' not in checklist
+
+
+def test_checklist_observer_only_claims_and_renders_new_controls_locally():
     checklist = source("field-checklists.js")
 
     assert "function addedControls(mutation)" in checklist
-    assert "mutations.some(addedControls)" in checklist
-    assert "addedNodes" in checklist
+    assert "function handleAddedControls(mutations)" in checklist
+    assert "new MutationObserver(handleAddedControls)" in checklist
+    assert "if (activeForRender(control)) renderChecklist(control);" in checklist
+    assert "mutations.some(addedControls)" not in checklist
+    assert "MUTATION_IGNORE_SELECTOR" in checklist
     assert "characterData:true" not in checklist
     assert "attributes:true" not in checklist
 
@@ -86,6 +98,13 @@ def test_dense_rank_wording_is_globally_normalized_without_removing_rank():
     assert 'option[value="dense_rank"]' in consistency
     assert "保留並列（不跳號） Dense Rank" in consistency
     assert 'value="rank"' in workflow
+
+
+def test_tie_label_observer_is_scoped_to_stage_lists_not_document_body():
+    consistency = source("ui-consistency-fixes.js")
+    assert '.s4-stage-list,.s4-input-stage-list' in consistency
+    assert "observeStageLists" in consistency
+    assert ").observe(document.body" not in consistency
 
 
 def test_research_workflow_remove_metric_button_cannot_collapse_vertically():
