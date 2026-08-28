@@ -17,8 +17,9 @@ def test_shared_paging_owns_fresh_analysis_response_paging():
     assert "window.treepoloResultPaging" in paging
     assert "window.__taFetchLimiterInstalled = true" in paging
     assert 'url.includes("/api/analyze")' in paging
-    assert "const paged = initialPage(full)" in paging
-    assert "schedule(full)" in paging
+    assert "const normalized = normalizeRetainedRows(full)" in paging
+    assert "const paged = initialPage(normalized)" in paging
+    assert "schedule(normalized)" in paging
 
 
 def test_cached_load_uses_same_paging_presenter_and_keeps_full_result_state():
