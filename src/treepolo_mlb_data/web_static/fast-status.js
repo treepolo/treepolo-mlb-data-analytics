@@ -36,14 +36,17 @@
 
   async function loadUiEnhancements() {
     // Dynamic pages are created first. The legality layer owns the field-option
-    // contract; the unified control layer then renders every field chooser from
-    // that contract with one editable/searchable XP-style control.
+    // contract. Unordered multi-field sets are then claimed by the shared
+    // checkbox-list component; remaining single/ordered controls use the unified
+    // editable/searchable XP-style control.
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
+    await loadScriptOnce("/field-checklists.js", "fieldChecklists");
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
+    await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
     await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
     await loadScriptOnce("/analysis-load-metadata.js", "analysisLoadMetadata");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
