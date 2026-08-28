@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .result_projection import DEFAULT_CLIENT_RESULT_LIMIT, apply_result_limit
+
 CACHE_FORMAT_VERSION = "stage4-v1"
 DEFAULT_MAX_CACHE_ENTRIES = 200
 DEFAULT_MAX_RESULT_BYTES = 8 * 1024 * 1024
@@ -230,6 +232,19 @@ class AnalysisStateStore:
             ).fetchall()
             return [self._history_row(row) for row in rows]
 
+    @staticmethod
+    def _project_client_result(
+        result: dict[str, Any] | None,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if result is None:
+            return None
+        return apply_result_limit(
+            result,
+            payload,
+            default_limit=DEFAULT_CLIENT_RESULT_LIMIT,
+        )
+
     def get_history(self, history_id: int) -> dict[str, Any] | None:
         with self._lock:
             row = self.conn.execute(
@@ -242,7 +257,8 @@ class AnalysisStateStore:
             if row is None:
                 return None
             item = self._history_row(row)
-            item["result"] = self.get_cached_result(item["cache_key"]) if item.get("cache_key") else None
+            raw_result = self.get_cached_result(item["cache_key"]) if item.get("cache_key") else None
+            item["result"] = self._project_client_result(raw_result, item["payload"])
             item["result_available"] = item["result"] is not None
             return item
 
@@ -369,6 +385,7 @@ class AnalysisStateStore:
             "updated_at": row["updated_at"],
         }
         if include_result:
-            item["result"] = self.get_cached_result(row["cache_key"]) if row["cache_key"] else None
+            raw_result = self.get_cached_result(row["cache_key"]) if row["cache_key"] else None
+            item["result"] = self._project_client_result(raw_result, item["payload"])
             item["result_available"] = item["result"] is not None
         return item

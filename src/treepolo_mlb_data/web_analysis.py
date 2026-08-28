@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .result_projection import apply_result_limit
 from .schema import field_capabilities
 from .web_analysis_acceptance import AcceptanceFixesMixin
 from .web_analysis_acceptance_runtime import AcceptanceRuntimeFixesMixin
@@ -43,34 +44,7 @@ class AnalysisFacade(
 
     @staticmethod
     def _apply_result_limit(result: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-        """Limit rows returned to the UI without changing the underlying computation.
-
-        row_count keeps the full pre-display count when the producer supplied it.
-        returned_row_count records how many rows are actually present in the payload.
-        """
-        raw_limit = payload.get("result_limit")
-        if raw_limit in (None, ""):
-            return result
-        limit = max(1, min(int(raw_limit), 5000))
-        limited = dict(result)
-
-        def trim(section: dict[str, Any]) -> dict[str, Any]:
-            copy = dict(section)
-            rows = copy.get("rows")
-            if isinstance(rows, list):
-                copy["returned_row_count"] = min(len(rows), limit)
-                copy["rows"] = rows[:limit]
-                copy["result_limit"] = limit
-            return copy
-
-        if isinstance(limited.get("sections"), list):
-            limited["sections"] = [
-                trim(section) if isinstance(section, dict) else section
-                for section in limited["sections"]
-            ]
-        else:
-            limited = trim(limited)
-        return limited
+        return apply_result_limit(result, payload)
 
     def analyze(
         self,
