@@ -4,9 +4,8 @@
   if (window.treepoloFieldChecklists) return;
   window.treepoloFieldChecklists = true;
 
-  // Semantic, unordered sets of fields share this one checklist renderer.
-  // .s4-order is deliberately excluded: ordering and +/- direction are part of
-  // that control's meaning, so reducing it to checkboxes would lose behavior.
+  // Unordered sets of fields belong to this component. Ordered selectors such
+  // as .s4-order stay in the editable-combo layer because order/+/- are data.
   const MULTI_FIELD_INPUT_SELECTORS = [
     ".s4-groups",
     ".s4-partition",
@@ -29,6 +28,7 @@
     ".s4-metric-cond-field", ".ta-role-kind", ".ta-role-fn",
     ".ta-custom-alias", ".ta-cohort-alias",
   ].join(",");
+
   let generatedId = 0;
   let refreshQueued = false;
 
@@ -45,20 +45,50 @@
     const style = document.createElement("style");
     style.id = "field-checklist-search-styles";
     style.textContent = `
-      .field-checklist{border:1px solid #7f9db9;background:#fff;max-height:180px;overflow:auto;min-width:0}
       .field-checklist-tools{position:sticky;top:0;z-index:4;background:#f4f7fb;border-bottom:1px solid #b6c1ce;padding:4px}
       .field-checklist-search{width:100%;box-sizing:border-box}
       .field-checklist-summary{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:3px;min-height:20px;font-size:11px}
       .field-checklist-chip{padding:1px 5px;border:1px solid #8ea2ba;background:#fff;cursor:pointer;white-space:nowrap}
-      .field-checklist-items{min-width:max-content;padding:2px 3px}
-      .field-check-item{display:flex;align-items:center;gap:5px;min-height:20px;white-space:nowrap}
-      .field-check-item.field-search-hit{outline:2px solid #d68b00;outline-offset:-2px;background:#fff4cf}
+      .field-checklist-items{min-width:max-content}
+      /* Stage-4 forms style every descendant <label> as a vertical form field.
+         Checklist rows are divs and this scoped rule guarantees the exact same
+         row geometry in Basic Analysis and dynamically generated stages. */
+      .field-checklist .field-check-item{display:flex;flex-direction:row;align-items:center;gap:6px;min-height:22px;padding:2px 5px;font-weight:400;cursor:pointer;user-select:none;white-space:nowrap}
+      .field-checklist .field-check-item.field-search-hit{outline:2px solid #d68b00;outline-offset:-2px;background:#fff4cf}
     `;
     document.head.append(style);
   }
 
   function isTextMulti(control) {
     return control?.tagName === "INPUT" && MULTI_FIELD_INPUT_SELECTORS.some(selector => control.matches(selector));
+  }
+
+  function claimControl(control) {
+    if (!isTextMulti(control)) return;
+    // This prevents the later editable-combo scanner from owning the same
+    // semantic control. The checklist remains the single UI owner.
+    control.dataset.unifiedFieldInput = "1";
+    control.dataset.unifiedMulti = "1";
+    control.removeAttribute("list");
+  }
+
+  function claimControls(root = document) {
+    if (root.matches?.(INPUT_SELECTOR)) claimControl(root);
+    root.querySelectorAll?.(INPUT_SELECTOR).forEach(claimControl);
+  }
+
+  function detachLegacyShell(input) {
+    if (!isTextMulti(input)) return;
+    claimControl(input);
+    const shell = input.closest(".xp-field-input-shell,.xp-edit-shell");
+    if (!shell) return;
+    shell.parentNode.insertBefore(input, shell);
+    shell.remove();
+  }
+
+  function activeForRender(control) {
+    const panel = control.closest?.(".panel");
+    return !panel || panel.classList.contains("active-panel");
   }
 
   function locateOnlySearch(control) {
@@ -72,16 +102,14 @@
   }
 
   function legalValues(control) {
-    // Every active checklist goes through the same legality provider. A context
-    // where every current field is legal simply receives the provider's full set.
     const provider = window.treepoloLegalFieldOptions?.available;
     if (typeof provider === "function") {
       try { return Array.from(new Set(provider(control) || [])); }
       catch { return []; }
     }
-    // Static <select multiple> controls can safely render their own populated
-    // options during bootstrap. Dynamic text controls wait for the provider so
-    // preset values are never erased before legality metadata exists.
+    // Static selects already contain their legal bootstrap choices. Dynamic
+    // pipeline inputs wait until the legality provider exists so saved values
+    // are never erased during startup.
     if (control?.tagName === "SELECT") {
       return Array.from(control.options || []).map(option => option.value).filter(Boolean);
     }
@@ -119,21 +147,6 @@
     control.dispatchEvent(new Event("change", { bubbles:true }));
   }
 
-  function detachUnifiedShell(input) {
-    if (!isTextMulti(input)) return;
-    // Claim this control from the editable single-field layer. If unified controls
-    // already wrapped it, unwrap the original storage input and discard the shell.
-    input.dataset.unifiedFieldInput = "1";
-    const shell = input.closest(".xp-field-input-shell,.xp-edit-shell");
-    if (shell) {
-      shell.parentNode.insertBefore(input, shell);
-      shell.remove();
-    }
-    input.removeAttribute("list");
-    const datalist = input.nextElementSibling;
-    if (datalist?.tagName === "DATALIST") datalist.remove();
-  }
-
   function hostFor(control) {
     if (!control.dataset.checklistKey) control.dataset.checklistKey = control.id || `generated-${++generatedId}`;
     const hostId = `field-checklist-${control.dataset.checklistKey}`;
@@ -148,23 +161,39 @@
     return host;
   }
 
-  function renderChecklist(control) {
-    if (!control?.isConnected) return;
-    const legal = legalValues(control);
-    if (legal === null) return;
-    if (isTextMulti(control)) detachUnifiedShell(control);
+  function renderSignature(control, legal, locateOnly) {
+    const labels = legal.map(value => `${value}\u0001${optionLabel(control, value)}`);
+    return `${locateOnly ? "locate" : "filter"}\u0002${labels.join("\u0003")}`;
+  }
 
-    control.hidden = true;
-    control.style.display = "none";
-    const host = hostFor(control);
-    const locateOnly = locateOnlySearch(control);
+  function syncState(state) {
+    const current = new Set(selectedValues(state.control));
+    state.rows.forEach(row => { row.checkbox.checked = current.has(row.value); });
+    state.summary.innerHTML = "";
+    const count = document.createElement("strong");
+    count.textContent = `已選 ${current.size} Selected`;
+    state.summary.append(count);
+    current.forEach(value => {
+      const row = state.rowByValue.get(value);
+      if (!row) return;
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "field-checklist-chip";
+      chip.textContent = value;
+      chip.title = row.textLabel;
+      chip.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        state.flash(row);
+      });
+      state.summary.append(chip);
+    });
+  }
+
+  function buildChecklist(control, host, legal, locateOnly, signature) {
     const previousQuery = host.querySelector(".field-checklist-search")?.value || "";
-    const allowed = new Set(legal);
-    const before = selectedValues(control);
-    const kept = before.filter(value => allowed.has(value));
-    if (!sameValues(before, kept)) writeValues(control, kept, true);
+    host.replaceChildren();
 
-    host.innerHTML = "";
     const tools = document.createElement("div");
     tools.className = "field-checklist-tools";
     const search = document.createElement("input");
@@ -179,62 +208,62 @@
     tools.append(search, summary);
     host.append(tools, items);
 
+    const rows = [];
+    const rowByValue = new Map();
     const selected = new Set(selectedValues(control));
-    const rows = legal.map(value => {
-      const label = document.createElement("label");
-      label.className = "field-check-item";
+
+    legal.forEach(value => {
+      // div is deliberate. Dynamic Stage-4 controls live inside an outer label;
+      // nesting another label allowed ancestor form CSS to corrupt row layout.
+      const row = document.createElement("div");
+      row.className = "field-check-item";
       const textLabel = optionLabel(control, value);
-      label.dataset.searchText = normalize(`${textLabel} ${value}`);
+      row.dataset.searchText = normalize(`${textLabel} ${value}`);
 
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = selected.has(value);
       checkbox.value = value;
-
       const text = document.createElement("span");
       text.textContent = textLabel;
-      label.append(checkbox, text);
-      items.append(label);
-      return { value, label, checkbox, textLabel };
+      row.append(checkbox, text);
+      items.append(row);
+
+      const item = { value, label:row, checkbox, textLabel };
+      rows.push(item);
+      rowByValue.set(value, item);
+
+      checkbox.addEventListener("click", event => event.stopPropagation());
+      checkbox.addEventListener("change", () => {
+        let values = selectedValues(control);
+        if (checkbox.checked) {
+          if (!values.includes(value)) values.push(value);
+        } else {
+          values = values.filter(itemValue => itemValue !== value);
+        }
+        writeValues(control, values, true);
+        syncState(state);
+      });
+      row.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event("change", { bubbles:true }));
+      });
     });
 
-    function flash(row) {
+    const state = {
+      control, host, signature, rows, rowByValue, summary, search, locateOnly,
+      flash: null,
+    };
+
+    state.flash = row => {
       rows.forEach(item => item.label.classList.remove("field-search-hit"));
       if (!row) return;
       row.label.classList.add("field-search-hit");
-      row.label.scrollIntoView({ block:"nearest" });
+      row.label.scrollIntoView({ block:"nearest", inline:"nearest" });
       setTimeout(() => row.label.classList.remove("field-search-hit"), 1800);
-    }
-
-    function updateSummary() {
-      summary.innerHTML = "";
-      const current = selectedValues(control);
-      const count = document.createElement("strong");
-      count.textContent = `已選 ${current.length} Selected`;
-      summary.append(count);
-      current.forEach(value => {
-        const row = rows.find(item => item.value === value);
-        if (!row) return;
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "field-checklist-chip";
-        chip.textContent = value;
-        chip.title = row.textLabel;
-        chip.addEventListener("click", () => flash(row));
-        summary.append(chip);
-      });
-    }
-
-    rows.forEach(row => row.checkbox.addEventListener("change", () => {
-      let values = selectedValues(control);
-      if (row.checkbox.checked) {
-        if (!values.includes(row.value)) values.push(row.value);
-      } else {
-        values = values.filter(value => value !== row.value);
-      }
-      writeValues(control, values, true);
-      updateSummary();
-    }));
+    };
 
     let locateIndex = -1;
     function applySearch(advance = false) {
@@ -247,54 +276,114 @@
           return;
         }
         locateIndex = advance ? (locateIndex + 1) % matches.length : 0;
-        flash(matches[locateIndex]);
+        state.flash(matches[locateIndex]);
         return;
       }
       rows.forEach(row => { row.label.hidden = Boolean(query) && !row.label.dataset.searchText.includes(query); });
     }
 
-    search.addEventListener("input", () => { locateIndex = -1; applySearch(false); });
+    search.addEventListener("click", event => event.stopPropagation());
+    search.addEventListener("input", event => {
+      event.stopPropagation();
+      locateIndex = -1;
+      applySearch(false);
+    });
     search.addEventListener("keydown", event => {
       if (event.key === "Enter" && locateOnly) {
         event.preventDefault();
+        event.stopPropagation();
         applySearch(true);
       }
     });
 
-    updateSummary();
+    host._treepoloChecklistState = state;
+    host.scrollLeft = 0;
+    syncState(state);
     if (previousQuery) applySearch(false);
+    return state;
+  }
+
+  function renderChecklist(control) {
+    if (!control?.isConnected || !activeForRender(control)) return;
+    claimControl(control);
+    if (isTextMulti(control)) detachLegacyShell(control);
+
+    const legal = legalValues(control);
+    if (legal === null) return;
+
+    control.hidden = true;
+    control.style.display = "none";
+    const host = hostFor(control);
+    const allowed = new Set(legal);
+    const before = selectedValues(control);
+    const kept = before.filter(value => allowed.has(value));
+    if (!sameValues(before, kept)) writeValues(control, kept, true);
+
+    const locateOnly = locateOnlySearch(control);
+    const signature = renderSignature(control, legal, locateOnly);
+    const state = host._treepoloChecklistState;
+    if (state?.control === control && state.signature === signature) {
+      syncState(state);
+      return;
+    }
+    buildChecklist(control, host, legal, locateOnly, signature);
   }
 
   function refreshAll() {
-    document.querySelectorAll(ALL_SELECTOR).forEach(renderChecklist);
+    claimControls(document);
+    document.querySelectorAll(ALL_SELECTOR).forEach(control => {
+      if (activeForRender(control)) renderChecklist(control);
+    });
   }
 
   function scheduleRefresh() {
     if (refreshQueued) return;
     refreshQueued = true;
-    setTimeout(() => { refreshQueued = false; refreshAll(); }, 0);
+    setTimeout(() => {
+      refreshQueued = false;
+      refreshAll();
+    }, 0);
   }
 
-  function mutationContainsControl(mutation) {
-    return Array.from(mutation.addedNodes || []).some(node => {
-      if (node.nodeType !== 1) return false;
-      return node.matches?.(ALL_SELECTOR) || Boolean(node.querySelector?.(ALL_SELECTOR));
+  function addedControls(mutation) {
+    let found = false;
+    Array.from(mutation.addedNodes || []).forEach(node => {
+      if (node.nodeType !== 1) return;
+      if (node.matches?.(INPUT_SELECTOR)) {
+        claimControl(node);
+        found = true;
+      }
+      node.querySelectorAll?.(INPUT_SELECTOR).forEach(control => {
+        claimControl(control);
+        found = true;
+      });
+      if (node.matches?.('select[multiple][data-field-select]') || node.querySelector?.('select[multiple][data-field-select]')) found = true;
     });
+    return found;
   }
 
   function init() {
     injectStyles();
+    // Claim all dynamic unordered-multi inputs before field-controls-unified.js
+    // scans the document. One semantic control therefore has exactly one owner.
+    claimControls(document);
     refreshAll();
+
     ["treepolo:fields-updated", "treepolo:field-legality-ready", "treepolo:analysis-options-changed"]
       .forEach(name => document.addEventListener(name, scheduleRefresh));
+
+    document.addEventListener("click", event => {
+      if (event.target?.closest?.(".nav-item")) scheduleRefresh();
+    });
     document.addEventListener("change", event => {
       if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
     });
     document.addEventListener("input", event => {
       if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
     });
+
     new MutationObserver(mutations => {
-      if (mutations.some(mutationContainsControl)) scheduleRefresh();
+      if (mutations.some(addedControls)) scheduleRefresh();
     }).observe(document.body, { childList:true, subtree:true });
   }
 
