@@ -1,13 +1,22 @@
 from treepolo_mlb_data.webapp import STATIC_DIR
 
 
-def test_result_paging_handles_fresh_and_stored_results_through_one_fetch_pipeline():
+def test_result_paging_handles_fresh_and_stored_results_through_one_pipeline():
     source = (STATIC_DIR / "result-paging.js").read_text(encoding="utf-8")
     assert 'url.includes("/api/analyze")' in source
-    assert "/api\\/analysis\\/(?:history|saved)" in source
-    assert "initialPage(full)" in source
-    assert "schedulePagers(full)" in source
+    assert "isStoredDetail" in source
+    assert "analysis/(?:history|saved)" in source.replace("\\/", "/")
+    assert "prepareForRender(full)" in source
+    assert "prepareForRender(item.result)" in source
     assert "window.__taFetchLimiterInstalled = true" in source
+
+
+def test_stored_paging_requires_a_real_library_load_action():
+    source = (STATIC_DIR / "result-paging.js").read_text(encoding="utf-8")
+    assert "loadIntentUntil" in source
+    assert "#analysis-history-list button,#saved-analysis-list button" in source
+    assert 'text.includes("載入")' in source
+    assert "performance.now() <= loadIntentUntil" in source
 
 
 def test_workspace_library_requests_use_current_fetch_pipeline():
