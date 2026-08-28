@@ -34,13 +34,27 @@
     if (!host) return;
     const rows = Array.from(host.querySelectorAll("tbody tr"));
     rows.forEach((row, index) => {
-      row.querySelectorAll(".analysis-stale-badge").forEach(node => node.remove());
+      const badges = Array.from(row.querySelectorAll(".analysis-stale-badge"));
+      const existingBadge = badges.shift() || null;
+      badges.forEach(node => node.remove());
       const item = items[index];
-      if (!stale(item)) return;
+      if (!stale(item)) {
+        existingBadge?.remove();
+        return;
+      }
+
+      const text = "舊資料版本 Historical Data";
+      const title = `Saved data revision: ${item.data_revision}; current: ${currentRevision}`;
+      if (existingBadge) {
+        if (existingBadge.textContent !== text) existingBadge.textContent = text;
+        if (existingBadge.title !== title) existingBadge.title = title;
+        return;
+      }
+
       const badge = document.createElement("span");
       badge.className = "analysis-stale-badge";
-      badge.textContent = "舊資料版本 Historical Data";
-      badge.title = `Saved data revision: ${item.data_revision}; current: ${currentRevision}`;
+      badge.textContent = text;
+      badge.title = title;
       const cell = row.children[targetCellIndex] || row.lastElementChild;
       cell?.append(" ", badge);
     });
@@ -95,15 +109,27 @@
     refreshTimer = setTimeout(refresh, 40);
   }
 
+  function libraryStructureChanged(mutation) {
+    const target = mutation.target;
+    const inside = target?.closest?.("#saved-analysis-list,#analysis-history-list") ||
+      target?.id === "saved-analysis-list" || target?.id === "analysis-history-list";
+    if (!inside) return false;
+    const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])];
+    return nodes.some(node => {
+      if (node.nodeType !== 1) return false;
+      if (node.classList?.contains("analysis-stale-badge")) return false;
+      return node.matches?.("table,tbody,tr") || Boolean(node.querySelector?.("table,tbody,tr"));
+    });
+  }
+
   function init() {
     injectStyles();
     scheduleRefresh();
+    const library = document.querySelector("#analysis-library-panel") || document.body;
     const observer = new MutationObserver(mutations => {
-      if (mutations.some(mutation => mutation.target.closest?.("#saved-analysis-list,#analysis-history-list") || mutation.target.id === "saved-analysis-list" || mutation.target.id === "analysis-history-list")) {
-        scheduleRefresh();
-      }
+      if (mutations.some(libraryStructureChanged)) scheduleRefresh();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(library, { childList: true, subtree: true });
 
     document.addEventListener("click", event => {
       const button = event.target.closest?.("#saved-analysis-list button,#analysis-history-list button");
