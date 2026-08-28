@@ -45,6 +45,8 @@
     const style = document.createElement("style");
     style.id = "field-checklist-search-styles";
     style.textContent = `
+      ${ALL_SELECTOR}{display:none!important}
+      .field-checklist{width:100%;max-width:100%;min-width:0}
       .field-checklist-tools{position:sticky;top:0;z-index:4;background:#f4f7fb;border-bottom:1px solid #b6c1ce;padding:4px}
       .field-checklist-search{width:100%;box-sizing:border-box}
       .field-checklist-summary{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:3px;min-height:20px;font-size:11px}
@@ -69,6 +71,7 @@
     // semantic control. The checklist remains the single UI owner.
     control.dataset.unifiedFieldInput = "1";
     control.dataset.unifiedMulti = "1";
+    control.dataset.fieldChecklistOwned = "1";
     control.removeAttribute("list");
   }
 
@@ -339,10 +342,10 @@
   function scheduleRefresh() {
     if (refreshQueued) return;
     refreshQueued = true;
-    setTimeout(() => {
+    queueMicrotask(() => {
       refreshQueued = false;
       refreshAll();
-    }, 0);
+    });
   }
 
   function addedControls(mutation) {
@@ -386,6 +389,13 @@
       if (mutations.some(addedControls)) scheduleRefresh();
     }).observe(document.body, { childList:true, subtree:true });
   }
+
+  window.treepoloFieldChecklistsApi = {
+    owns(control) {
+      return Boolean(control?.matches?.(ALL_SELECTOR));
+    },
+    refresh: scheduleRefresh,
+  };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once:true });
   else init();
