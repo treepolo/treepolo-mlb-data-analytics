@@ -381,7 +381,15 @@
   }
 
   function updateClock() {
-    $("#status-clock").textContent = new Intl.DateTimeFormat("zh-TW", { dateStyle: "medium", timeStyle: "medium" }).format(new Date());
+    const host = $("#status-clock");
+    if (!host) return;
+    const value = new Intl.DateTimeFormat("zh-TW", { dateStyle: "medium", timeStyle: "medium" }).format(new Date());
+    const text = host.firstChild;
+    if (host.childNodes.length === 1 && text?.nodeType === Node.TEXT_NODE) {
+      text.nodeValue = value;
+    } else {
+      host.replaceChildren(document.createTextNode(value));
+    }
   }
 
   async function init() {
