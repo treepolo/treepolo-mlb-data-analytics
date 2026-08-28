@@ -19,7 +19,7 @@
   };
 
   async function api(path, options={}) {
-    const response = await nativeFetch(path, { headers:{"Content-Type":"application/json"}, ...options });
+    const response = await window.fetch(path, { headers:{"Content-Type":"application/json"}, ...options });
     let body = {}; try { body = await response.json(); } catch {}
     if (!response.ok) throw new Error(body.error || `${response.status} ${response.statusText}`);
     return body;
@@ -81,8 +81,6 @@
   function installMetricValidation() {
     const host=document.querySelector("#basic-metrics"); if(!host)return;
     const sync=()=>host.querySelectorAll(".metric-row").forEach(syncMetricRow); sync();
-    // Watch only metric rows being added/removed. Observing the full subtree caused
-    // syncMetricRow()'s option-label update to trigger itself indefinitely.
     new MutationObserver(sync).observe(host,{childList:true});
     host.addEventListener("change",e=>syncMetricRow(e.target.closest?.(".metric-row")));
     document.addEventListener("click",e=>{
@@ -137,8 +135,8 @@
   }
   async function refreshLibrary(){if(!document.getElementById("analysis-library-panel"))return;const [saved,history]=await Promise.all([api("/api/analysis/saved"),api("/api/analysis/history?limit=100")]);renderSaved(saved.saved||[]);renderHistory(history.history||[]);}
   async function deleteSaved(id){await api(`/api/analysis/saved/${id}`,{method:"DELETE"});await refreshLibrary();}
-  async function loadSaved(id){const body=await api(`/api/analysis/saved/${id}`);await loadItem(body.item);}
-  async function loadHistory(id){const body=await api(`/api/analysis/history/${id}`);await loadItem(body.item);}
+  async function loadSaved(id){const body=await api(`/api/analysis/saved/${id}`);await loadItem(body.item,{kind:"saved",id});}
+  async function loadHistory(id){const body=await api(`/api/analysis/history/${id}`);await loadItem(body.item,{kind:"history",id});}
 
   function setSelect(id,value){const el=document.getElementById(id);if(!el)return;if(el.multiple){const wanted=new Set(Array.isArray(value)?value:[value]);Array.from(el.options).forEach(o=>o.selected=wanted.has(o.value));}else el.value=value==null?"":String(value);el.dispatchEvent(new Event("change",{bubbles:true}));}
   function setInput(id,value,checked=false){const el=document.getElementById(id);if(!el)return;if(checked)el.checked=Boolean(value);else el.value=value==null?"":String(value);el.dispatchEvent(new Event("change",{bubbles:true}));}
@@ -172,7 +170,7 @@
   }
 
   function renderStoredResult(result){const host=document.querySelector("#result-content"),summary=document.querySelector("#result-summary");if(!host||!summary)return;host.innerHTML="";const render=section=>{const wrap=document.createElement("div");if(section.title){const h=document.createElement("div");h.className="result-section-title";h.textContent=section.title;wrap.append(h);}const table=document.createElement("table");table.className="result-table";const head=document.createElement("thead"),hr=document.createElement("tr");(section.columns||[]).forEach(c=>{const th=document.createElement("th");th.textContent=c;hr.append(th);});head.append(hr);table.append(head);const body=document.createElement("tbody");(section.rows||[]).forEach(row=>{const tr=document.createElement("tr");(section.columns||[]).forEach(c=>{const td=document.createElement("td");td.textContent=row[c]==null?"—":String(row[c]);tr.append(td);});body.append(tr);});table.append(body);wrap.append(table);return wrap;};if(result.sections)result.sections.forEach(s=>host.append(render(s)));else host.append(render(result));const count=result.row_count??(result.sections||[]).reduce((sum,s)=>sum+Number(s.row_count||0),0);summary.textContent=`${count} 列 rows · 已載入保存結果 Loaded Stored Result`;decorateCache(result);}
-  async function loadItem(item){if(!item?.payload)return;lastPayload=item.payload;window.treepoloLastAnalysis={payload:lastPayload,result:item.result||null};if(item.result_available&&item.result){lastResult=item.result;renderStoredResult(item.result);}applyPayload(item.payload);const id=MODE_PANELS[item.payload.mode];if(id&&document.getElementById(id))switchPanel(id);}
+  async function loadItem(item,source={}){if(!item?.payload)return;lastPayload=item.payload;lastResult=item.result||null;window.treepoloLastAnalysis={payload:lastPayload,result:lastResult,history_id:source.kind==="history"?(source.id||item.id||null):null,cache_key:item.cache_key||null,data_revision:item.data_revision||null,loaded_source_kind:source.kind||null,loaded_source_id:source.id||item.id||null};if(item.result_available&&item.result)renderStoredResult(item.result);applyPayload(item.payload);const id=MODE_PANELS[item.payload.mode];if(id&&document.getElementById(id))switchPanel(id);document.dispatchEvent(new CustomEvent("treepolo:analysis-current-source-updated",{detail:{kind:source.kind||null,id:source.id||item.id||null,history_id:source.kind==="history"?(source.id||item.id||null):null,cache_key:item.cache_key||null,data_revision:item.data_revision||null}}));}
 
   function injectClusteringPartitionControl(){
     const panel=document.getElementById("clustering-panel");if(!panel||document.getElementById("s4-cluster-partitions"))return;
