@@ -4,9 +4,9 @@
   if (window.treepoloFieldChecklists) return;
   window.treepoloFieldChecklists = true;
 
-  // These controls are semantic sets of fields. They intentionally share one
-  // checklist implementation. Ordered controls such as .s4-order stay editable
-  // because field order and +/- direction are part of their meaning.
+  // Semantic, unordered sets of fields share this one checklist renderer.
+  // .s4-order is deliberately excluded: ordering and +/- direction are part of
+  // that control's meaning, so reducing it to checkboxes would lose behavior.
   const MULTI_FIELD_INPUT_SELECTORS = [
     ".s4-groups",
     ".s4-partition",
@@ -23,7 +23,14 @@
   ];
   const INPUT_SELECTOR = MULTI_FIELD_INPUT_SELECTORS.join(",");
   const ALL_SELECTOR = `select[multiple][data-field-select],${INPUT_SELECTOR}`;
+  const PIPELINE_SHAPE_SELECTORS = [
+    ".s4-stage-kind", ".s4-groups", ".s4-fields", ".s4-field",
+    ".s4-metric-field", ".s4-metric-alias", ".s4-alias",
+    ".s4-metric-cond-field", ".ta-role-kind", ".ta-role-fn",
+    ".ta-custom-alias", ".ta-cohort-alias",
+  ].join(",");
   let generatedId = 0;
+  let refreshQueued = false;
 
   function normalize(value) {
     return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -65,19 +72,20 @@
   }
 
   function legalValues(control) {
-    // Every checklist goes through the same legality provider. A context where
-    // all fields are legal simply receives the provider's full result.
+    // Every active checklist goes through the same legality provider. A context
+    // where every current field is legal simply receives the provider's full set.
     const provider = window.treepoloLegalFieldOptions?.available;
     if (typeof provider === "function") {
       try { return Array.from(new Set(provider(control) || [])); }
       catch { return []; }
     }
-    // Bootstrap fallback only; treepolo:field-legality-ready refreshes this as
-    // soon as the legality layer is available.
+    // Static <select multiple> controls can safely render their own populated
+    // options during bootstrap. Dynamic text controls wait for the provider so
+    // preset values are never erased before legality metadata exists.
     if (control?.tagName === "SELECT") {
       return Array.from(control.options || []).map(option => option.value).filter(Boolean);
     }
-    return [];
+    return null;
   }
 
   function optionLabel(control, value) {
@@ -113,9 +121,8 @@
 
   function detachUnifiedShell(input) {
     if (!isTextMulti(input)) return;
-    // Own this control before field-controls-unified can turn it into a single
-    // editable combo. If it was already decorated, unwrap the original storage
-    // input and discard that shell.
+    // Claim this control from the editable single-field layer. If unified controls
+    // already wrapped it, unwrap the original storage input and discard the shell.
     input.dataset.unifiedFieldInput = "1";
     const shell = input.closest(".xp-field-input-shell,.xp-edit-shell");
     if (shell) {
@@ -128,9 +135,7 @@
   }
 
   function hostFor(control) {
-    if (!control.dataset.checklistKey) {
-      control.dataset.checklistKey = control.id || `generated-${++generatedId}`;
-    }
+    if (!control.dataset.checklistKey) control.dataset.checklistKey = control.id || `generated-${++generatedId}`;
     const hostId = `field-checklist-${control.dataset.checklistKey}`;
     let host = document.getElementById(hostId);
     if (!host) {
@@ -145,6 +150,8 @@
 
   function renderChecklist(control) {
     if (!control?.isConnected) return;
+    const legal = legalValues(control);
+    if (legal === null) return;
     if (isTextMulti(control)) detachUnifiedShell(control);
 
     control.hidden = true;
@@ -152,7 +159,6 @@
     const host = hostFor(control);
     const locateOnly = locateOnlySearch(control);
     const previousQuery = host.querySelector(".field-checklist-search")?.value || "";
-    const legal = legalValues(control);
     const allowed = new Set(legal);
     const before = selectedValues(control);
     const kept = before.filter(value => allowed.has(value));
@@ -263,6 +269,12 @@
     document.querySelectorAll(ALL_SELECTOR).forEach(renderChecklist);
   }
 
+  function scheduleRefresh() {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    setTimeout(() => { refreshQueued = false; refreshAll(); }, 0);
+  }
+
   function mutationContainsControl(mutation) {
     return Array.from(mutation.addedNodes || []).some(node => {
       if (node.nodeType !== 1) return false;
@@ -274,13 +286,15 @@
     injectStyles();
     refreshAll();
     ["treepolo:fields-updated", "treepolo:field-legality-ready", "treepolo:analysis-options-changed"]
-      .forEach(name => document.addEventListener(name, () => setTimeout(refreshAll, 0)));
-
-    let queued = false;
+      .forEach(name => document.addEventListener(name, scheduleRefresh));
+    document.addEventListener("change", event => {
+      if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
+    });
+    document.addEventListener("input", event => {
+      if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
+    });
     new MutationObserver(mutations => {
-      if (queued || !mutations.some(mutationContainsControl)) return;
-      queued = true;
-      setTimeout(() => { queued = false; refreshAll(); }, 0);
+      if (mutations.some(mutationContainsControl)) scheduleRefresh();
     }).observe(document.body, { childList:true, subtree:true });
   }
 
