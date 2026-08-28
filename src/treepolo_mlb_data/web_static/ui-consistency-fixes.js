@@ -25,23 +25,36 @@
   }
 
   function normalizeTieLabels(root = document) {
-    root.querySelectorAll?.('select option[value="dense_rank"]').forEach(option => {
+    const options = [];
+    if (root.matches?.('option[value="dense_rank"]')) options.push(root);
+    root.querySelectorAll?.('select option[value="dense_rank"]').forEach(option => options.push(option));
+    options.forEach(option => {
       if (option.textContent !== DENSE_RANK_LABEL) option.textContent = DENSE_RANK_LABEL;
+    });
+  }
+
+  function observeStageLists() {
+    document.querySelectorAll(".s4-stage-list,.s4-input-stage-list").forEach(list => {
+      if (list.dataset.tieLabelObserved === "1") return;
+      list.dataset.tieLabelObserved = "1";
+      new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+          Array.from(mutation.addedNodes || []).forEach(node => {
+            if (node.nodeType === 1) normalizeTieLabels(node);
+          });
+        });
+      }).observe(list, { childList:true, subtree:true });
     });
   }
 
   function init() {
     injectStyles();
     normalizeTieLabels(document);
-    let queued = false;
-    new MutationObserver(mutations => {
-      if (queued || !mutations.some(mutation => mutation.addedNodes.length)) return;
-      queued = true;
-      setTimeout(() => {
-        queued = false;
-        normalizeTieLabels(document);
-      }, 0);
-    }).observe(document.body, { childList:true, subtree:true });
+    observeStageLists();
+    document.addEventListener("treepolo:analysis-options-changed", () => {
+      normalizeTieLabels(document);
+      observeStageLists();
+    });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once:true });
