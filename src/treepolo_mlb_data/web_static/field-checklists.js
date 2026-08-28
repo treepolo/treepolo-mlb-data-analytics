@@ -28,6 +28,7 @@
     ".s4-metric-cond-field", ".ta-role-kind", ".ta-role-fn",
     ".ta-custom-alias", ".ta-cohort-alias",
   ].join(",");
+  const MUTATION_IGNORE_SELECTOR = ".field-checklist,#result-content,#analysis-library-panel,.ta-table-pager";
 
   let generatedId = 0;
   let refreshQueued = false;
@@ -146,7 +147,8 @@
       control.value = values.join(",");
     }
     if (!emit || !control) return;
-    control.dispatchEvent(new Event("input", { bubbles:true }));
+    // A checklist selection is a committed value change, not text editing.
+    // Emitting both input and change doubled every downstream legality refresh.
     control.dispatchEvent(new Event("change", { bubbles:true }));
   }
 
@@ -170,13 +172,22 @@
   }
 
   function syncState(state) {
-    const current = new Set(selectedValues(state.control));
+    const selected = selectedValues(state.control);
+    const current = new Set(selected);
     state.rows.forEach(row => { row.checkbox.checked = current.has(row.value); });
-    state.summary.innerHTML = "";
+
+    // Rebuilding the summary on every refresh created child-list mutations even
+    // when nothing changed. Those mutations woke multiple document-wide legacy
+    // observers and produced a long tail of post-load work. Keep it idempotent.
+    const selectionSignature = selected.join("\u0001");
+    if (state.selectionSignature === selectionSignature) return;
+    state.selectionSignature = selectionSignature;
+
+    const fragment = document.createDocumentFragment();
     const count = document.createElement("strong");
     count.textContent = `已選 ${current.size} Selected`;
-    state.summary.append(count);
-    current.forEach(value => {
+    fragment.append(count);
+    selected.forEach(value => {
       const row = state.rowByValue.get(value);
       if (!row) return;
       const chip = document.createElement("button");
@@ -189,8 +200,9 @@
         event.stopPropagation();
         state.flash(row);
       });
-      state.summary.append(chip);
+      fragment.append(chip);
     });
+    state.summary.replaceChildren(fragment);
   }
 
   function buildChecklist(control, host, legal, locateOnly, signature) {
@@ -257,6 +269,7 @@
 
     const state = {
       control, host, signature, rows, rowByValue, summary, search, locateOnly,
+      selectionSignature: null,
       flash: null,
     };
 
@@ -333,7 +346,6 @@
   }
 
   function refreshAll() {
-    claimControls(document);
     document.querySelectorAll(ALL_SELECTOR).forEach(control => {
       if (activeForRender(control)) renderChecklist(control);
     });
@@ -349,20 +361,27 @@
   }
 
   function addedControls(mutation) {
-    let found = false;
+    const controls = [];
     Array.from(mutation.addedNodes || []).forEach(node => {
       if (node.nodeType !== 1) return;
-      if (node.matches?.(INPUT_SELECTOR)) {
-        claimControl(node);
-        found = true;
-      }
-      node.querySelectorAll?.(INPUT_SELECTOR).forEach(control => {
-        claimControl(control);
-        found = true;
-      });
-      if (node.matches?.('select[multiple][data-field-select]') || node.querySelector?.('select[multiple][data-field-select]')) found = true;
+      if (node.closest?.(MUTATION_IGNORE_SELECTOR)) return;
+
+      if (node.matches?.(INPUT_SELECTOR)) controls.push(node);
+      node.querySelectorAll?.(INPUT_SELECTOR).forEach(control => controls.push(control));
+
+      if (node.matches?.('select[multiple][data-field-select]')) controls.push(node);
+      node.querySelectorAll?.('select[multiple][data-field-select]').forEach(control => controls.push(control));
     });
-    return found;
+    return controls;
+  }
+
+  function handleAddedControls(mutations) {
+    const controls = new Set();
+    mutations.forEach(mutation => addedControls(mutation).forEach(control => controls.add(control)));
+    controls.forEach(control => {
+      claimControl(control);
+      if (activeForRender(control)) renderChecklist(control);
+    });
   }
 
   function init() {
@@ -385,9 +404,9 @@
       if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
     });
 
-    new MutationObserver(mutations => {
-      if (mutations.some(addedControls)) scheduleRefresh();
-    }).observe(document.body, { childList:true, subtree:true });
+    // The observer only claims/renders newly inserted checklist controls. It no
+    // longer converts arbitrary DOM mutations into a document-wide refresh.
+    new MutationObserver(handleAddedControls).observe(document.body, { childList:true, subtree:true });
   }
 
   window.treepoloFieldChecklistsApi = {
