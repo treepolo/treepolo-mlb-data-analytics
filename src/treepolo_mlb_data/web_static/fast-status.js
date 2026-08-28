@@ -38,6 +38,9 @@
     // field-checklists.js is injected by webapp before this bootstrap. Dynamic
     // pages are created first; the legality layer owns field availability, then
     // the unified layer handles the remaining single/ordered field controls.
+    // Result paging is loaded before acceptance-fixes so there is one active
+    // pagination owner for both fresh analysis and stored-result restoration.
+    await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
