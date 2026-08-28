@@ -4,8 +4,10 @@
   if (window.treepoloResultPaging) return;
 
   const PAGE_SIZE = 200;
+  const LOAD_INTENT_MS = 4000;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  let loadIntentUntil = 0;
 
   function displayValue(value) {
     if (value == null) return "—";
@@ -99,8 +101,6 @@
 
   function prepareForRender(full) {
     if (!full || typeof full !== "object") return full;
-    // The caller immediately renders the returned first page. The deferred step
-    // attaches the pager to those same tables using the untouched full result.
     setTimeout(() => installPagers(full), 40);
     return initialPage(full);
   }
@@ -125,6 +125,10 @@
     return Number(panel.querySelector(".ta-result-limit input")?.value || 500);
   }
 
+  function isStoredDetail(url, method) {
+    return method === "GET" && /\/api\/analysis\/(?:history|saved)\/\d+(?:\?|$)/.test(url);
+  }
+
   function responseWithJson(response, body) {
     const headers = new Headers(response.headers);
     headers.delete("content-length");
@@ -135,9 +139,18 @@
     });
   }
 
+  // Mark intent before the older Library click handlers run. Only true Load
+  // actions may page a stored detail response; Save As metadata reads stay raw.
+  document.addEventListener("click", event => {
+    const button = event.target.closest?.("#analysis-history-list button,#saved-analysis-list button");
+    if (!button) return;
+    const text = button.textContent || "";
+    if (text.includes("載入") || /^\s*Load\s*$/i.test(text)) {
+      loadIntentUntil = performance.now() + LOAD_INTENT_MS;
+    }
+  }, true);
+
   const priorFetch = window.fetch.bind(window);
-  // acceptance-fixes.js retains its old fallback implementation. Mark it as
-  // installed so this module remains the only active paging owner.
   window.__taFetchLimiterInstalled = true;
   window.fetch = async function treepoloPagedFetch(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -155,13 +168,32 @@
     }
 
     const response = await priorFetch(input, requestInit);
-    if (!(response.ok && url.includes("/api/analyze") && method === "POST")) return response;
-    try {
-      const full = await response.clone().json();
-      return responseWithJson(response, prepareForRender(full));
-    } catch {
-      return response;
+    if (!response.ok) return response;
+
+    if (url.includes("/api/analyze") && method === "POST") {
+      try {
+        const full = await response.clone().json();
+        return responseWithJson(response, prepareForRender(full));
+      } catch {
+        return response;
+      }
     }
+
+    if (isStoredDetail(url, method) && performance.now() <= loadIntentUntil) {
+      try {
+        const body = await response.clone().json();
+        const item = body?.item;
+        if (!item?.result_available || !item.result) return response;
+        return responseWithJson(response, {
+          ...body,
+          item: { ...item, result:prepareForRender(item.result) },
+        });
+      } catch {
+        return response;
+      }
+    }
+
+    return response;
   };
 
   window.treepoloResultPaging = {
