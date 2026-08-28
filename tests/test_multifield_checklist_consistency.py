@@ -25,15 +25,15 @@ def test_unordered_dynamic_multifields_share_checkbox_component():
     assert 'checkbox.type = "checkbox"' in source
     assert "window.treepoloLegalFieldOptions?.available" in source
     assert 'input.dataset.unifiedFieldInput = "1"' in source
-    assert 'values.join(",")' in source
+    assert 'control.value = values.join(",")' in source
 
 
-def test_checklists_load_after_legality_and_before_single_field_enhancer():
-    source = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
-    legality = source.index('/field-option-legality-v3.js')
-    checklists = source.index('/field-checklists.js')
-    unified = source.index('/field-controls-unified.js')
-    assert legality < checklists < unified
+def test_checklist_bootstrap_precedes_fast_status_legality_and_unified_layers():
+    webapp = (STATIC_DIR.parent / "webapp.py").read_text(encoding="utf-8")
+    fast = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
+    assert webapp.index('/field-checklists.js') < webapp.index('/fast-status.js')
+    assert fast.index('/field-option-legality-v3.js') < fast.index('/field-controls-unified.js')
+    assert 'treepolo:field-legality-ready' in fast
 
 
 def test_dense_rank_wording_is_globally_normalized_without_removing_rank():
