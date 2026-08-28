@@ -15,4 +15,4 @@ def test_retained_row_cap_uses_declared_result_limit_and_safe_legacy_default():
     assert "const LEGACY_RESULT_LIMIT = 500;" in source
     assert "section?.result_limit" in source
     assert "result?.result_limit" in source
-    assert "Math.min(Math.max(1, Math.trunc(value)), 5000)" in source
+    assert "Math.min(Math.max(1, Math.trunc(parsed)), 5000)" in source
