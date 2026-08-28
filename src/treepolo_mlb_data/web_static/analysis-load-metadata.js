@@ -104,6 +104,19 @@
     if (source) enrichAfterLoad(source, previousCurrent);
   }
 
+  function libraryStructureChanged(mutation) {
+    const target = mutation.target;
+    const inside = target?.closest?.("#saved-analysis-list,#analysis-history-list") ||
+      target?.id === "saved-analysis-list" || target?.id === "analysis-history-list";
+    if (!inside) return false;
+    const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])];
+    return nodes.some(node => {
+      if (node.nodeType !== 1) return false;
+      if (node.classList?.contains("analysis-stale-badge")) return false;
+      return node.matches?.("table,tbody,tr") || Boolean(node.querySelector?.("table,tbody,tr"));
+    });
+  }
+
   function init() {
     scheduleRefresh();
     document.addEventListener("click", event => {
@@ -113,11 +126,7 @@
 
     const library = document.querySelector("#analysis-library-panel") || document.body;
     new MutationObserver(mutations => {
-      if (mutations.some(mutation => {
-        const target = mutation.target;
-        return target?.closest?.("#saved-analysis-list,#analysis-history-list") ||
-          target?.id === "saved-analysis-list" || target?.id === "analysis-history-list";
-      })) scheduleRefresh();
+      if (mutations.some(libraryStructureChanged)) scheduleRefresh();
     }).observe(library, { childList: true, subtree: true });
   }
 
