@@ -97,6 +97,14 @@
     return copySection(result);
   }
 
+  function prepareForRender(full) {
+    if (!full || typeof full !== "object") return full;
+    // The caller immediately renders the returned first page. The deferred step
+    // attaches the pager to those same tables using the untouched full result.
+    setTimeout(() => installPagers(full), 40);
+    return initialPage(full);
+  }
+
   function panelForMode(mode) {
     const map = {
       basic:"basic-panel", sequence_pattern:"sequence-panel", follow_event:"follow-panel",
@@ -117,11 +125,6 @@
     return Number(panel.querySelector(".ta-result-limit input")?.value || 500);
   }
 
-  function isStoredDetail(url, method) {
-    if (method !== "GET") return false;
-    return /\/api\/analysis\/(?:history|saved)\/\d+(?:\?|$)/.test(url);
-  }
-
   function responseWithJson(response, body) {
     const headers = new Headers(response.headers);
     headers.delete("content-length");
@@ -132,13 +135,9 @@
     });
   }
 
-  function schedulePagers(full) {
-    setTimeout(() => installPagers(full), 40);
-  }
-
   const priorFetch = window.fetch.bind(window);
-  // acceptance-fixes.js keeps its old fallback implementation, but this shared
-  // pipeline is the sole active owner for both fresh and stored results.
+  // acceptance-fixes.js retains its old fallback implementation. Mark it as
+  // installed so this module remains the only active paging owner.
   window.__taFetchLimiterInstalled = true;
   window.fetch = async function treepoloPagedFetch(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -156,40 +155,19 @@
     }
 
     const response = await priorFetch(input, requestInit);
-    if (!response.ok) return response;
-
-    if (url.includes("/api/analyze") && method === "POST") {
-      try {
-        const full = await response.clone().json();
-        schedulePagers(full);
-        return responseWithJson(response, initialPage(full));
-      } catch {
-        return response;
-      }
+    if (!(response.ok && url.includes("/api/analyze") && method === "POST")) return response;
+    try {
+      const full = await response.clone().json();
+      return responseWithJson(response, prepareForRender(full));
+    } catch {
+      return response;
     }
-
-    if (isStoredDetail(url, method)) {
-      try {
-        const body = await response.clone().json();
-        const item = body?.item;
-        if (!item?.result_available || !item.result) return response;
-        const full = item.result;
-        schedulePagers(full);
-        return responseWithJson(response, {
-          ...body,
-          item: { ...item, result:initialPage(full) },
-        });
-      } catch {
-        return response;
-      }
-    }
-
-    return response;
   };
 
   window.treepoloResultPaging = {
     pageSize: PAGE_SIZE,
     initialPage,
     installPagers,
+    prepareForRender,
   };
 })();
