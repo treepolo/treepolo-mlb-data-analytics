@@ -4,6 +4,7 @@
   if (window.treepoloResultPaging) return;
 
   const PAGE_SIZE = 200;
+  const LEGACY_RESULT_LIMIT = 500;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
@@ -14,6 +15,30 @@
       return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
     }
     return String(value);
+  }
+
+  function normalizedLimit(value, fallback = LEGACY_RESULT_LIMIT) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.max(1, Math.trunc(parsed)), 5000);
+  }
+
+  function normalizeRetainedRows(result) {
+    if (!result || typeof result !== "object") return result;
+    const rootLimit = normalizedLimit(result?.result_limit, LEGACY_RESULT_LIMIT);
+    const trim = section => {
+      if (!section || typeof section !== "object") return section;
+      const rows = section.rows;
+      if (!Array.isArray(rows)) return section;
+      const limit = normalizedLimit(section?.result_limit, rootLimit);
+      if (rows.length > limit) rows.splice(limit);
+      section.returned_row_count = rows.length;
+      section.result_limit = limit;
+      return section;
+    };
+    if (Array.isArray(result.sections)) result.sections.forEach(trim);
+    else trim(result);
+    return result;
   }
 
   function renderTablePage(table, section, page) {
@@ -107,9 +132,10 @@
   }
 
   function present(full, renderer) {
-    const paged = initialPage(full);
+    const normalized = normalizeRetainedRows(full);
+    const paged = initialPage(normalized);
     renderer(paged);
-    schedule(full);
+    schedule(normalized);
     return paged;
   }
 
@@ -156,8 +182,9 @@
       if (!(url.includes("/api/analyze") && method === "POST" && response.ok)) return response;
       try {
         const full = await response.clone().json();
-        const paged = initialPage(full);
-        schedule(full);
+        const normalized = normalizeRetainedRows(full);
+        const paged = initialPage(normalized);
+        schedule(normalized);
         const headers = new Headers(response.headers);
         headers.delete("content-length");
         return new Response(JSON.stringify(paged), {
@@ -173,6 +200,8 @@
 
   window.treepoloResultPaging = {
     PAGE_SIZE,
+    LEGACY_RESULT_LIMIT,
+    normalizeRetainedRows,
     initialPage,
     installPagers,
     schedule,
