@@ -83,9 +83,10 @@
         if (button && !button.disabled) button.click();
         return;
       }
-      notice.textContent = status.summary_state === "error"
+      const message = status.summary_state === "error"
         ? "快速摘要建立失敗；可重新啟動程式再試。 Fast status bootstrap failed; restart to retry."
         : "正在背景建立快速摘要；介面可先使用。 Building fast status summary in background; the interface remains usable.";
+      if (notice.textContent !== message) notice.textContent = message;
       timer = setTimeout(poll, 1000);
     } catch {
       timer = setTimeout(poll, 2000);
