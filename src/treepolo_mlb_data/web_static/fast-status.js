@@ -36,8 +36,9 @@
 
   async function loadUiEnhancements() {
     // field-checklists.js is injected by webapp before this bootstrap. Dynamic
-    // pages are created first; the legality layer owns field availability, then
-    // the unified layer handles the remaining single/ordered field controls.
+    // pages are created first; one shared paging layer then owns result paging
+    // for both fresh analysis responses and restored cached results.
+    await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
