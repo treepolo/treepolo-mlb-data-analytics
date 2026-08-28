@@ -1,6 +1,7 @@
 from treepolo_mlb_data.webapp import STATIC_DIR
 
 
+# Fresh analysis and explicit stored-result loads must share one paging owner.
 def test_result_paging_handles_fresh_and_stored_results_through_one_pipeline():
     source = (STATIC_DIR / "result-paging.js").read_text(encoding="utf-8")
     assert 'url.includes("/api/analyze")' in source
