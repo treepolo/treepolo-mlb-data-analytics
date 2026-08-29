@@ -232,7 +232,7 @@ def test_acceptance_ui_bundle_contains_required_controls_across_canonical_owners
         assert token in acceptance
     assert "Result Not Stored" in controls
     assert "PAGE_SIZE = 200" in paging
-    assert "field-checklist-search" in checklists
-    assert "locateOnlySearch" in checklists
+    assert "field-checklist-search" not in checklists
+    assert "locateOnlySearch" not in checklists
     assert "已選" in checklists
     assert "/acceptance-fixes.js" in fast_status
