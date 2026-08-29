@@ -54,6 +54,7 @@
     await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
     await loadScriptOnce("/analysis-load-metadata.js", "analysisLoadMetadata");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
+    await loadScriptOnce("/field-checklist-panel-activation.js", "fieldChecklistPanelActivation");
     document.dispatchEvent(new Event("treepolo:field-legality-ready"));
   }
   loadUiEnhancements();
