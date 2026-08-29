@@ -81,7 +81,6 @@
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
-    await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
 
     await waitForFieldCatalog();
