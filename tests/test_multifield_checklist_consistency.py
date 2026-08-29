@@ -108,13 +108,16 @@ def test_tie_label_observer_is_scoped_to_stage_lists_not_document_body():
     assert ").observe(document.body" not in consistency
 
 
-def test_research_workflow_remove_metric_button_cannot_collapse_vertically():
+def test_remove_button_width_is_owned_by_shared_stylesheet_and_only_icon_rows_are_narrow():
+    css = source("app.css")
     consistency = source("ui-consistency-fixes.js")
-    assert ".s4-metric-row .remove-row" in consistency
-    assert "grid-column: 1 / -1 !important" in consistency
-    assert "display: inline-block !important" in consistency
-    assert "width: max-content !important" in consistency
-    assert "white-space: nowrap !important" in consistency
-    assert "writing-mode: horizontal-tb !important" in consistency
-    assert "word-break: normal !important" in consistency
-    assert "min-width: 170px !important" in consistency
+    workflow = source("stage4-analysis-pages.js")
+
+    assert ".remove-row {\n  white-space: nowrap;" in css
+    assert ".condition-row > .remove-row," in css
+    assert ".metric-row > .remove-row," in css
+    assert ".result-sort-row > .remove-row {" in css
+    assert "width: 27px;" in css
+    assert ".remove-row { width: 27px" not in css
+    assert 'class="remove-row">移除此指標 Remove Metric</button>' in workflow
+    assert "remove-row" not in consistency
