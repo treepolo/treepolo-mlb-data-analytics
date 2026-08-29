@@ -79,6 +79,7 @@
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
 
     await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
+    await loadScriptOnce("/result-player-names.js", "resultPlayerNames");
     await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await clusterComparisonReady;
