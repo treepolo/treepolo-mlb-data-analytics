@@ -188,6 +188,20 @@ legend { padding: 0 5px; color: #164079; font-weight: 700; }
   padding: 0;
   font-weight: 700;
 }
+.s4-metric-row > .remove-row {
+  grid-column: 1 / -1;
+  justify-self: start;
+  align-self: start;
+  display: inline-block;
+  width: auto;
+  min-width: 170px;
+  max-width: 100%;
+  padding: 3px 10px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  word-break: normal;
+  overflow-wrap: normal;
+}
 .single-condition .condition-row .remove-row { display: none; }
 .three-condition-grid { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 10px; }
 
