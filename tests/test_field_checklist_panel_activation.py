@@ -5,16 +5,19 @@ def source(name: str) -> str:
     return (STATIC_DIR / name).read_text(encoding="utf-8")
 
 
-def test_checklists_refresh_when_any_panel_becomes_active():
-    bridge = source("field-checklist-panel-activation.js")
-    assert 'attributeFilter:["class"]' in bridge
-    assert 'panel.classList.contains("active-panel")' in bridge
-    assert "treepoloFieldChecklistsApi?.refresh?.()" in bridge
-    assert 'observe(main, { childList:true })' in bridge
+def test_panel_activation_has_one_owner_and_emits_a_formal_event():
+    panels = source("panel-activation.js")
+    assert "window.treepoloPanels" in panels
+    assert "function activate(panelId" in panels
+    assert 'new CustomEvent("treepolo:panel-activated"' in panels
+    assert 'item.classList.toggle("active-panel", item.id === panelId)' in panels
 
 
-def test_panel_activation_bridge_is_loaded_after_field_controls():
-    bootstrap = source("fast-status.js")
-    unified_at = bootstrap.index('loadScriptOnce("/field-controls-unified.js"')
-    bridge_at = bootstrap.index('loadScriptOnce("/field-checklist-panel-activation.js"')
-    assert unified_at < bridge_at
+def test_checklists_subscribe_to_panel_activation_without_observer_bridge():
+    checklist = source("field-checklists.js")
+    fast = source("fast-status.js")
+
+    assert 'document.addEventListener("treepolo:panel-activated"' in checklist
+    assert "refreshRoot(panel)" in checklist
+    assert not (STATIC_DIR / "field-checklist-panel-activation.js").exists()
+    assert "/field-checklist-panel-activation.js" not in fast
