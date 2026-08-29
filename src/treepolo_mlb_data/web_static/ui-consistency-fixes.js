@@ -11,14 +11,18 @@
     const style = document.createElement("style");
     style.id = "ui-consistency-fixes-styles";
     style.textContent = `
-      .s4-metric-row > button.remove-row {
-        grid-column: 1 / -1;
-        justify-self: start;
-        width: auto;
-        min-width: 170px;
-        max-width: 100%;
-        white-space: nowrap;
-        writing-mode: horizontal-tb;
+      .s4-metric-row .remove-row {
+        grid-column: 1 / -1 !important;
+        justify-self: start !important;
+        align-self: start !important;
+        display: inline-block !important;
+        width: max-content !important;
+        min-width: 170px !important;
+        max-width: 100% !important;
+        white-space: nowrap !important;
+        writing-mode: horizontal-tb !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
       }
     `;
     document.head.append(style);
