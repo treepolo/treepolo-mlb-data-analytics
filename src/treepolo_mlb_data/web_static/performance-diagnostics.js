@@ -280,13 +280,16 @@
     };
   }
 
+  function setPanelVisible(layer, visible) {
+    layer.style.display = visible ? "grid" : "none";
+  }
+
   function ensurePanel() {
     let layer = document.querySelector("#perf-diagnostics-layer");
     if (layer) return layer;
     layer = document.createElement("div");
     layer.id = "perf-diagnostics-layer";
-    layer.hidden = true;
-    layer.style.cssText = "position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,.24);display:grid;place-items:center;padding:18px";
+    layer.style.cssText = "position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,.24);display:none;place-items:center;padding:18px";
     layer.innerHTML = `
       <section style="width:min(900px,calc(100vw - 36px));height:min(78vh,720px);display:flex;flex-direction:column;background:#ece9d8;border:1px solid #003b7a;box-shadow:0 10px 28px rgba(0,0,0,.45)">
         <div style="padding:5px 8px;background:#0a5dbb;color:white;font-weight:700">效能診斷 Performance Diagnostics</div>
@@ -301,7 +304,7 @@
     document.body.append(layer);
     const textarea = layer.querySelector("#perf-diagnostics-report");
     const refresh = () => { textarea.value = JSON.stringify(snapshotReport(), null, 2); };
-    layer.querySelector("[data-perf-close]").addEventListener("click", () => { layer.hidden = true; });
+    layer.querySelector("[data-perf-close]").addEventListener("click", () => { setPanelVisible(layer, false); });
     layer.querySelector("[data-perf-copy]").addEventListener("click", async () => {
       refresh();
       try { await navigator.clipboard.writeText(textarea.value); }
@@ -323,7 +326,7 @@
       url.searchParams.delete("perf");
       window.location.replace(url.toString());
     });
-    layer.addEventListener("mousedown", event => { if (event.target === layer) layer.hidden = true; });
+    layer.addEventListener("mousedown", event => { if (event.target === layer) setPanelVisible(layer, false); });
     layer._refreshReport = refresh;
     return layer;
   }
@@ -345,7 +348,7 @@
       }
       const layer = ensurePanel();
       layer._refreshReport?.();
-      layer.hidden = false;
+      setPanelVisible(layer, true);
     });
     toolbar.append(separator, button);
   }
@@ -357,7 +360,7 @@
       if (!enabled) return;
       const layer = ensurePanel();
       layer._refreshReport?.();
-      layer.hidden = false;
+      setPanelVisible(layer, true);
     },
   };
 
