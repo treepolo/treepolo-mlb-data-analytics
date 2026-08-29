@@ -1,22 +1,16 @@
 from treepolo_mlb_data.webapp import STATIC_DIR
 
 
-def test_unified_analysis_save_ui_reuses_one_saved_analysis_endpoint():
-    save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
+def source(name: str) -> str:
+    return (STATIC_DIR / name).read_text(encoding="utf-8")
+
+
+def test_save_dialog_reuses_one_saved_analysis_endpoint_and_resolves_history_metadata():
+    save_ui = source("analysis-save-ui.js")
 
     assert save_ui.count('"/api/analysis/saved"') == 1
     assert "async function saveSource" in save_ui
-    assert "window.treepoloLastAnalysis" in save_ui
-    assert "historySource(item)" in save_ui
-    assert "openSaveDialog(source)" in save_ui
-
-
-def test_current_result_save_resolves_canonical_history_cache_metadata():
-    save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
-
     assert "async function resolveSource" in save_ui
-    assert "current.result?.history_id" in save_ui
-    assert "history_id: item.id || null" in save_ui
     assert "`/api/analysis/history/${historyId}`" in save_ui
     assert "cache_key: item.cache_key || null" in save_ui
     assert "data_revision: item.data_revision || null" in save_ui
@@ -25,36 +19,55 @@ def test_current_result_save_resolves_canonical_history_cache_metadata():
     assert "cache_key: resolved.cache_key || null" in save_ui
 
 
-def test_library_load_preserves_result_metadata_for_later_result_area_save():
-    helper = (STATIC_DIR / "analysis-load-metadata.js").read_text(encoding="utf-8")
-    loader = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
+def test_save_dialog_is_single_purpose_and_does_not_decorate_workspace_dom():
+    save_ui = source("analysis-save-ui.js")
 
-    assert 'api("/api/analysis/saved")' in helper
-    assert 'api("/api/analysis/history?limit=100")' in helper
-    assert '#saved-analysis-list button,#analysis-history-list button' in helper
-    assert 'current !== previousCurrent' in helper
-    assert 'history_id: source.history_id || current.history_id || null' in helper
-    assert 'cache_key: source.cache_key || current.cache_key || null' in helper
-    assert 'data_revision: source.data_revision || current.data_revision || null' in helper
-    assert 'window.treepoloLastAnalysis = {' in helper
-    assert '/analysis-load-metadata.js' in loader
+    assert "MutationObserver" not in save_ui
+    assert "analysis-history-list" not in save_ui
+    assert "result-save-toolbar" not in save_ui
+    assert "window.treepoloLastAnalysis" not in save_ui
+    assert "removeLegacySavePanel" not in save_ui
+    assert 'document.addEventListener("treepolo:analysis-save-request"' in save_ui
+    assert "window.treepoloAnalysisSaveUiApi = { open: openSaveDialog }" in save_ui
 
 
-def test_save_entry_points_are_result_toolbar_and_history_rows():
-    save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
-    loader = (STATIC_DIR / "fast-status.js").read_text(encoding="utf-8")
+def test_workspace_owns_result_save_toolbar_and_history_save_as_actions():
+    controls = source("stage4-controls.js")
 
-    assert "result-save-toolbar" in save_ui
-    assert 'title.insertAdjacentElement("afterend", toolbar)' in save_ui
-    assert "analysis-history-save-as" in save_ui
-    assert "另存分析 Save As…" in save_ui
-    assert "removeLegacySavePanel" in save_ui
-    assert "儲存目前分析" in save_ui
-    assert "/analysis-save-ui.js" in loader
+    assert "function ensureResultSaveToolbar()" in controls
+    assert "result-save-toolbar" in controls
+    assert "儲存此分析 Save Analysis" in controls
+    assert "function historySource(item)" in controls
+    assert "另存分析 Save As…" in controls
+    assert "requestSave(source)" in controls
+    assert "儲存目前分析 Save Current Analysis" not in controls
+    assert "analysis-save-current" not in controls
+
+
+def test_analysis_state_updates_save_toolbar_for_fresh_and_loaded_results_without_dom_observers():
+    controls = source("stage4-controls.js")
+
+    assert "function publishAnalysisState()" in controls
+    assert "publishAnalysisState();" in controls
+    assert "window.treepoloLastAnalysis = { payload:lastPayload, result:lastResult }" in controls
+    assert "loaded_source_kind:source.kind||null" in controls
+    assert "treepolo:analysis-state-changed" in controls
+    assert "treepolo:analysis-current-source-updated" in controls
+    assert "renderMissingStoredResult" in controls
+
+
+def test_save_ui_is_not_a_late_fast_status_enhancement():
+    controls = source("stage4-controls.js")
+    fast_status = source("fast-status.js")
+
+    assert "function ensureSaveUiLoaded()" in controls
+    assert 'script.src = "/analysis-save-ui.js"' in controls
+    assert '/analysis-save-ui.js' not in fast_status
+    assert "treepolo:analysis-library-refresh-request" in controls
 
 
 def test_save_as_uses_xp_dialog_with_deferred_name_and_notes_inputs():
-    save_ui = (STATIC_DIR / "analysis-save-ui.js").read_text(encoding="utf-8")
+    save_ui = source("analysis-save-ui.js")
 
     assert "xp-save-dialog-layer" in save_ui
     assert "xp-save-dialog-title" in save_ui
