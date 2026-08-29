@@ -35,6 +35,11 @@
   }
 
   async function loadUiEnhancements() {
+    // Diagnostics stays dormant during normal use. When explicitly enabled it
+    // must load before the enhancement layer so observer/timer/event callbacks
+    // can be attributed to their source files.
+    await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
+
     // field-checklists.js is injected by webapp before this bootstrap. Dynamic
     // pages are created first; one shared paging layer then owns result paging
     // for both fresh analysis responses and restored cached results.
