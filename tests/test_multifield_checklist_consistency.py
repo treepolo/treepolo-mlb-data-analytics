@@ -21,25 +21,27 @@ def source(name: str) -> str:
     return (STATIC_DIR / name).read_text(encoding="utf-8")
 
 
-def test_unordered_dynamic_multifields_share_checkbox_component():
+def test_unordered_dynamic_multifields_share_csv_checklist_component():
     checklist = source("field-checklists.js")
     for selector in UNORDERED_MULTI_FIELD_SELECTORS:
         assert f'"{selector}"' in checklist
     assert '".s4-order"' not in checklist
     assert 'checkbox.type = "checkbox"' in checklist
-    assert "window.treepoloLegalFieldOptions?.available" in checklist
-    assert 'control.dataset.unifiedFieldInput = "1"' in checklist
-    assert 'control.value = values.join(",")' in checklist
+    assert "const provider = window.treepoloLegalFieldOptions" in checklist
+    assert 'control.dataset.multiField = "1"' in checklist
+    assert "model()?.write" in checklist
 
 
-def test_dynamic_checklists_cannot_be_reowned_by_editable_combo_layer():
+def test_unordered_multifields_have_one_renderer_owner():
     checklist = source("field-checklists.js")
     unified = source("field-controls-unified.js")
+    registry = unified.split("const FIELD_INPUT_RULES = [", 1)[1].split("];", 1)[0]
 
-    assert "function claimControls" in checklist
-    assert "claimControls(document);" in checklist
-    assert 'control.dataset.unifiedFieldInput = "1"' in checklist
-    assert 'if (!input || input.dataset.unifiedFieldInput === "1") return;' in unified
+    assert "function claimControl(control)" in checklist
+    assert 'control.dataset.fieldChecklistOwned = "1"' in checklist
+    for selector in UNORDERED_MULTI_FIELD_SELECTORS:
+        assert selector not in registry
+    assert '.s4-order' in registry
 
 
 def test_checklist_rows_are_not_labels_and_ignore_stage_form_label_layout():
@@ -56,7 +58,6 @@ def test_checklists_are_lazy_and_skip_dom_rebuild_when_shape_is_unchanged():
 
     assert "function activeForRender(control)" in checklist
     assert 'panel.classList.contains("active-panel")' in checklist
-    assert "if (activeForRender(control)) renderChecklist(control);" in checklist
     assert "function renderSignature" in checklist
     assert "state.signature === signature" in checklist
     assert "syncState(state);" in checklist
@@ -64,27 +65,27 @@ def test_checklists_are_lazy_and_skip_dom_rebuild_when_shape_is_unchanged():
 
 def test_checklist_selection_sync_is_idempotent_and_emits_one_commit_event():
     checklist = source("field-checklists.js")
+    model = source("multi-field-model.js")
 
     assert "state.selectionSignature === selectionSignature" in checklist
     assert "state.summary.replaceChildren(fragment)" in checklist
-    assert 'control.dispatchEvent(new Event("change", { bubbles:true }))' in checklist
-    assert 'control.dispatchEvent(new Event("input", { bubbles:true }))' not in checklist
+    assert "model().write(control, values, { emit:true })" in checklist
+    assert 'control.dispatchEvent(new Event("change", { bubbles:true }))' in model
+    assert 'control.dispatchEvent(new Event("input", { bubbles:true }))' not in model
 
 
-def test_checklist_observer_only_claims_and_renders_new_controls_locally():
+def test_checklist_observer_only_handles_new_controls_locally():
     checklist = source("field-checklists.js")
 
-    assert "function addedControls(mutation)" in checklist
     assert "function handleAddedControls(mutations)" in checklist
     assert "new MutationObserver(handleAddedControls)" in checklist
-    assert "if (activeForRender(control)) renderChecklist(control);" in checklist
-    assert "mutations.some(addedControls)" not in checklist
-    assert "MUTATION_IGNORE_SELECTOR" in checklist
+    assert "mutation.addedNodes" in checklist
+    assert "controls.forEach(control" in checklist
     assert "characterData:true" not in checklist
     assert "attributes:true" not in checklist
 
 
-def test_checklist_bootstrap_precedes_fast_status_legality_and_unified_layers():
+def test_checklist_bootstrap_and_legality_dependency_are_explicit():
     webapp = (STATIC_DIR.parent / "webapp.py").read_text(encoding="utf-8")
     fast = source("fast-status.js")
     assert webapp.index('/field-checklists.js') < webapp.index('/fast-status.js')
