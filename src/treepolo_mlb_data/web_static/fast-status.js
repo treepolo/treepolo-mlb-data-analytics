@@ -34,6 +34,25 @@
     });
   }
 
+  function announceFieldLegalityWhenCatalogReady() {
+    const announce = () => {
+      const fields = window.treepoloFieldCatalog?.fields?.() || [];
+      if (!fields.length || !window.treepoloLegalFieldOptions) return false;
+      window.treepoloLegalFieldOptions.refresh?.();
+      document.dispatchEvent(new CustomEvent("treepolo:field-legality-ready", {
+        detail: { source:"field-catalog", fieldCount:fields.length },
+      }));
+      return true;
+    };
+
+    if (announce()) return;
+    const onFieldsUpdated = () => {
+      if (!announce()) return;
+      document.removeEventListener("treepolo:fields-updated", onFieldsUpdated);
+    };
+    document.addEventListener("treepolo:fields-updated", onFieldsUpdated);
+  }
+
   async function loadUiEnhancements() {
     await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
     await loadScriptOnce("/result-paging.js", "resultPaging");
@@ -46,7 +65,7 @@
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
     await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
-    document.dispatchEvent(new Event("treepolo:field-legality-ready"));
+    announceFieldLegalityWhenCatalogReady();
   }
   loadUiEnhancements();
 
