@@ -128,11 +128,13 @@ def test_semantic_value_lists_remain_domain_scoped_not_field_scoped():
 def test_legality_provider_is_loaded_as_foundational_dependency():
     fast = read("fast-status.js")
 
-    legality = fast.index('/field-option-legality-v3.js')
-    acceptance = fast.index('/acceptance-fixes.js')
-    cluster = fast.index('/cluster-comparison-page.js')
-    unified = fast.index('/field-controls-unified.js')
-    assert legality < acceptance < cluster < unified
+    claim = 'const clusterComparisonReady = loadScriptOnce("/cluster-comparison-page.js", "clusterCompareLoader");'
+    legality = 'await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");'
+    acceptance = 'await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");'
+    cluster = "await clusterComparisonReady;"
+    unified = 'await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");'
+    assert fast.index(claim) < fast.index(legality)
+    assert fast.index(legality) < fast.index(acceptance) < fast.index(cluster) < fast.index(unified)
     assert "await waitForFieldCatalog();" in fast
     assert "commitFieldLegality();" in fast
     assert '/field-option-legality-v2.js' not in fast
