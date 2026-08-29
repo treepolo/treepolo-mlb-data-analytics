@@ -68,7 +68,6 @@ def test_field_lists_use_capabilities_not_frontend_field_allowlists():
     assert "canonical_pitch_type" in source
     assert "pitch_classification" in source
     assert 'new Set(["pitch_type"' not in source
-    assert 'new Set(["pitch_type", "pitch_name"' not in source
     assert "ORDERABLE_TEXT_FIELDS" not in source
     assert 'fetch("/api/meta"' in source
 
@@ -95,15 +94,17 @@ def test_numeric_and_type_compatible_controls_are_narrowed():
     assert "compatible(map,source)" in source
 
 
-def test_every_ui_field_control_consumes_the_legality_provider():
+def test_every_field_ui_consumes_one_legality_provider():
     legality = read("field-option-legality-v3.js")
     unified = read("field-controls-unified.js")
+    checklist = read("field-checklists.js")
 
-    assert "window.treepoloLegalFieldOptions={available:control=>legalDescriptors(control).map(item=>item.value),refresh}" in legality
-    assert "window.treepoloLegalFieldOptions?.available" in unified
+    assert "window.treepoloLegalFieldOptions={" in legality
+    assert "available:control=>legalDescriptors(control).map(item=>item.value)" in legality
+    assert "descriptors:control=>legalDescriptors(control)" in legality
+    assert "const provider=window.treepoloLegalFieldOptions" in unified
+    assert "const provider = window.treepoloLegalFieldOptions" in checklist
     assert "function legalFieldOptions(control)" in unified
-    assert "legalFieldOptions(select)" in unified
-    assert "legalFieldOptions(input)" in unified
 
 
 def test_native_single_selects_that_need_capability_narrowing_are_rebuilt_from_legal_descriptors():
@@ -118,20 +119,22 @@ def test_semantic_value_lists_remain_domain_scoped_not_field_scoped():
     unified = read("field-controls-unified.js")
 
     assert "function domain(field)" in unified
-    assert "pitch_type: PITCH_TYPES" in unified
+    assert "pitch_type:PITCH_TYPES" in unified
     assert "valueField(input)" in unified
     assert "#role-exclude,.ta-role-exclude" in unified
     assert "#cc-reference" in unified
 
 
-def test_legality_provider_loads_before_unified_ui_controls():
+def test_legality_provider_is_loaded_as_foundational_dependency():
     fast = read("fast-status.js")
 
+    legality = fast.index('/field-option-legality-v3.js')
     acceptance = fast.index('/acceptance-fixes.js')
     cluster = fast.index('/cluster-comparison-page.js')
-    legality = fast.index('/field-option-legality-v3.js')
     unified = fast.index('/field-controls-unified.js')
-    assert acceptance < cluster < legality < unified
+    assert legality < acceptance < cluster < unified
+    assert "await waitForFieldCatalog();" in fast
+    assert "commitFieldLegality();" in fast
     assert '/field-option-legality-v2.js' not in fast
     assert '/field-controls-classic.js' not in fast
 
