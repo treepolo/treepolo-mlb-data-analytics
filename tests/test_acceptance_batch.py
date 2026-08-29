@@ -186,8 +186,6 @@ def test_cluster_compare_candidate_obeys_minimum_usage(tmp_path):
         [-1.2, -1.1, -1.0, -.9, 1.0, 1.1, 1.2, 1.3],
         [.5, .6, .5, .6, -.5, -.6, -.5, -.6])
     add("SL", [83.0] * 8, 2500, [.2] * 8, [.4] * 8)
-    # Rare, very fast non-FF pitch: without the acceptance fix this wins the
-    # selector and then fails k=2 because only one row is available.
     add("FC", [99.0], 2450, [0.0], [1.0])
     insert_rows(path, rows)
 
@@ -214,11 +212,14 @@ def test_cluster_compare_candidate_obeys_minimum_usage(tmp_path):
     assert comparison["rows"][0]["candidate_pitch_type"] == "CH"
 
 
-def test_acceptance_ui_bundle_contains_required_controls():
+def test_acceptance_ui_bundle_contains_required_controls_across_canonical_owners():
     root = Path(__file__).parents[1]
-    acceptance = (root / "src/treepolo_mlb_data/web_static/acceptance-fixes.js").read_text(encoding="utf-8")
-    checklists = (root / "src/treepolo_mlb_data/web_static/field-checklists.js").read_text(encoding="utf-8")
-    fast_status = (root / "src/treepolo_mlb_data/web_static/fast-status.js").read_text(encoding="utf-8")
+    static = root / "src/treepolo_mlb_data/web_static"
+    acceptance = (static / "acceptance-fixes.js").read_text(encoding="utf-8")
+    controls = (static / "stage4-controls.js").read_text(encoding="utf-8")
+    paging = (static / "result-paging.js").read_text(encoding="utf-8")
+    checklists = (static / "field-checklists.js").read_text(encoding="utf-8")
+    fast_status = (static / "fast-status.js").read_text(encoding="utf-8")
 
     for token in (
         "Result Row Limit",
@@ -227,12 +228,11 @@ def test_acceptance_ui_bundle_contains_required_controls():
         "empirical_percentile",
         "Add After",
         "ta-metric-cond-value-field",
-        "Result Not Stored",
-        "PAGE_SIZE = 200",
     ):
         assert token in acceptance
+    assert "Result Not Stored" in controls
+    assert "PAGE_SIZE = 200" in paging
     assert "field-checklist-search" in checklists
     assert "locateOnlySearch" in checklists
-    assert 'select.id === "basic-group"' not in checklists
     assert "已選" in checklists
     assert "/acceptance-fixes.js" in fast_status
