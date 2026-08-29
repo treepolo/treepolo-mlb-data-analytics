@@ -47,3 +47,13 @@ def test_static_and_dynamic_multifields_use_one_generic_checklist_renderer():
     assert "control.value = next" in model
     assert "renderBasicGroupChecklist" not in app
     assert "/field-checklists.js" in webapp
+
+
+def test_checklist_does_not_duplicate_canonical_input_with_a_second_search_box():
+    checklist = (STATIC_DIR / "field-checklists.js").read_text(encoding="utf-8")
+
+    assert "field-checklist-search" not in checklist
+    assert "locateOnlySearch" not in checklist
+    assert 'search.type = "search"' not in checklist
+    assert "field-checklist-summary" in checklist
+    assert "field-checklist-items" in checklist
