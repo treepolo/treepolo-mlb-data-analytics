@@ -113,11 +113,19 @@ def test_remove_button_width_is_owned_by_shared_stylesheet_and_only_icon_rows_ar
     consistency = source("ui-consistency-fixes.js")
     workflow = source("stage4-analysis-pages.js")
 
-    assert ".remove-row {\n  white-space: nowrap;" in css
+    # Existing compact remove buttons keep their 27 px behavior.
     assert ".condition-row > .remove-row," in css
     assert ".metric-row > .remove-row," in css
     assert ".result-sort-row > .remove-row {" in css
     assert "width: 27px;" in css
-    assert ".remove-row { width: 27px" not in css
+
+    # Every Research Workflow Remove Metric is created by addMetric() inside an
+    # s4-metric-row, and that exact button type gets a full-width-row layout.
     assert 'class="remove-row">移除此指標 Remove Metric</button>' in workflow
+    assert ".s4-metric-row > .remove-row {" in css
+    assert "grid-column: 1 / -1;" in css
+    assert "min-width: 170px;" in css
+    assert "white-space: nowrap;" in css
+
+    # The layout no longer depends on the delayed enhancement layer.
     assert "remove-row" not in consistency
