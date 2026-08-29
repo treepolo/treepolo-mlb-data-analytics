@@ -17,13 +17,18 @@
   const csv = value => String(value || "").split(",").map(item => item.trim()).filter(Boolean);
   const clone = item => ({ ...item, capabilities:new Set(item.capabilities || []) });
 
+  function catalogDescriptors() {
+    return (window.treepoloFieldCatalog?.fields?.() || []).map(field => ({
+      value:field.name,
+      label:window.treepoloFieldCatalog?.label?.(field.name) || field.name,
+      type:String(field.type || "UNKNOWN").toUpperCase(),
+      capabilities:new Set(field.capabilities || ["reference","filter","group","order","id"]),
+    }));
+  }
+
   function baseDescriptors() {
-    const source = document.querySelector("#basic-group");
-    const labels = new Map(Array.from(source?.options || []).filter(option => option.value).map(option => [option.value, option.textContent || option.value]));
-    if (schemaFields.size) {
-      return Array.from(schemaFields.values()).map(item => ({ ...clone(item), label:labels.get(item.value) || item.label || item.value }));
-    }
-    return Array.from(labels, ([value,label]) => ({ value, label, type:"UNKNOWN", capabilities:new Set(["reference","filter","group","order","id"]) }));
+    if (schemaFields.size) return Array.from(schemaFields.values()).map(clone);
+    return catalogDescriptors();
   }
 
   const asMap = items => new Map(items.map(item => [item.value, clone(item)]));
@@ -218,14 +223,28 @@
   function refresh(){document.querySelectorAll("select").forEach(rebuildSelect);document.querySelectorAll(".xp-edit-shell > .xp-popup").forEach(ownPopup);}
 
   async function loadMeta(){
-    try{const response=await fetch("/api/meta",{cache:"no-store"});if(!response.ok)return;const meta=await response.json();schemaFields.clear();(meta.fields||[]).forEach(field=>schemaFields.set(field.name,{value:field.name,label:field.name,type:String(field.type||"UNKNOWN").toUpperCase(),capabilities:new Set(field.capabilities||[])}));refresh();}
+    try{
+      const response=await fetch("/api/meta",{cache:"no-store"});if(!response.ok)return;
+      const meta=await response.json();schemaFields.clear();
+      (meta.fields||[]).forEach(field=>schemaFields.set(field.name,{
+        value:field.name,
+        label:window.treepoloFieldCatalog?.label?.(field.name) || field.name,
+        type:String(field.type||"UNKNOWN").toUpperCase(),
+        capabilities:new Set(field.capabilities||[]),
+      }));
+      refresh();
+    }
     catch{/* Availability still follows the pipeline; capability narrowing waits for metadata. */}
   }
-  function relevantChange(target){return target?.matches?.(".metric-function,#role-metric-kind,#role-function,#temporal-function,#cross-function,.s4-metric-fn,.s4-function,#s4-boot-stat,.s4-stage-kind,.ta-role-kind,.ta-role-fn,.s4-groups,.s4-metric-field,.s4-metric-alias,.s4-alias,.s4-fields,.s4-field,.s4-metric-cond-field,.ta-custom-alias,.ta-cohort-alias");}
+  function relevantChange(target){return target?.matches?.("[data-multi-field],.metric-function,#role-metric-kind,#role-function,#temporal-function,#cross-function,.s4-metric-fn,.s4-function,#s4-boot-stat,.s4-stage-kind,.ta-role-kind,.ta-role-fn,.s4-groups,.s4-metric-field,.s4-metric-alias,.s4-alias,.s4-fields,.s4-field,.s4-metric-cond-field,.ta-custom-alias,.ta-cohort-alias");}
   function init(){
     refresh();loadMeta();document.addEventListener("change",event=>{if(relevantChange(event.target))setTimeout(refresh,0);});document.addEventListener("input",event=>{if(relevantChange(event.target))setTimeout(refresh,0);});document.addEventListener("treepolo:fields-updated",()=>setTimeout(()=>{refresh();loadMeta();},0));
     let queued=false;new MutationObserver(mutations=>{if(queued||!mutations.some(mutation=>mutation.addedNodes.length||mutation.removedNodes.length))return;queued=true;setTimeout(()=>{queued=false;refresh();},0);}).observe(document.body,{childList:true,subtree:true});
   }
-  window.treepoloLegalFieldOptions={available:control=>legalDescriptors(control).map(item=>item.value),refresh};
+  window.treepoloLegalFieldOptions={
+    available:control=>legalDescriptors(control).map(item=>item.value),
+    descriptors:control=>legalDescriptors(control).map(item=>({value:item.value,label:item.label||item.value})),
+    refresh,
+  };
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
