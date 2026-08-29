@@ -6,28 +6,6 @@
 
   const DENSE_RANK_LABEL = "保留並列（不跳號） Dense Rank";
 
-  function injectStyles() {
-    if (document.getElementById("ui-consistency-fixes-styles")) return;
-    const style = document.createElement("style");
-    style.id = "ui-consistency-fixes-styles";
-    style.textContent = `
-      .s4-metric-row .remove-row {
-        grid-column: 1 / -1 !important;
-        justify-self: start !important;
-        align-self: start !important;
-        display: inline-block !important;
-        width: max-content !important;
-        min-width: 170px !important;
-        max-width: 100% !important;
-        white-space: nowrap !important;
-        writing-mode: horizontal-tb !important;
-        word-break: normal !important;
-        overflow-wrap: normal !important;
-      }
-    `;
-    document.head.append(style);
-  }
-
   function normalizeTieLabels(root = document) {
     const options = [];
     if (root.matches?.('option[value="dense_rank"]')) options.push(root);
@@ -52,7 +30,6 @@
   }
 
   function init() {
-    injectStyles();
     normalizeTieLabels(document);
     observeStageLists();
     document.addEventListener("treepolo:analysis-options-changed", () => {
