@@ -29,8 +29,6 @@
   let generatedId = 0;
   let refreshQueued = false;
 
-  const normalize = value => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
-
   function model() {
     return window.treepoloMultiField;
   }
@@ -50,15 +48,14 @@
   }
 
   function injectStyles() {
-    if (document.getElementById("field-checklist-search-styles")) return;
+    if (document.getElementById("field-checklist-styles")) return;
     const style = document.createElement("style");
-    style.id = "field-checklist-search-styles";
+    style.id = "field-checklist-styles";
     style.textContent = `
       input[data-multi-field]{width:100%;box-sizing:border-box}
       .field-checklist{width:100%;max-width:100%;min-width:0;border:1px solid #7f9db9;background:#fff;max-height:190px;overflow:auto}
       .field-checklist-tools{position:sticky;top:0;z-index:4;background:#f4f7fb;border-bottom:1px solid #b6c1ce;padding:4px}
-      .field-checklist-search{width:100%;box-sizing:border-box}
-      .field-checklist-summary{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:3px;min-height:20px;font-size:11px}
+      .field-checklist-summary{display:flex;gap:4px;align-items:center;flex-wrap:wrap;min-height:20px;font-size:11px}
       .field-checklist-chip{padding:1px 5px;border:1px solid #8ea2ba;background:#fff;cursor:pointer;white-space:nowrap}
       .field-checklist-items{min-width:max-content}
       .field-checklist .field-check-item{display:flex;flex-direction:row;align-items:center;gap:6px;min-height:22px;padding:2px 5px;font-weight:400;cursor:pointer;user-select:none;white-space:nowrap}
@@ -70,10 +67,6 @@
   function activeForRender(control) {
     const panel = control.closest?.(".panel");
     return !panel || panel.classList.contains("active-panel");
-  }
-
-  function locateOnlySearch(control) {
-    return control.id === "basic-group" || control.dataset.searchMode === "locate";
   }
 
   function descriptors(control) {
@@ -119,8 +112,8 @@
     return host;
   }
 
-  function renderSignature(items, locateOnly) {
-    return `${locateOnly ? "locate" : "filter"}\u0002${items.map(item => `${item.value}\u0001${item.label}`).join("\u0003")}`;
+  function renderSignature(items) {
+    return items.map(item => `${item.value}\u0001${item.label}`).join("\u0003");
   }
 
   function syncState(state) {
@@ -155,22 +148,16 @@
     state.summary.replaceChildren(fragment);
   }
 
-  function buildChecklist(control, host, items, locateOnly, signature) {
-    const previousQuery = host.querySelector(".field-checklist-search")?.value || "";
+  function buildChecklist(control, host, items, signature) {
     host.replaceChildren();
 
     const tools = document.createElement("div");
     tools.className = "field-checklist-tools";
-    const search = document.createElement("input");
-    search.type = "search";
-    search.className = "field-checklist-search";
-    search.placeholder = locateOnly ? "搜尋並定位欄位 Search & locate field" : "搜尋欄位 Search fields";
-    search.value = previousQuery;
     const summary = document.createElement("div");
     summary.className = "field-checklist-summary";
     const list = document.createElement("div");
     list.className = "field-checklist-items";
-    tools.append(search, summary);
+    tools.append(summary);
     host.append(tools, list);
 
     const rows = [];
@@ -181,7 +168,6 @@
       const row = document.createElement("div");
       row.className = "field-check-item";
       const textLabel = item.label || item.value;
-      row.dataset.searchText = normalize(`${textLabel} ${item.value}`);
 
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
@@ -215,7 +201,7 @@
     });
 
     const state = {
-      control, host, signature, rows, rowByValue, summary, search, locateOnly,
+      control, host, signature, rows, rowByValue, summary,
       selectionSignature:null,
       flash:null,
     };
@@ -228,54 +214,21 @@
       setTimeout(() => row.label.classList.remove("field-search-hit"), 1800);
     };
 
-    let locateIndex = -1;
-    function applySearch(advance = false) {
-      const query = normalize(search.value);
-      if (locateOnly) {
-        const matches = query ? rows.filter(row => row.label.dataset.searchText.includes(query)) : [];
-        if (!matches.length) {
-          locateIndex = -1;
-          rows.forEach(row => row.label.classList.remove("field-search-hit"));
-          return;
-        }
-        locateIndex = advance ? (locateIndex + 1) % matches.length : 0;
-        state.flash(matches[locateIndex]);
-        return;
-      }
-      rows.forEach(row => { row.label.hidden = Boolean(query) && !row.label.dataset.searchText.includes(query); });
-    }
-
-    search.addEventListener("click", event => event.stopPropagation());
-    search.addEventListener("input", event => {
-      event.stopPropagation();
-      locateIndex = -1;
-      applySearch(false);
-    });
-    search.addEventListener("keydown", event => {
-      if (event.key === "Enter" && locateOnly) {
-        event.preventDefault();
-        event.stopPropagation();
-        applySearch(true);
-      }
-    });
-
     host._treepoloChecklistState = state;
     syncState(state);
-    if (previousQuery) applySearch(false);
   }
 
   function renderChecklist(control) {
     if (!claimControl(control) || !control.isConnected || !activeForRender(control)) return;
     const items = descriptors(control);
     const host = hostFor(control);
-    const locateOnly = locateOnlySearch(control);
-    const signature = renderSignature(items, locateOnly);
+    const signature = renderSignature(items);
     const state = host._treepoloChecklistState;
     if (state?.control === control && state.signature === signature) {
       syncState(state);
       return;
     }
-    buildChecklist(control, host, items, locateOnly, signature);
+    buildChecklist(control, host, items, signature);
   }
 
   function refreshRoot(root) {
