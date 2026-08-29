@@ -149,11 +149,13 @@ def test_alias_creation_inputs_are_not_registered_as_field_choosers():
 def test_legality_is_foundational_then_dynamic_pages_and_unified_controls_load():
     fast = read("fast-status.js")
 
-    legality = fast.index('/field-option-legality-v3.js')
-    acceptance = fast.index('/acceptance-fixes.js')
-    cluster = fast.index('/cluster-comparison-page.js')
-    unified = fast.index('/field-controls-unified.js')
-    arrows_css = fast.index('/field-controls-native-arrow.css')
-    arrows_js = fast.index('/field-controls-native-arrow.js')
-    assert legality < acceptance < cluster < unified < arrows_css < arrows_js
+    claim = 'const clusterComparisonReady = loadScriptOnce("/cluster-comparison-page.js", "clusterCompareLoader");'
+    legality = 'await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");'
+    acceptance = 'await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");'
+    cluster = "await clusterComparisonReady;"
+    unified = 'await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");'
+    arrows_css = 'await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");'
+    arrows_js = 'await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");'
+    assert fast.index(claim) < fast.index(legality)
+    assert fast.index(legality) < fast.index(acceptance) < fast.index(cluster) < fast.index(unified) < fast.index(arrows_css) < fast.index(arrows_js)
     assert '/field-controls-classic.js' not in fast
