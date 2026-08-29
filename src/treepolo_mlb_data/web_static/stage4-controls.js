@@ -3,6 +3,7 @@
 
   let lastPayload = null;
   let lastResult = null;
+  let saveUiPromise = null;
   const upstreamFetch = window.fetch.bind(window);
   const MODE_PANELS = {
     basic:"basic-panel", sequence_pattern:"sequence-panel", follow_event:"follow-panel",
@@ -33,6 +34,90 @@
     return csv(document.getElementById("s4-cluster-partitions")?.value);
   }
 
+  function currentSaveSource() {
+    const current = window.treepoloLastAnalysis;
+    if (!current?.payload || !current?.result) return null;
+    return {
+      kind: current.loaded_source_kind || "current",
+      payload: current.payload,
+      history_id: current.result?.history_id || current.history_id || null,
+      cache_key: current.result?.cache?.key || current.cache_key || null,
+      data_revision: current.result?.cache?.data_revision || current.data_revision || null,
+      label: current.loaded_source_kind === "saved" ? "Saved Analysis" : null,
+    };
+  }
+
+  function ensureSaveUiLoaded() {
+    if (window.treepoloAnalysisSaveUiApi?.open) return Promise.resolve(window.treepoloAnalysisSaveUiApi);
+    if (saveUiPromise) return saveUiPromise;
+    saveUiPromise = new Promise((resolve, reject) => {
+      let script = Array.from(document.scripts).find(node => node.src.endsWith("/analysis-save-ui.js"));
+      const finish = () => {
+        if (script) script.dataset.loaded = "1";
+        if (window.treepoloAnalysisSaveUiApi?.open) resolve(window.treepoloAnalysisSaveUiApi);
+        else reject(new Error("Save UI failed to initialize"));
+      };
+      const fail = () => reject(new Error("Save UI failed to load"));
+      if (script) {
+        if (window.treepoloAnalysisSaveUiApi?.open) { resolve(window.treepoloAnalysisSaveUiApi); return; }
+        script.addEventListener("load", finish, { once:true });
+        script.addEventListener("error", fail, { once:true });
+        return;
+      }
+      script = document.createElement("script");
+      script.src = "/analysis-save-ui.js";
+      script.dataset.analysisSaveUi = "1";
+      script.addEventListener("load", finish, { once:true });
+      script.addEventListener("error", fail, { once:true });
+      document.head.append(script);
+    });
+    return saveUiPromise;
+  }
+
+  async function requestSave(source) {
+    if (!source?.payload) throw new Error("目前沒有可儲存的分析。 No analysis is available to save.");
+    const saveUi = await ensureSaveUiLoaded();
+    saveUi.open(source);
+  }
+
+  function ensureResultSaveToolbar() {
+    const result = document.querySelector("#result-window");
+    const title = result?.querySelector(".result-title-bar");
+    if (!result || !title) return null;
+    let toolbar = result.querySelector(":scope > .result-save-toolbar");
+    if (!toolbar) {
+      toolbar = document.createElement("div");
+      toolbar.className = "result-save-toolbar";
+      toolbar.innerHTML = '<button id="result-save-analysis" type="button" disabled>儲存此分析 Save Analysis</button><span class="result-save-note">尚無可儲存結果 No result available to save</span>';
+      title.insertAdjacentElement("afterend", toolbar);
+      toolbar.querySelector("#result-save-analysis").addEventListener("click", () => {
+        const source = currentSaveSource();
+        if (!source) { showLibraryStatus(new Error("目前沒有可儲存的分析結果。 No analysis result is available to save.")); return; }
+        requestSave(source).catch(showLibraryStatus);
+      });
+    }
+    return toolbar;
+  }
+
+  function updateResultSaveToolbar() {
+    const toolbar = ensureResultSaveToolbar();
+    if (!toolbar) return;
+    const source = currentSaveSource();
+    const button = toolbar.querySelector("#result-save-analysis");
+    const note = toolbar.querySelector(".result-save-note");
+    if (button) button.disabled = !source;
+    if (note) note.textContent = source
+      ? "儲存目前結果的完整分析設定 Save this result's full analysis setup"
+      : "尚無可儲存結果 No result available to save";
+  }
+
+  function publishAnalysisState() {
+    updateResultSaveToolbar();
+    document.dispatchEvent(new CustomEvent("treepolo:analysis-state-changed", {
+      detail: { current:window.treepoloLastAnalysis || null },
+    }));
+  }
+
   window.fetch = async function treepoloStage4Fetch(input, init={}) {
     const url = typeof input === "string" ? input : input?.url || "";
     const method = String(init?.method || "GET").toUpperCase();
@@ -53,6 +138,7 @@
       try {
         lastResult = await response.clone().json();
         window.treepoloLastAnalysis = { payload:lastPayload, result:lastResult };
+        publishAnalysisState();
         setTimeout(()=>{ decorateCache(lastResult); refreshLibrary().catch(()=>{}); },20);
       } catch { lastResult = null; }
     }
@@ -63,12 +149,13 @@
     if (document.getElementById("stage4-workspace-styles")) return;
     const style=document.createElement("style");style.id="stage4-workspace-styles";
     style.textContent=`
-      .analysis-library-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(240px,2fr) auto;gap:8px;align-items:end;margin-bottom:12px}
-      .analysis-library-toolbar label{display:flex;flex-direction:column;gap:4px}.analysis-library-table{width:100%;border-collapse:collapse;font-size:12px}
+      .analysis-library-table{width:100%;border-collapse:collapse;font-size:12px}
       .analysis-library-table th,.analysis-library-table td{border:1px solid #aeb7c4;padding:5px 7px;vertical-align:top}.analysis-library-table th{background:#e8eef7;text-align:left}
       .analysis-library-actions{white-space:nowrap}.analysis-library-actions button{margin-right:4px}.library-empty{padding:10px;color:#5b6572}.library-section{margin-top:12px}
       .cache-badge{display:inline-block;margin-left:8px;padding:1px 6px;border:1px solid #7893b5;background:#eef5ff;font-size:11px;font-weight:600}
-      .metric-row.metric-invalid .metric-field{outline:2px solid #b12828;background:#fff3f3}`;
+      .metric-row.metric-invalid .metric-field{outline:2px solid #b12828;background:#fff3f3}
+      .result-save-toolbar{display:flex;align-items:center;gap:7px;padding:5px 7px;border-bottom:1px solid #aca899;background:linear-gradient(#faf9f3,#e4e1d2)}
+      .result-save-toolbar .result-save-note{color:#555;font-size:11px}`;
     document.head.append(style);
   }
 
@@ -115,19 +202,27 @@
     const nav=document.querySelector(".navigation-pane"),main=document.querySelector(".main-pane"),result=document.querySelector("#result-window");if(!nav||!main||!result)return;
     const group=document.createElement("div");group.className="task-group";group.innerHTML='<div class="task-group-title">工作區 Workspace</div><button class="nav-item" data-panel="analysis-library-panel">分析紀錄 Analysis Library</button>';nav.append(group);
     const panel=document.createElement("div");panel.id="analysis-library-panel";panel.className="panel";panel.innerHTML=`<div class="panel-heading">分析紀錄 Analysis Library</div><div class="panel-body">
-      <fieldset><legend>儲存目前分析 Save Current Analysis</legend><div class="analysis-library-toolbar"><label>名稱 Name<input id="analysis-save-name" type="text"></label><label>備註 Notes<input id="analysis-save-notes" type="text"></label><button id="analysis-save-current" type="button">儲存 Save</button></div><p class="hint">保存完整分析設定；相同資料版本的快取結果仍存在時可直接回看。 Saves the full analysis specification and restores a cached result when available.</p></fieldset>
       <fieldset class="library-section"><legend>已儲存分析 Saved Analyses</legend><div id="saved-analysis-list" class="library-empty">讀取中 Loading…</div></fieldset>
       <fieldset class="library-section"><legend>最近分析 History</legend><div id="analysis-history-list" class="library-empty">讀取中 Loading…</div></fieldset></div>`;
     main.insertBefore(panel,result);
     window.treepoloPanels?.register?.("analysis-library-panel","analysis-library");
     group.querySelector("button").addEventListener("click",()=>{window.treepoloPanels?.activate("analysis-library-panel",{updateUrl:true,source:"navigation"});refreshLibrary().catch(showLibraryStatus);});
-    panel.querySelector("#analysis-save-current").addEventListener("click",()=>saveCurrent().catch(showLibraryStatus));
   }
 
-  async function saveCurrent(){if(!lastPayload)throw new Error("目前沒有可儲存的分析。 Run or load an analysis first.");const name=document.querySelector("#analysis-save-name")?.value?.trim()||"";if(!name)throw new Error("請輸入分析名稱。 Analysis name is required.");await api("/api/analysis/saved",{method:"POST",body:JSON.stringify({name,notes:document.querySelector("#analysis-save-notes")?.value||"",analysis_payload:lastPayload,cache_key:lastResult?.cache?.key||null,data_revision:lastResult?.cache?.data_revision||null})});document.querySelector("#analysis-save-name").value="";document.querySelector("#analysis-save-notes").value="";await refreshLibrary();}
+  function historySource(item) {
+    if(!item?.payload)return null;
+    return {
+      kind:"history",
+      payload:item.payload,
+      history_id:item.id||null,
+      cache_key:item.cache_key||null,
+      data_revision:item.data_revision||null,
+      label:`${modeLabel(item.mode)} · ${item.created_at||""}`,
+    };
+  }
 
   function renderSaved(items){const host=document.querySelector("#saved-analysis-list");if(!host)return;host.innerHTML="";if(!items.length){host.textContent="尚未儲存分析。 No saved analyses.";return;}const table=document.createElement("table");table.className="analysis-library-table";table.innerHTML="<thead><tr><th>名稱 Name</th><th>模式 Mode</th><th>更新 Updated</th><th>備註 Notes</th><th>操作 Actions</th></tr></thead>";const body=document.createElement("tbody");items.forEach(item=>{const tr=document.createElement("tr");[item.name,modeLabel(item.payload?.mode),formatTime(item.updated_at),item.notes||"—"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.append(td);});const td=document.createElement("td");td.className="analysis-library-actions";td.append(actionButton("載入 Load",()=>loadSaved(item.id)),actionButton("刪除 Delete",()=>deleteSaved(item.id)));tr.append(td);body.append(tr);});table.append(body);host.append(table);}
-  function renderHistory(items){const host=document.querySelector("#analysis-history-list");if(!host)return;host.innerHTML="";if(!items.length){host.textContent="尚無分析紀錄。 No analysis history.";return;}const table=document.createElement("table");table.className="analysis-library-table";table.innerHTML="<thead><tr><th>時間 Time</th><th>模式 Mode</th><th>結果 Rows</th><th>執行器 Backend</th><th>狀態 Status</th><th>操作 Actions</th></tr></thead>";const body=document.createElement("tbody");items.forEach(item=>{const tr=document.createElement("tr");[formatTime(item.created_at),modeLabel(item.mode),item.row_count??"—",item.backend||"—",item.status].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.append(td);});const td=document.createElement("td");td.append(actionButton("載入 Load",()=>loadHistory(item.id)));tr.append(td);body.append(tr);});table.append(body);host.append(table);}
+  function renderHistory(items){const host=document.querySelector("#analysis-history-list");if(!host)return;host.innerHTML="";if(!items.length){host.textContent="尚無分析紀錄。 No analysis history.";return;}const table=document.createElement("table");table.className="analysis-library-table";table.innerHTML="<thead><tr><th>時間 Time</th><th>模式 Mode</th><th>結果 Rows</th><th>執行器 Backend</th><th>狀態 Status</th><th>操作 Actions</th></tr></thead>";const body=document.createElement("tbody");items.forEach(item=>{const tr=document.createElement("tr");[formatTime(item.created_at),modeLabel(item.mode),item.row_count??"—",item.backend||"—",item.status].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.append(td);});const td=document.createElement("td");td.className="analysis-library-actions";const source=historySource(item);td.append(actionButton("載入 Load",()=>loadHistory(item.id)));if(source)td.append(actionButton("另存分析 Save As…",()=>requestSave(source)));tr.append(td);body.append(tr);});table.append(body);host.append(table);}
   async function refreshLibrary(){if(!document.getElementById("analysis-library-panel"))return;const [saved,history]=await Promise.all([api("/api/analysis/saved"),api("/api/analysis/history?limit=100")]);renderSaved(saved.saved||[]);renderHistory(history.history||[]);}
   async function deleteSaved(id){await api(`/api/analysis/saved/${id}`,{method:"DELETE"});await refreshLibrary();}
   async function loadSaved(id){const body=await api(`/api/analysis/saved/${id}`);await loadItem(body.item,{kind:"saved",id});}
@@ -172,6 +267,7 @@
 
   function renderStoredResultPage(result){const host=document.querySelector("#result-content"),summary=document.querySelector("#result-summary");if(!host||!summary)return;host.innerHTML="";const render=section=>{const wrap=document.createElement("div");if(section.title){const h=document.createElement("div");h.className="result-section-title";h.textContent=section.title;wrap.append(h);}const table=document.createElement("table");table.className="result-table";const head=document.createElement("thead"),hr=document.createElement("tr");(section.columns||[]).forEach(c=>{const th=document.createElement("th");th.textContent=c;hr.append(th);});head.append(hr);table.append(head);const body=document.createElement("tbody");(section.rows||[]).forEach(row=>{const tr=document.createElement("tr");(section.columns||[]).forEach(c=>{const td=document.createElement("td");td.textContent=row[c]==null?"—":String(row[c]);tr.append(td);});body.append(tr);});table.append(body);wrap.append(table);return wrap;};if(result.sections)result.sections.forEach(s=>host.append(render(s)));else host.append(render(result));const count=result.row_count??(result.sections||[]).reduce((sum,s)=>sum+Number(s.row_count||0),0);summary.textContent=`${count} 列 rows · 已載入保存結果 Loaded Stored Result`;decorateCache(result);}
   function renderStoredResult(result){const paging=window.treepoloResultPaging;if(paging?.present){paging.present(result,renderStoredResultPage);return;}renderStoredResultPage(result);}
+  function renderMissingStoredResult(){const host=document.querySelector("#result-content"),summary=document.querySelector("#result-summary");if(summary)summary.textContent="結果未保存 Result Not Stored";if(host)host.innerHTML='<div class="ta-history-note"><strong>分析設定已載入 Analysis settings restored.</strong><br>這筆結果未被保存。請按「執行分析 Run Analysis」重新計算；不會沿用上一筆結果。</div>';}
 
   async function loadItem(item,source={}) {
     if(!item?.payload)return;
@@ -182,16 +278,17 @@
       cache_key:item.cache_key||null,data_revision:item.data_revision||null,
       loaded_source_kind:source.kind||null,loaded_source_id:source.id||item.id||null,
     };
+    publishAnalysisState();
     applyPayload(item.payload);
     const panelId=MODE_PANELS[item.payload.mode];
     if(panelId&&!window.treepoloPanels?.activate?.(panelId,{updateUrl:true,source:"library-load"}))throw new Error(`Analysis panel is unavailable: ${panelId}`);
-    if(item.result_available&&item.result)renderStoredResult(item.result);
+    if(item.result_available&&item.result)renderStoredResult(item.result);else renderMissingStoredResult();
     document.dispatchEvent(new CustomEvent("treepolo:analysis-current-source-updated",{detail:{kind:source.kind||null,id:source.id||item.id||null,history_id:source.kind==="history"?(source.id||item.id||null):null,cache_key:item.cache_key||null,data_revision:item.data_revision||null}}));
   }
 
   function injectClusteringPartitionControl(){const panel=document.getElementById("clustering-panel");if(!panel||document.getElementById("s4-cluster-partitions"))return;const grid=panel.querySelector("fieldset:last-of-type .s4-grid");if(!grid)return;const label=document.createElement("label");label.innerHTML='各自分群 Partition By<input id="s4-cluster-partitions" data-multi-field type="text" placeholder="例如 pitcher">';grid.insertBefore(label,grid.firstChild);const hint=panel.querySelector("fieldset:last-of-type .hint");if(hint)hint.textContent="Partition By 會為每個個體獨立建模；留空才是把所有資料一起分群。安全門檻不是抽樣，超過門檻會拒絕執行。";}
   function loadClusterComparePage(){if(document.querySelector('script[data-cluster-compare-loader]'))return;const s=document.createElement("script");s.src="/cluster-comparison-page.js";s.dataset.clusterCompareLoader="1";document.body.append(s);}
 
-  function init(){injectStyles();installMetricValidation();injectLibrary();injectClusteringPartitionControl();loadClusterComparePage();refreshLibrary().catch(showLibraryStatus);}
+  function init(){injectStyles();installMetricValidation();injectLibrary();ensureResultSaveToolbar();updateResultSaveToolbar();ensureSaveUiLoaded().catch(()=>{});injectClusteringPartitionControl();loadClusterComparePage();document.addEventListener("treepolo:analysis-library-refresh-request",()=>refreshLibrary().catch(showLibraryStatus));refreshLibrary().catch(showLibraryStatus);}
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
