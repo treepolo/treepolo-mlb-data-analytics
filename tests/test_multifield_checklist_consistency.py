@@ -110,7 +110,11 @@ def test_tie_label_observer_is_scoped_to_stage_lists_not_document_body():
 
 def test_research_workflow_remove_metric_button_cannot_collapse_vertically():
     consistency = source("ui-consistency-fixes.js")
-    assert ".s4-metric-row > button.remove-row" in consistency
-    assert "grid-column: 1 / -1" in consistency
-    assert "white-space: nowrap" in consistency
-    assert "min-width: 170px" in consistency
+    assert ".s4-metric-row .remove-row" in consistency
+    assert "grid-column: 1 / -1 !important" in consistency
+    assert "display: inline-block !important" in consistency
+    assert "width: max-content !important" in consistency
+    assert "white-space: nowrap !important" in consistency
+    assert "writing-mode: horizontal-tb !important" in consistency
+    assert "word-break: normal !important" in consistency
+    assert "min-width: 170px !important" in consistency
