@@ -34,38 +34,58 @@
     });
   }
 
-  function announceFieldLegalityWhenCatalogReady() {
-    const announce = () => {
-      const fields = window.treepoloFieldCatalog?.fields?.() || [];
-      if (!fields.length || !window.treepoloLegalFieldOptions) return false;
-      window.treepoloLegalFieldOptions.refresh?.();
-      document.dispatchEvent(new CustomEvent("treepolo:field-legality-ready", {
-        detail: { source:"field-catalog", fieldCount:fields.length },
-      }));
-      return true;
-    };
+  function fieldCatalogReady() {
+    return Boolean((window.treepoloFieldCatalog?.fields?.() || []).length);
+  }
 
-    if (announce()) return;
-    const onFieldsUpdated = () => {
-      if (!announce()) return;
-      document.removeEventListener("treepolo:fields-updated", onFieldsUpdated);
-    };
-    document.addEventListener("treepolo:fields-updated", onFieldsUpdated);
+  function waitForFieldCatalog() {
+    if (fieldCatalogReady()) return Promise.resolve();
+    return new Promise(resolve => {
+      const onFieldsUpdated = () => {
+        if (!fieldCatalogReady()) return;
+        document.removeEventListener("treepolo:fields-updated", onFieldsUpdated);
+        resolve();
+      };
+      document.addEventListener("treepolo:fields-updated", onFieldsUpdated);
+    });
+  }
+
+  function commitFieldLegality() {
+    const provider = window.treepoloLegalFieldOptions;
+    if (!provider) {
+      console.error("Field legality provider failed to initialize");
+      return;
+    }
+    provider.refresh?.();
+    window.treepoloFieldChecklistsApi?.refreshRoot?.(document);
+    window.treepoloUnifiedFieldControlsApi?.scan?.(document);
+    window.treepoloUnifiedFieldControlsApi?.sync?.();
+    document.dispatchEvent(new CustomEvent("treepolo:field-legality-ready", {
+      detail: {
+        source:"field-catalog",
+        fieldCount:(window.treepoloFieldCatalog?.fields?.() || []).length,
+      },
+    }));
   }
 
   async function loadUiEnhancements() {
+    // Field legality is a foundational dependency of both checklist and
+    // single-field controls. Load it before the rest of the enhancement layer.
+    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
+
     await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
     await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
     await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
-    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
     await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
-    announceFieldLegalityWhenCatalogReady();
+
+    await waitForFieldCatalog();
+    commitFieldLegality();
   }
   loadUiEnhancements();
 
