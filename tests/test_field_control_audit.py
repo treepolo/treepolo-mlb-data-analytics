@@ -56,12 +56,12 @@ def test_exact_typed_single_field_commits_without_enter_or_second_click():
     assert "match=exactOption(options,input.value);if(match){commit(match);return;}" in unified
 
 
-def test_unordered_multifields_use_searchable_csv_checklist_component():
+def test_unordered_multifields_use_one_csv_input_plus_checklist_without_duplicate_search_box():
     checklist = read("field-checklists.js")
     model = read("multi-field-model.js")
 
     assert "input[data-multi-field]" in checklist
-    assert "field-checklist-search" in checklist
+    assert "field-checklist-search" not in checklist
     assert "field-checklist-summary" in checklist
     assert "treepoloMultiField" in checklist
     assert "function parse(value)" in model
