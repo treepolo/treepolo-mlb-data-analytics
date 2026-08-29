@@ -69,6 +69,11 @@
   }
 
   async function loadUiEnhancements() {
+    // Stage 4 also knows how to request this page at DOMContentLoaded. Claim the
+    // shared loader marker now, while this parser-time bootstrap is still running,
+    // so both paths refer to one script instead of racing two independent loaders.
+    const clusterComparisonReady = loadScriptOnce("/cluster-comparison-page.js", "clusterCompareLoader");
+
     // Field legality is a foundational dependency of both checklist and
     // single-field controls. Load it before the rest of the enhancement layer.
     await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
@@ -76,7 +81,7 @@
     await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
     await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
-    await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
+    await clusterComparisonReady;
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
