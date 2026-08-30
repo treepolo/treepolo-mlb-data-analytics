@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 import requests
@@ -56,17 +56,30 @@ def iter_strings(value):
 def extract_urls(netlog: dict) -> list[str]:
     urls = set()
     for text in iter_strings(netlog):
-        if text.startswith("http://") or text.startswith("https://"):
-            urls.add(text)
-        else:
-            for match in re.findall(r"https?://[^\s\"'<>]+", text):
-                urls.add(match.rstrip(",);]"))
+        for match in re.findall(r"https?://[^\s\"'<>\\]+", text):
+            cleaned = match.rstrip(",);]}")
+            if len(cleaned) <= 4096:
+                urls.add(cleaned)
     return sorted(urls)
 
 
 def target_url(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return host == "baseballsavant.mlb.com" or host == "statsapi.mlb.com"
+
+
+def endpoint_signature(url: str) -> tuple[str, str, tuple[str, ...]]:
+    parsed = urlparse(url)
+    query_keys = tuple(sorted({key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}))
+    return parsed.netloc.lower(), parsed.path or "/", query_keys
+
+
+def endpoint_inventory(urls: list[str]) -> list[dict]:
+    signatures = {endpoint_signature(url) for url in urls}
+    return [
+        {"host": host, "path": path, "query_keys": list(query_keys)}
+        for host, path, query_keys in sorted(signatures)
+    ]
 
 
 def summarize_urls(urls: list[str]) -> dict:
@@ -78,9 +91,9 @@ def summarize_urls(urls: list[str]) -> dict:
         "all_url_count": len(urls),
         "target_url_count": len(target),
         "same_origin_url_count": len(same_origin),
-        "api_requests": api,
-        "pitch_spin_tracking_requests": candidates,
-        "same_origin_requests": same_origin,
+        "same_origin_endpoint_count": len(endpoint_inventory(same_origin)),
+        "api_endpoints": endpoint_inventory(api),
+        "pitch_spin_tracking_endpoints": endpoint_inventory(candidates),
     }
 
 
@@ -137,7 +150,7 @@ def test_deep_spin_orientation_probe():
     chrome = chrome_executable()
     version = subprocess.run([chrome, "--version"], capture_output=True, text=True, check=False)
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/13.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/14.0)"})
     pid = first_video_pid(session)
 
     report = {
@@ -150,5 +163,5 @@ def test_deep_spin_orientation_probe():
         ],
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 90_000, f"browser network report unexpectedly grew to {len(rendered)} bytes"
+    assert len(rendered) < 60_000, f"browser network report unexpectedly grew to {len(rendered)} bytes"
     pytest.fail("\n===== REAL CHROME SAVANT NETWORK REPORT =====\n" + rendered)
