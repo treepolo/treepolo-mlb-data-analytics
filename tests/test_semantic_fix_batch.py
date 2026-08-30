@@ -6,7 +6,7 @@ import pytest
 
 from treepolo_mlb_data.analysis.feature_semantics import encode_circular_features
 from treepolo_mlb_data.analysis.model import Grain
-from treepolo_mlb_data.analysis.numerical import NumericalTable
+from treepolo_mlb_data.analysis.numerical import NumericalTable, _standardize_feature_matrix
 from treepolo_mlb_data.schema import field_capabilities
 from treepolo_mlb_data.web_analysis import AnalysisFacade
 
@@ -52,6 +52,23 @@ def test_field_01_identifier_columns_are_not_continuous_numeric_features():
     assert "numeric" in speed and "identifier" not in speed
 
 
+def test_field_01_multifield_ui_sanitizes_typed_illegal_tokens():
+    source = (
+        Path(__file__).parents[1]
+        / "src"
+        / "treepolo_mlb_data"
+        / "web_static"
+        / "field-checklists.js"
+    ).read_text(encoding="utf-8")
+
+    assert "function legalSelection(control)" in source
+    assert "function sanitizeControl(control)" in source
+    assert 'document.addEventListener("change", event =>' in source
+    assert 'document.addEventListener("focusout", event =>' in source
+    assert 'event.key !== "Enter"' in source
+    assert 'selection.rejected.length > 0' in source
+
+
 def test_rs_02_spin_axis_uses_unit_circle_encoding():
     table = NumericalTable(
         ("pitch_uid", "spin_axis"),
@@ -78,6 +95,38 @@ def test_rs_02_spin_axis_uses_unit_circle_encoding():
             NumericalTable(("pitcher",), ({"pitcher": 123},), Grain(("pitcher",), "pitcher")),
             ("pitcher",),
         )
+
+
+def test_rs_02_standardization_preserves_circular_geometry():
+    angles = (1.0, 20.0, 120.0, 210.0, 359.0)
+    raw = []
+    for index, angle in enumerate(angles):
+        theta = math.radians(angle)
+        raw.append((80.0 + index * 5.0, math.sin(theta), math.cos(theta)))
+
+    import numpy as np
+
+    matrix = np.asarray(raw, dtype=float)
+    standardized, _, scales = _standardize_feature_matrix(
+        matrix,
+        ("release_speed", "spin_axis_sin", "spin_axis_cos"),
+    )
+
+    # The circular pair receives one common scale, while the ordinary scalar
+    # retains its own z-score scale.
+    assert scales[1] == pytest.approx(scales[2])
+    assert scales[0] != pytest.approx(scales[1])
+
+    def circular_distance(values, left, right):
+        return math.hypot(values[left, 1] - values[right, 1], values[left, 2] - values[right, 2])
+
+    raw_near = circular_distance(matrix, 0, 4)  # 1° vs 359°
+    raw_far = circular_distance(matrix, 0, 2)   # 1° vs 120°
+    scaled_near = circular_distance(standardized, 0, 4)
+    scaled_far = circular_distance(standardized, 0, 2)
+
+    assert scaled_near / scaled_far == pytest.approx(raw_near / raw_far, rel=1e-12)
+    assert scaled_near < scaled_far
 
 
 def test_rs_01_extreme_ties_receive_mid_distribution_percentile(tmp_path):
