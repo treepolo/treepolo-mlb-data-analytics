@@ -30,6 +30,17 @@ def test_player_names_are_display_only_and_inserted_before_the_id_column():
     assert "payload" not in js
 
 
+def test_player_name_enhancer_uses_machine_key_for_localized_result_headers():
+    names = source("result-player-names.js")
+    app = source("app.js")
+    assert "function headerKey(header)" in names
+    assert "header?.dataset?.resultKey" in names
+    assert 'header?.getAttribute?.("title")' in names
+    assert "const rawKeys = new Set(headers.map(headerKey));" in names
+    assert "const field = headerKey(header);" in names
+    assert "th.title = column;" in app
+
+
 def test_result_paging_reapplies_names_after_each_page_render():
     paging = source("result-paging.js")
     hook = "window.treepoloPlayerNames?.enhanceTable?.(table);"
