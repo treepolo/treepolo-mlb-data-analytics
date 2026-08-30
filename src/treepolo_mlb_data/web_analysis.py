@@ -11,6 +11,7 @@ from .web_analysis_advanced import AdvancedModesMixin
 from .web_analysis_arsenal_change import ArsenalChangeSemanticsMixin
 from .web_analysis_common import BaseAnalysisMixin, RequestError, _PROGRESS, _jsonable
 from .web_analysis_modes import CoreModesMixin
+from .web_analysis_perf import PerformanceClusterCompareMixin
 from .web_analysis_stage4_ext import Stage4ExtendedModesMixin
 
 
@@ -18,6 +19,7 @@ class AnalysisFacade(
     BaseAnalysisMixin,
     CoreModesMixin,
     ArsenalChangeSemanticsMixin,
+    PerformanceClusterCompareMixin,
     AcceptanceRuntimeFixesMixin,
     AcceptanceFixesMixin,
     AdvancedModesMixin,
