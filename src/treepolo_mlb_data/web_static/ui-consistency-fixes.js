@@ -6,6 +6,7 @@
 
   const DENSE_RANK_LABEL = "保留並列（不跳號） Dense Rank";
   const BASIC_METRIC_STYLE_ID = "basic-metric-layout-style";
+  const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
   function normalizeTieLabels(root = document) {
     const options = [];
@@ -76,6 +77,27 @@
     head.hidden = !list.querySelector(".metric-row");
   }
 
+  function isValidIsoDate(text) {
+    if (!ISO_DATE_RE.test(text)) return false;
+    const date = new Date(`${text}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text;
+  }
+
+  function enableWholeDatePaste() {
+    if (document.documentElement.dataset.wholeDatePasteReady === "1") return;
+    document.documentElement.dataset.wholeDatePasteReady = "1";
+    document.addEventListener("paste", event => {
+      const input = event.target?.closest?.('input[type="date"]');
+      if (!input || input.disabled || input.readOnly) return;
+      const text = event.clipboardData?.getData("text")?.trim() || "";
+      if (!isValidIsoDate(text)) return;
+      event.preventDefault();
+      input.value = text;
+      input.dispatchEvent(new Event("input", { bubbles:true }));
+      input.dispatchEvent(new Event("change", { bubbles:true }));
+    });
+  }
+
   function observeStageLists() {
     document.querySelectorAll(".s4-stage-list,.s4-input-stage-list").forEach(list => {
       if (list.dataset.tieLabelObserved === "1") return;
@@ -93,6 +115,7 @@
   function init() {
     normalizeTieLabels(document);
     normalizeBasicMetrics();
+    enableWholeDatePaste();
     observeStageLists();
     document.addEventListener("treepolo:analysis-options-changed", () => {
       normalizeTieLabels(document);
