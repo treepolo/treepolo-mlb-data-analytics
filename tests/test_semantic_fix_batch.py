@@ -102,7 +102,7 @@ def test_rs_01_extreme_ties_receive_mid_distribution_percentile(tmp_path):
     })
 
     assert result["row_count"] == 4
-    assert {row["speed_percentile"] for row in result["rows"]} == {pytest.approx(0.5)}
+    assert all(row["speed_percentile"] == pytest.approx(0.5) for row in result["rows"])
 
 
 def test_bug_10b_skips_only_entity_with_too_few_complete_cluster_rows(tmp_path):
