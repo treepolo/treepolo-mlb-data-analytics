@@ -207,10 +207,10 @@ class PerformanceClusterCompareMixin:
             clean_source,
             tuple(NamedExpr(field, Column(field)) for field in grouping),
             (
-                Metric("__ta_pitch_count", "count"),
-                Metric("__ta_selection_count", "count", Column(selection_field)),
-                Metric("__ta_selection_metric", selection_function, Column(selection_field)),
-                Metric("__ta_evaluation_value", "avg", Column(evaluation_field)),
+                Metric("perf_pitch_count", "count"),
+                Metric("perf_selection_count", "count", Column(selection_field)),
+                Metric("perf_selection_metric", selection_function, Column(selection_field)),
+                Metric("perf_evaluation_value", "avg", Column(evaluation_field)),
             ),
             Grain(grouping, "cluster_compare_checkpoint"),
         )
@@ -230,7 +230,7 @@ class PerformanceClusterCompareMixin:
                 continue
             entity_key = tuple(row.get(field) for field in entities)
             try:
-                count = int(row.get("__ta_pitch_count") or 0)
+                count = int(row.get("perf_pitch_count") or 0)
             except (TypeError, ValueError):
                 count = 0
             if count <= 0:
@@ -265,8 +265,8 @@ class PerformanceClusterCompareMixin:
             reference = aggregate_by_entity_pitch.get((entity_key, reference_pitch))
             if reference is not None:
                 reference_by_entity[entity_key] = {
-                    "reference_sample_size": reference.get("__ta_pitch_count"),
-                    "reference_value": reference.get("__ta_evaluation_value"),
+                    "reference_sample_size": reference.get("perf_pitch_count"),
+                    "reference_value": reference.get("perf_evaluation_value"),
                 }
 
         for signature, entity_keys in entities_by_arsenal.items():
@@ -279,12 +279,12 @@ class PerformanceClusterCompareMixin:
                     if row is None:
                         continue
                     try:
-                        metric = float(row.get("__ta_selection_metric"))
+                        metric = float(row.get("perf_selection_metric"))
                     except (TypeError, ValueError):
                         continue
                     if not np.isfinite(metric):
                         continue
-                    count_field = "__ta_selection_count" if selection_function == "avg" else "__ta_pitch_count"
+                    count_field = "perf_selection_count" if selection_function == "avg" else "perf_pitch_count"
                     try:
                         weight = int(row.get(count_field) or 0)
                     except (TypeError, ValueError):
