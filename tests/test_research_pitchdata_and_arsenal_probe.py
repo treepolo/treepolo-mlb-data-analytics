@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import csv
+import html as html_lib
+import io
 import json
 import re
+from collections import Counter
+from urllib.parse import urljoin
 
 import pytest
 import requests
@@ -10,14 +15,18 @@ pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
 PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
-TARGET_TERMS = (
-    "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
-    "hawkeye_measured", "movement_inferred", "orientation", "seam",
-    "game_pk", "play_id", "at_bat", "pitch_number", "game_date",
+PITCH3D_URL = f"{BASE}/app/pitch-data/{OHTANI}"
+TRACE_TERMS = (
+    "pid", "playId", "play_id", "showVideo", "sporty-videos",
+    "hawkeye", "orientation", "image_spin_x", "seam", "pitch-data",
+)
+PATH_TERMS = (
+    "pitch", "play", "video", "hawk", "orient", "spin", "seam", "sporty",
+    "tracking", "media", "evp", "savant", "player-service",
 )
 
 
-def compact(text: str, limit: int = 3500) -> str:
+def compact(text: str, limit: int = 2600) -> str:
     value = re.sub(r"\s+", " ", text).strip()
     if len(value) <= limit:
         return value
@@ -25,172 +34,200 @@ def compact(text: str, limit: int = 3500) -> str:
     return value[:half] + " ... " + value[-half:]
 
 
-def context(text: str, needle: str, radius: int = 2200, limit: int = 4400) -> str | None:
-    index = text.find(needle)
+def context(text: str, needle: str, radius: int = 1800, limit: int = 3600) -> str | None:
+    index = text.lower().find(needle.lower())
     if index < 0:
         return None
     return compact(text[max(0, index - radius): index + len(needle) + radius], limit)
 
 
-def all_keys(value, out=None, depth=0):
-    if out is None:
-        out = set()
-    if depth > 8:
-        return out
-    if isinstance(value, dict):
-        for key, child in value.items():
-            out.add(str(key))
-            all_keys(child, out, depth + 1)
-    elif isinstance(value, list):
-        for child in value[:40]:
-            all_keys(child, out, depth + 1)
+def script_urls(page: str, base_url: str) -> list[str]:
+    out: list[str] = []
+    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
+        url = urljoin(base_url, html_lib.unescape(raw))
+        if url not in out:
+            out.append(url)
     return out
 
 
-def shape(value, depth=0):
-    if depth >= 4:
-        return type(value).__name__
-    if isinstance(value, dict):
-        out = {"type": "dict", "keys": list(value)[:120]}
-        children = {}
-        for key, child in list(value.items())[:30]:
-            if isinstance(child, (dict, list)):
-                children[key] = shape(child, depth + 1)
-        if children:
-            out["children"] = children
-        return out
-    if isinstance(value, list):
-        out = {"type": "list", "length": len(value)}
-        if value:
-            out["first"] = shape(value[0], depth + 1)
-        return out
-    return {"type": type(value).__name__, "value": value}
-
-
-def interesting_keys(value):
-    keys = sorted(all_keys(value))
-    tokens = ("spin", "orient", "seam", "hawk", "game", "play", "pitch", "date", "bat", "uid", "id")
-    return [key for key in keys if any(token in key.lower() for token in tokens)][:300]
-
-
-def json_probe(response: requests.Response) -> dict:
-    out = {
-        "url": response.url,
-        "status": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "bytes": len(response.content),
-        "target_term_counts": {term: response.text.lower().count(term.lower()) for term in TARGET_TERMS},
-    }
-    try:
-        body = response.json()
-    except Exception:
-        out["text_head"] = compact(response.text[:10000], 5000)
-        return out
-    out["shape"] = shape(body)
-    out["interesting_keys"] = interesting_keys(body)
-    if isinstance(body, list) and body and isinstance(body[0], dict):
-        out["first_row"] = body[0]
-    elif isinstance(body, dict):
-        for key in ("pitches", "pitchDetails", "pitchBreakdown", "data", "rows"):
-            child = body.get(key)
-            if isinstance(child, list) and child:
-                out[f"sample_{key}"] = child[0]
-            elif isinstance(child, dict) and child:
-                first_key = next(iter(child))
-                sample = child[first_key]
-                out[f"sample_{key}"] = {
-                    "first_key": first_key,
-                    "value_type": type(sample).__name__,
-                    "value_length": len(sample) if isinstance(sample, (list, dict)) else None,
-                    "first_value": sample[0] if isinstance(sample, list) and sample else sample if not isinstance(sample, (list, dict)) else None,
-                    "child_keys": list(sample)[:120] if isinstance(sample, dict) else None,
-                    "first_child": sample[0] if isinstance(sample, list) and sample else None,
-                }
+def endpoint_literals(text: str, limit: int = 120) -> list[str]:
+    out: list[str] = []
+    patterns = (
+        r'''[\"'`]((?:https?://[^\"'`\s${}]+|/[^\"'`\s${}]+))[\"'`]''',
+        r'''url\s*:\s*[\"'`]([^\"'`]+)[\"'`]''',
+    )
+    for pattern in patterns:
+        for raw in re.findall(pattern, text, flags=re.I):
+            value = html_lib.unescape(raw)
+            low = value.lower()
+            if any(term in low for term in PATH_TERMS) and value not in out:
+                out.append(value)
+                if len(out) >= limit:
+                    return out
     return out
 
 
-def html_probe(response: requests.Response) -> dict:
-    text = response.text
-    return {
-        "url": response.url,
-        "status": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "bytes": len(response.content),
-        "target_term_counts": {term: text.lower().count(term.lower()) for term in TARGET_TERMS},
-        "game_pk_context": context(text, "game_pk", radius=1600, limit=3200),
-        "play_id_context": context(text, "play_id", radius=1600, limit=3200),
-        "orientation_context": context(text, "orientation", radius=1600, limit=3200),
-        "text_head": compact(text[:8000], 3500),
-    }
+def load_scripts(session: requests.Session, page: str, page_url: str) -> list[tuple[str, str]]:
+    loaded: list[tuple[str, str]] = []
+    for url in script_urls(page, page_url):
+        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
+            continue
+        response = session.get(url, timeout=60)
+        if response.ok and len(response.content) <= 12_000_000:
+            loaded.append((url, response.text))
+    return loaded
+
+
+def trace_scripts(scripts: list[tuple[str, str]]) -> list[dict]:
+    out = []
+    for url, text in scripts:
+        counts = {term: text.lower().count(term.lower()) for term in TRACE_TERMS}
+        if not any(counts.values()):
+            continue
+        contexts = {}
+        for term in ("showVideo", "sporty-videos", "playId", "pid", "hawkeye", "orientation", "pitch-data"):
+            hit = context(text, term, radius=1800, limit=3600)
+            if hit:
+                contexts[term] = hit
+        out.append({
+            "script": url,
+            "counts": counts,
+            "endpoints": endpoint_literals(text),
+            "contexts": contexts,
+        })
+    return out
+
+
+def seasonal_rows(body: dict) -> list[dict]:
+    pitches = body.get("pitches") or {}
+    rows = []
+    for pitch_type, values in pitches.items():
+        for row in values or []:
+            item = dict(row)
+            item["_bucket_pitch_type"] = pitch_type
+            rows.append(item)
+    return rows
+
+
+def pitch3d_rows(response: requests.Response) -> tuple[list[str], list[dict]]:
+    response.raise_for_status()
+    reader = csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")))
+    rows = list(reader)
+    return list(reader.fieldnames or []), rows
+
+
+def subset(row: dict | None, keys: tuple[str, ...]) -> dict | None:
+    if row is None:
+        return None
+    return {key: row.get(key) for key in keys if key in row}
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/5.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/6.0)",
         "Referer": PLAYER_URL,
     })
     report: dict = {}
 
-    page = session.get(PLAYER_URL, timeout=60)
-    page.raise_for_status()
-    html = page.text
-    report["initial_servervals_contexts"] = {
-        name: context(html, name, radius=2600, limit=5200)
-        for name in ("pitchDetails", "statcastPitches", "pitchBreakdown", "spinAxis")
-    }
+    player_response = session.get(PLAYER_URL, timeout=60)
+    player_response.raise_for_status()
+    player_html = player_response.text
 
-    seasonal = session.get(
+    seasonal_response = session.get(
         BASE + "/player-services/pitches-seasonal",
         params={"playerId": OHTANI, "season": 2026},
         timeout=60,
     )
-    report["pitches_seasonal"] = json_probe(seasonal)
+    seasonal_response.raise_for_status()
+    seasonal_body = seasonal_response.json()
+    season_rows = seasonal_rows(seasonal_body)
+    seasonal_ids = [str(row.get("pid") or "").strip() for row in season_rows if row.get("pid")]
+    seasonal_set = set(seasonal_ids)
 
-    gamelogs = session.get(
+    p3_response = session.get(PITCH3D_URL, timeout=60)
+    p3_headers, p3_rows = pitch3d_rows(p3_response)
+    p3_by_play = {
+        str(row.get("play_id") or "").strip(): row
+        for row in p3_rows if str(row.get("play_id") or "").strip()
+    }
+    p3_set = set(p3_by_play)
+    overlap = seasonal_set & p3_set
+    season_only = sorted(seasonal_set - p3_set)
+
+    joined_examples = []
+    for pid in sorted(overlap)[:5]:
+        season_row = next(row for row in season_rows if row.get("pid") == pid)
+        pitch3d_row = p3_by_play[pid]
+        joined_examples.append({
+            "pid": pid,
+            "seasonal": subset(season_row, ("gd", "pt", "vel", "x", "z", "showVideo")),
+            "pitch3d": subset(pitch3d_row, (
+                "game_pk", "play_id", "game_date", "game_year", "pitch_type", "release_speed",
+                "pitch_number", "at_bat_number", "pitcher", "batter",
+            )),
+        })
+
+    report["seasonal_to_pitch3d_join"] = {
+        "seasonal_url": seasonal_response.url,
+        "seasonal_rows": len(season_rows),
+        "seasonal_unique_pid": len(seasonal_set),
+        "seasonal_duplicate_pid": len(seasonal_ids) - len(seasonal_set),
+        "seasonal_pitch_type_counts": dict(Counter(row.get("_bucket_pitch_type") for row in season_rows)),
+        "pitch3d_url": p3_response.url,
+        "pitch3d_rows": len(p3_rows),
+        "pitch3d_unique_play_id": len(p3_set),
+        "pitch3d_headers": p3_headers,
+        "overlap": len(overlap),
+        "seasonal_match_rate": round(len(overlap) / len(seasonal_set), 8) if seasonal_set else None,
+        "seasonal_unmatched_count": len(season_only),
+        "seasonal_unmatched_examples": season_only[:10],
+        "joined_examples": joined_examples,
+    }
+
+    # Gamelogs is another independent public surface carrying game_pk + play_id.
+    gamelogs_response = session.get(
         BASE + "/player-services/gamelogs",
         params={"playerId": OHTANI, "playerType": 1, "viewType": "pitching", "season": 2026},
         timeout=60,
     )
-    report["gamelogs_pitching"] = json_probe(gamelogs)
+    gamelogs_response.raise_for_status()
+    gamelogs = gamelogs_response.json()
+    gamelog_ids = {str(row.get("play_id") or "").strip() for row in gamelogs if row.get("play_id")}
+    report["gamelog_join"] = {
+        "url": gamelogs_response.url,
+        "rows": len(gamelogs),
+        "unique_play_id": len(gamelog_ids),
+        "overlap_with_seasonal": len(gamelog_ids & seasonal_set),
+        "overlap_with_pitch3d": len(gamelog_ids & p3_set),
+        "first_row": subset(gamelogs[0] if gamelogs else None, ("game_pk", "play_id", "gd", "ab_num", "pt", "v", "event")),
+    }
 
-    # The detailed-pitch table service returns HTML. Empty/default filter values mirror the initial UI state.
-    breakdown = session.get(
-        BASE + "/player-services/statcast-pitches-breakdown",
-        params={
-            "playerId": OHTANI,
-            "position": 1,
-            "hand": "",
-            "pitchBreakdown": "pitch-type",
-            "timeFrame": "year",
-            "season": 2026,
-            "pitchType": "",
-            "count": 50,
-            "gameType": "R",
-            "updatePitches": "false",
-        },
-        timeout=60,
-    )
-    report["statcast_pitches_breakdown"] = html_probe(breakdown)
+    player_scripts = load_scripts(session, player_html, PLAYER_URL)
+    report["player_frontend_trace"] = trace_scripts(player_scripts)
 
-    # A few other JSON player services are included only to establish whether any carries raw spin/orientation fields.
-    histogram = session.get(
-        BASE + "/player-services/histogram",
-        params={
-            "playerId": OHTANI, "pos": 1, "fieldType": "release_speed", "hand": "",
-            "size": 5, "season": 2026, "event": "", "pitchType": "",
-        },
-        timeout=60,
-    )
-    report["histogram"] = json_probe(histogram)
-
-    rolling = session.get(
-        BASE + "/player-services/roll",
-        params={"playerId": OHTANI, "playerType": 1, "count": 50, "type": "release_speed", "year": 2026},
-        timeout=60,
-    )
-    report["roll"] = json_probe(rolling)
+    # Follow one known per-pitch UUID into Savant's video route and inspect its own frontend data flow.
+    example_pid = next(iter(sorted(overlap or seasonal_set)), None)
+    if example_pid:
+        sporty_url = f"{BASE}/sporty-videos?playId={example_pid}"
+        sporty_response = session.get(sporty_url, timeout=60)
+        sporty = {
+            "url": sporty_response.url,
+            "status": sporty_response.status_code,
+            "bytes": len(sporty_response.content),
+            "content_type": sporty_response.headers.get("content-type"),
+            "term_counts": {term: sporty_response.text.lower().count(term.lower()) for term in TRACE_TERMS},
+            "endpoints": endpoint_literals(sporty_response.text),
+            "contexts": {
+                term: context(sporty_response.text, term, radius=1600, limit=3200)
+                for term in ("playId", "play_id", "hawkeye", "orientation", "video", "pitch")
+                if context(sporty_response.text, term, radius=1600, limit=3200)
+            },
+        }
+        if sporty_response.ok:
+            sporty["scripts"] = trace_scripts(load_scripts(session, sporty_response.text, sporty_response.url))
+        report["sporty_video_trace"] = sporty
 
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 150_000, f"research report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT PLAYER PITCH SERVICE GRANULARITY =====\n" + rendered)
+    assert len(rendered) < 180_000, f"research report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT PER-PITCH KEY AND VIDEO TRACE =====\n" + rendered)
