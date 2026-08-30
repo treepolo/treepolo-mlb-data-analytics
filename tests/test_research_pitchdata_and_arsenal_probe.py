@@ -14,10 +14,7 @@ OHTANI = 660271
 PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
 SPIN_URL = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&min=0"
 ROUTE_PREFIXES = ("/savant/api/", "/player-services/", "/app/", "/api/")
-ROUTE_TERMS = (
-    "pitch", "spin", "hawk", "orient", "seam", "track", "video", "play",
-    "gameday", "statcast", "player", "evp", "movement",
-)
+CANDIDATE_TERMS = ("hawk", "orient", "seam", "track", "spin", "pitch")
 FIELD_TERMS = (
     "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
     "hawkeye_measured", "movement_inferred", "spinAxis", "play_id", "pid",
@@ -55,13 +52,13 @@ def quoted_literals(text: str) -> list[str]:
     return out
 
 
-def relevant_routes(text: str) -> list[str]:
+def selected_routes(text: str) -> list[str]:
     out = []
     for value in quoted_literals(text):
-        low = value.lower()
         if not (value.startswith("/") or value.startswith("http")):
             continue
-        if value.startswith(ROUTE_PREFIXES) or any(term in low for term in ROUTE_TERMS):
+        low = value.lower()
+        if value.startswith(ROUTE_PREFIXES) or any(term in low for term in CANDIDATE_TERMS):
             if value not in out:
                 out.append(value)
     return sorted(out)
@@ -87,58 +84,52 @@ def first_video_pid(session: requests.Session) -> str:
 
 def inspect_page(session: requests.Session, name: str, page_url: str, route_sources: dict[str, set[str]]) -> dict:
     page, scripts = load_page_scripts(session, page_url)
-    for route in relevant_routes(page.text):
+    for route in selected_routes(page.text):
         route_sources.setdefault(route, set()).add(f"{name}:inline")
 
-    interesting_scripts = []
+    hits = []
     for url, text in scripts:
-        routes = relevant_routes(text)
-        counts = field_counts(text)
+        routes = selected_routes(text)
+        counts = {key: value for key, value in field_counts(text).items() if value}
         for route in routes:
             route_sources.setdefault(route, set()).add(url)
-        if any(counts.values()):
-            interesting_scripts.append({
-                "script": url,
-                "field_counts": {key: value for key, value in counts.items() if value},
-                "routes": routes,
-            })
+        if counts:
+            hits.append({"script": url, "field_counts": counts})
 
     return {
         "url": page.url,
         "status": page.status_code,
-        "bytes": len(page.content),
         "inline_field_counts": {key: value for key, value in field_counts(page.text).items() if value},
-        "script_count": len(scripts),
-        "field_hit_scripts": interesting_scripts,
+        "field_hit_scripts": hits,
     }
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/11.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/12.0)"})
     pid = first_video_pid(session)
     route_sources: dict[str, set[str]] = {}
-
     pages = {
         "player_page": inspect_page(session, "player_page", PLAYER_URL, route_sources),
         "spin_direction_page": inspect_page(session, "spin_direction_page", SPIN_URL, route_sources),
         "sporty_video_page": inspect_page(session, "sporty_video_page", f"{BASE}/sporty-videos?playId={pid}", route_sources),
     }
 
-    route_union = [
-        {"route": route, "sources": sorted(sources)}
-        for route, sources in sorted(route_sources.items())
-    ]
-    raw_candidates = [
-        item for item in route_union
-        if any(term in item["route"].lower() for term in ("hawk", "orient", "seam", "track", "spin", "pitch"))
-    ]
+    api_routes = []
+    candidate_routes = []
+    for route, sources in sorted(route_sources.items()):
+        item = {"route": route, "sources": sorted(sources)}
+        if route.startswith(ROUTE_PREFIXES):
+            api_routes.append(item)
+        if any(term in route.lower() for term in CANDIDATE_TERMS):
+            candidate_routes.append(item)
+
     report = {
         "pages": pages,
-        "route_count": len(route_union),
-        "raw_candidate_routes": raw_candidates,
-        "route_union": route_union,
+        "all_selected_route_count": len(route_sources),
+        "explicit_api_routes": api_routes,
+        "pitch_spin_tracking_candidates": candidate_routes,
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 130_000, f"compact endpoint inventory unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== COMPACT SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
+    assert len(rendered) < 70_000, f"focused endpoint inventory unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== FOCUSED SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
