@@ -1,233 +1,167 @@
 from __future__ import annotations
 
-import csv
-import html as html_lib
-import io
 import json
 import re
-from collections import Counter
 from urllib.parse import urljoin
 
 import pytest
 import requests
 
 pytestmark = pytest.mark.integration
-BASE = "https://baseballsavant.mlb.com"
-OHTANI = 660271
-PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
-PITCH3D_URL = f"{BASE}/app/pitch-data/{OHTANI}"
-TRACE_TERMS = (
-    "pid", "playId", "play_id", "showVideo", "sporty-videos",
-    "hawkeye", "orientation", "image_spin_x", "seam", "pitch-data",
+
+BUNDLE = (
+    "https://builds.mlbstatic.com/baseballsavant.mlb.com/v1/sections/player-update/"
+    "builds/365eecaecb2cdd235bf4378010b37fef2f181f45/scripts/build/index.js"
 )
-PATH_TERMS = (
-    "pitch", "play", "video", "hawk", "orient", "spin", "seam", "sporty",
-    "tracking", "media", "evp", "savant", "player-service",
+TERMS = (
+    "image_spin_x",
+    "image_orientation_angle",
+    "hawkeye_measured",
+    "spinAxis",
+    "pitches-seasonal",
+    "statcast-pitches-breakdown",
+    "/evp/add",
+    "play_id",
+    "sporty-videos",
+)
+SOURCE_HINTS = (
+    "Chart/Pitch/Spin/Axis.jsx",
+    "player-update/scripts/lib/evp/Index.jsx",
+    "player-update",
 )
 
 
-def compact(text: str, limit: int = 2600) -> str:
-    value = re.sub(r"\s+", " ", text).strip()
+def compact(text: str, limit: int = 5000) -> str:
+    value = re.sub(r"\s+", " ", str(text)).strip()
     if len(value) <= limit:
         return value
     half = max(1, (limit - 5) // 2)
     return value[:half] + " ... " + value[-half:]
 
 
-def context(text: str, needle: str, radius: int = 1800, limit: int = 3600) -> str | None:
-    index = text.lower().find(needle.lower())
-    if index < 0:
-        return None
-    return compact(text[max(0, index - radius): index + len(needle) + radius], limit)
+def contexts(text: str, needle: str, radius: int = 2200, max_hits: int = 4) -> list[str]:
+    low = text.lower()
+    target = needle.lower()
+    start = 0
+    out = []
+    while len(out) < max_hits:
+        index = low.find(target, start)
+        if index < 0:
+            break
+        out.append(compact(text[max(0, index - radius): index + len(needle) + radius], radius * 2 + 800))
+        start = index + len(target)
+    return out
 
 
-def script_urls(page: str, base_url: str) -> list[str]:
-    out: list[str] = []
-    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
-        url = urljoin(base_url, html_lib.unescape(raw))
+def endpoint_literals(text: str, limit: int = 80) -> list[str]:
+    out = []
+    for raw in re.findall(r'''["'`]((?:https?://[^"'`\s${}]+|/[^"'`\s${}]+))["'`]''', text):
+        low = raw.lower()
+        if any(token in low for token in ("spin", "pitch", "hawk", "orient", "evp", "play", "video", "player-service", "savant/api")):
+            if raw not in out:
+                out.append(raw)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def network_snippets(text: str, needle: str) -> list[str]:
+    out = []
+    for hit in contexts(text, needle, radius=4000, max_hits=5):
+        if any(token in hit.lower() for token in ("fetch(", ".ajax(", "ajax({", ".get(", ".post(", "axios", "xmlhttprequest")):
+            out.append(hit)
+    return out
+
+
+def sourcemap_candidates(bundle_text: str) -> list[str]:
+    out = []
+    for raw in re.findall(r"sourceMappingURL=([^\s*]+)", bundle_text[-5000:]):
+        url = urljoin(BUNDLE, raw.strip())
         if url not in out:
             out.append(url)
+    conventional = BUNDLE + ".map"
+    if conventional not in out:
+        out.append(conventional)
     return out
 
 
-def endpoint_literals(text: str, limit: int = 120) -> list[str]:
-    out: list[str] = []
-    patterns = (
-        r'''[\"'`]((?:https?://[^\"'`\s${}]+|/[^\"'`\s${}]+))[\"'`]''',
-        r'''url\s*:\s*[\"'`]([^\"'`]+)[\"'`]''',
-    )
-    for pattern in patterns:
-        for raw in re.findall(pattern, text, flags=re.I):
-            value = html_lib.unescape(raw)
-            low = value.lower()
-            if any(term in low for term in PATH_TERMS) and value not in out:
-                out.append(value)
-                if len(out) >= limit:
-                    return out
-    return out
-
-
-def load_scripts(session: requests.Session, page: str, page_url: str) -> list[tuple[str, str]]:
-    loaded: list[tuple[str, str]] = []
-    for url in script_urls(page, page_url):
-        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
-            continue
-        response = session.get(url, timeout=60)
-        if response.ok and len(response.content) <= 12_000_000:
-            loaded.append((url, response.text))
-    return loaded
-
-
-def trace_scripts(scripts: list[tuple[str, str]]) -> list[dict]:
-    out = []
-    for url, text in scripts:
-        counts = {term: text.lower().count(term.lower()) for term in TRACE_TERMS}
-        if not any(counts.values()):
-            continue
-        contexts = {}
-        for term in ("showVideo", "sporty-videos", "playId", "pid", "hawkeye", "orientation", "pitch-data"):
-            hit = context(text, term, radius=1800, limit=3600)
-            if hit:
-                contexts[term] = hit
-        out.append({
-            "script": url,
-            "counts": counts,
-            "endpoints": endpoint_literals(text),
-            "contexts": contexts,
-        })
-    return out
-
-
-def seasonal_rows(body: dict) -> list[dict]:
-    pitches = body.get("pitches") or {}
-    rows = []
-    for pitch_type, values in pitches.items():
-        for row in values or []:
-            item = dict(row)
-            item["_bucket_pitch_type"] = pitch_type
-            rows.append(item)
-    return rows
-
-
-def pitch3d_rows(response: requests.Response) -> tuple[list[str], list[dict]]:
-    response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")))
-    rows = list(reader)
-    return list(reader.fieldnames or []), rows
-
-
-def subset(row: dict | None, keys: tuple[str, ...]) -> dict | None:
-    if row is None:
-        return None
-    return {key: row.get(key) for key in keys if key in row}
+def source_report(source_name: str, content: str) -> dict:
+    found = {term: content.lower().count(term.lower()) for term in TERMS}
+    return {
+        "source": source_name,
+        "bytes": len(content.encode("utf-8", errors="ignore")),
+        "term_counts": found,
+        "endpoints": endpoint_literals(content),
+        "contexts": {
+            term: contexts(content, term, radius=1800, max_hits=3)
+            for term, count in found.items()
+            if count
+        },
+    }
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/6.0)",
-        "Referer": PLAYER_URL,
-    })
-    report: dict = {}
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/7.0)"})
+    report = {}
 
-    player_response = session.get(PLAYER_URL, timeout=60)
-    player_response.raise_for_status()
-    player_html = player_response.text
-
-    seasonal_response = session.get(
-        BASE + "/player-services/pitches-seasonal",
-        params={"playerId": OHTANI, "season": 2026},
-        timeout=60,
-    )
-    seasonal_response.raise_for_status()
-    seasonal_body = seasonal_response.json()
-    season_rows = seasonal_rows(seasonal_body)
-    seasonal_ids = [str(row.get("pid") or "").strip() for row in season_rows if row.get("pid")]
-    seasonal_set = set(seasonal_ids)
-
-    p3_response = session.get(PITCH3D_URL, timeout=60)
-    p3_headers, p3_rows = pitch3d_rows(p3_response)
-    p3_by_play = {
-        str(row.get("play_id") or "").strip(): row
-        for row in p3_rows if str(row.get("play_id") or "").strip()
-    }
-    p3_set = set(p3_by_play)
-    overlap = seasonal_set & p3_set
-    season_only = sorted(seasonal_set - p3_set)
-
-    joined_examples = []
-    for pid in sorted(overlap)[:5]:
-        season_row = next(row for row in season_rows if row.get("pid") == pid)
-        pitch3d_row = p3_by_play[pid]
-        joined_examples.append({
-            "pid": pid,
-            "seasonal": subset(season_row, ("gd", "pt", "vel", "x", "z", "showVideo")),
-            "pitch3d": subset(pitch3d_row, (
-                "game_pk", "play_id", "game_date", "game_year", "pitch_type", "release_speed",
-                "pitch_number", "at_bat_number", "pitcher", "batter",
-            )),
-        })
-
-    report["seasonal_to_pitch3d_join"] = {
-        "seasonal_url": seasonal_response.url,
-        "seasonal_rows": len(season_rows),
-        "seasonal_unique_pid": len(seasonal_set),
-        "seasonal_duplicate_pid": len(seasonal_ids) - len(seasonal_set),
-        "seasonal_pitch_type_counts": dict(Counter(row.get("_bucket_pitch_type") for row in season_rows)),
-        "pitch3d_url": p3_response.url,
-        "pitch3d_rows": len(p3_rows),
-        "pitch3d_unique_play_id": len(p3_set),
-        "pitch3d_headers": p3_headers,
-        "overlap": len(overlap),
-        "seasonal_match_rate": round(len(overlap) / len(seasonal_set), 8) if seasonal_set else None,
-        "seasonal_unmatched_count": len(season_only),
-        "seasonal_unmatched_examples": season_only[:10],
-        "joined_examples": joined_examples,
+    bundle = session.get(BUNDLE, timeout=90)
+    bundle.raise_for_status()
+    text = bundle.text
+    report["bundle"] = {
+        "url": BUNDLE,
+        "status": bundle.status_code,
+        "bytes": len(bundle.content),
+        "tail": compact(text[-3000:], 3000),
+        "term_counts": {term: text.lower().count(term.lower()) for term in TERMS},
+        "evp_add_contexts": contexts(text, "/evp/add", radius=5000, max_hits=5),
+        "evp_add_network_contexts": network_snippets(text, "/evp/add"),
+        "spin_axis_contexts": contexts(text, "image_spin_x", radius=3500, max_hits=3),
+        "seasonal_network_contexts": network_snippets(text, "pitches-seasonal"),
+        "breakdown_network_contexts": network_snippets(text, "statcast-pitches-breakdown"),
     }
 
-    # Gamelogs is another independent public surface carrying game_pk + play_id.
-    gamelogs_response = session.get(
-        BASE + "/player-services/gamelogs",
-        params={"playerId": OHTANI, "playerType": 1, "viewType": "pitching", "season": 2026},
-        timeout=60,
-    )
-    gamelogs_response.raise_for_status()
-    gamelogs = gamelogs_response.json()
-    gamelog_ids = {str(row.get("play_id") or "").strip() for row in gamelogs if row.get("play_id")}
-    report["gamelog_join"] = {
-        "url": gamelogs_response.url,
-        "rows": len(gamelogs),
-        "unique_play_id": len(gamelog_ids),
-        "overlap_with_seasonal": len(gamelog_ids & seasonal_set),
-        "overlap_with_pitch3d": len(gamelog_ids & p3_set),
-        "first_row": subset(gamelogs[0] if gamelogs else None, ("game_pk", "play_id", "gd", "ab_num", "pt", "v", "event")),
-    }
-
-    player_scripts = load_scripts(session, player_html, PLAYER_URL)
-    report["player_frontend_trace"] = trace_scripts(player_scripts)
-
-    # Follow one known per-pitch UUID into Savant's video route and inspect its own frontend data flow.
-    example_pid = next(iter(sorted(overlap or seasonal_set)), None)
-    if example_pid:
-        sporty_url = f"{BASE}/sporty-videos?playId={example_pid}"
-        sporty_response = session.get(sporty_url, timeout=60)
-        sporty = {
-            "url": sporty_response.url,
-            "status": sporty_response.status_code,
-            "bytes": len(sporty_response.content),
-            "content_type": sporty_response.headers.get("content-type"),
-            "term_counts": {term: sporty_response.text.lower().count(term.lower()) for term in TRACE_TERMS},
-            "endpoints": endpoint_literals(sporty_response.text),
-            "contexts": {
-                term: context(sporty_response.text, term, radius=1600, limit=3200)
-                for term in ("playId", "play_id", "hawkeye", "orientation", "video", "pitch")
-                if context(sporty_response.text, term, radius=1600, limit=3200)
-            },
+    report["source_maps"] = []
+    for map_url in sourcemap_candidates(text):
+        response = session.get(map_url, timeout=120)
+        item = {
+            "url": response.url,
+            "status": response.status_code,
+            "content_type": response.headers.get("content-type"),
+            "bytes": len(response.content),
         }
-        if sporty_response.ok:
-            sporty["scripts"] = trace_scripts(load_scripts(session, sporty_response.text, sporty_response.url))
-        report["sporty_video_trace"] = sporty
+        if not response.ok:
+            item["text_head"] = compact(response.text[:2000], 1200)
+            report["source_maps"].append(item)
+            continue
+        try:
+            body = response.json()
+        except Exception:
+            item["json"] = False
+            item["text_head"] = compact(response.text[:4000], 1800)
+            report["source_maps"].append(item)
+            continue
+
+        item["json"] = True
+        sources = body.get("sources") or []
+        contents = body.get("sourcesContent") or []
+        item["source_count"] = len(sources)
+        item["has_sources_content"] = bool(contents)
+        item["matching_source_names"] = [
+            name for name in sources
+            if any(hint.lower() in str(name).lower() for hint in SOURCE_HINTS)
+        ][:100]
+        matches = []
+        if contents and len(contents) == len(sources):
+            for name, content in zip(sources, contents):
+                if not isinstance(content, str):
+                    continue
+                lower = content.lower()
+                if any(term.lower() in lower for term in TERMS):
+                    matches.append(source_report(str(name), content))
+        item["matching_sources"] = matches[:40]
+        report["source_maps"].append(item)
 
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 180_000, f"research report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT PER-PITCH KEY AND VIDEO TRACE =====\n" + rendered)
+    assert len(rendered) < 220_000, f"source-map report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT PLAYER SOURCE MAP TRACE =====\n" + rendered)
