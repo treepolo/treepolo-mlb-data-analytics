@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import csv
-import hashlib
-import io
+import html as html_lib
 import json
+import re
+from urllib.parse import urljoin
 
 import pytest
 import requests
@@ -11,210 +11,170 @@ import requests
 pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
-SPIN_PATH = "/savant/api/v1/spin-direction-pitches"
-PITCH3D_PATH = f"/app/pitch-data/{OHTANI}"
-SEASONAL_PATH = "/player-services/pitches-seasonal"
-POSE_FIELDS = (
+PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
+SPIN_URL = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&min=0"
+ROUTE_PREFIXES = ("/savant/api/", "/player-services/", "/app/", "/api/")
+ROUTE_TERMS = (
+    "pitch", "spin", "hawk", "orient", "seam", "track", "video", "play",
+    "gameday", "statcast", "player", "evp", "movement",
+)
+FIELD_TERMS = (
     "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
-    "hawkeye_measured", "movement_inferred", "active_spin", "alan_active_spin_pct",
-)
-PER_PITCH_KEYS = (
-    "play_id", "playId", "pid", "game_pk", "gamePk", "game_date",
-    "at_bat_number", "pitch_number", "pitch_uid",
+    "hawkeye_measured", "movement_inferred", "spinAxis", "play_id", "pid",
 )
 
 
-def body_hash(response: requests.Response) -> str:
-    return hashlib.sha256(response.content).hexdigest()
-
-
-def json_rows(response: requests.Response):
-    try:
-        body = response.json()
-    except Exception:
-        return None, None
-    if isinstance(body, list):
-        return body, "$root"
-    if isinstance(body, dict):
-        for key, value in body.items():
-            if isinstance(value, list):
-                return value, key
-        return [body], "$dict"
-    return [], "$scalar"
-
-
-def response_signature(response: requests.Response) -> dict:
-    rows, container = json_rows(response)
-    out = {
-        "url": response.url,
-        "status": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "bytes": len(response.content),
-        "sha256": body_hash(response),
-    }
-    if rows is None:
-        out["text_head"] = response.text[:500].replace("\n", " ")
-        return out
-    out["row_container"] = container
-    out["row_count"] = len(rows)
-    if rows and isinstance(rows[0], dict):
-        row = rows[0]
-        out["first_row_keys"] = list(row)
-        out["pose_fields_present"] = [key for key in POSE_FIELDS if key in row]
-        out["per_pitch_keys_present"] = [key for key in PER_PITCH_KEYS if key in row]
-        out["first_row_core"] = {
-            key: row.get(key)
-            for key in (
-                "player_id", "api_pitch_type", "api_pitch_name", "n_pitches",
-                *POSE_FIELDS, *PER_PITCH_KEYS,
-            )
-            if key in row
-        }
+def script_urls(page: str, base_url: str) -> list[str]:
+    out: list[str] = []
+    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
+        url = urljoin(base_url, html_lib.unescape(raw))
+        if url not in out:
+            out.append(url)
     return out
 
 
-def classify(signature: dict, baseline: dict) -> str:
-    if signature["status"] >= 400:
-        return "error"
-    if signature.get("row_container") is None:
-        return "non_json"
-    if signature["sha256"] == baseline["sha256"]:
-        return "ignored_or_no_effect"
-    row = signature.get("first_row_core") or {}
-    if row.get("n_pitches") == 1 or signature.get("per_pitch_keys_present"):
-        return "possible_per_pitch"
-    return "changed_aggregate"
+def load_page_scripts(session: requests.Session, page_url: str) -> tuple[requests.Response, list[tuple[str, str]]]:
+    page = session.get(page_url, timeout=60)
+    page.raise_for_status()
+    scripts: list[tuple[str, str]] = []
+    for url in script_urls(page.text, page.url):
+        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
+            continue
+        response = session.get(url, timeout=90)
+        if response.ok and len(response.content) <= 12_000_000:
+            scripts.append((url, response.text))
+    return page, scripts
 
 
-def load_pitch3d(session: requests.Session) -> tuple[list[str], list[dict]]:
-    response = session.get(BASE + PITCH3D_PATH, timeout=90)
-    response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")))
-    return list(reader.fieldnames or []), list(reader)
+def quoted_literals(text: str) -> list[str]:
+    out = []
+    # Preserve template literals too; ${...} is useful evidence about route construction.
+    for _, value in re.findall(r'''([\"'`])((?:(?!\1).){2,420})\1''', text, flags=re.S):
+        value = html_lib.unescape(value).strip()
+        if value not in out:
+            out.append(value)
+    return out
 
 
-def load_seasonal(session: requests.Session) -> list[dict]:
-    response = session.get(
-        BASE + SEASONAL_PATH,
-        params={"playerId": OHTANI, "season": 2026},
-        timeout=90,
-    )
-    response.raise_for_status()
-    body = response.json()
-    rows = []
-    for pitch_type, values in (body.get("pitches") or {}).items():
-        for value in values or []:
-            row = dict(value)
-            row["_bucket_pitch_type"] = pitch_type
-            rows.append(row)
-    return rows
+def relevant_routes(text: str) -> list[str]:
+    out = []
+    for value in quoted_literals(text):
+        low = value.lower()
+        pathish = value.startswith("/") or value.startswith("http")
+        if not pathish:
+            continue
+        if value.startswith(ROUTE_PREFIXES) or any(term in low for term in ROUTE_TERMS):
+            if value not in out:
+                out.append(value)
+    return sorted(out)
 
 
-def find_known_ff_pitch(session: requests.Session) -> dict:
-    seasonal = load_seasonal(session)
-    headers, pitch3d = load_pitch3d(session)
-    by_play = {
-        str(row.get("play_id") or "").strip(): row
-        for row in pitch3d
-        if str(row.get("play_id") or "").strip()
+def explicit_api_routes(text: str) -> list[str]:
+    return sorted({
+        value for value in quoted_literals(text)
+        if value.startswith(ROUTE_PREFIXES)
+    })
+
+
+def source_hints(text: str) -> list[str]:
+    return sorted(set(re.findall(r"/usr/local/app/[^`\"'\s]{2,260}", text)))[:200]
+
+
+def contexts(text: str, needle: str, radius: int = 900, max_hits: int = 3) -> list[str]:
+    low = text.lower()
+    target = needle.lower()
+    start = 0
+    out = []
+    while len(out) < max_hits:
+        index = low.find(target, start)
+        if index < 0:
+            break
+        fragment = re.sub(r"\s+", " ", text[max(0, index - radius): index + len(needle) + radius]).strip()
+        out.append(fragment[:2200])
+        start = index + len(target)
+    return out
+
+
+def script_inventory(url: str, text: str) -> dict | None:
+    routes = relevant_routes(text)
+    api = explicit_api_routes(text)
+    counts = {term: text.lower().count(term.lower()) for term in FIELD_TERMS}
+    if not routes and not any(counts.values()):
+        return None
+    field_contexts = {
+        term: contexts(text, term)
+        for term, count in counts.items()
+        if count and term.lower() in {
+            "image_spin_x", "image_orientation_angle", "hawkeye_measured", "spinaxis", "play_id"
+        }
     }
-    selected = next(
-        row for row in seasonal
-        if row.get("_bucket_pitch_type") == "FF" and str(row.get("pid") or "") in by_play
-    )
-    pid = str(selected["pid"])
-    joined = by_play[pid]
     return {
-        "pid": pid,
-        "seasonal": {
-            key: selected.get(key)
-            for key in ("gd", "pt", "vel", "showVideo")
-        },
-        "pitch3d": {
-            key: joined.get(key)
-            for key in (
-                "game_pk", "play_id", "game_date", "game_year", "pitch_type",
-                "pitch_number", "at_bat_number", "pitcher", "batter", "release_speed",
-            )
-            if key in headers
-        },
+        "script": url,
+        "bytes": len(text.encode("utf-8", errors="ignore")),
+        "explicit_api_routes": api,
+        "relevant_path_literals": routes,
+        "field_counts": counts,
+        "field_contexts": field_contexts,
+        "source_hints": source_hints(text),
     }
 
 
-def get_spin(session: requests.Session, params: dict, *, path: str = SPIN_PATH) -> requests.Response:
-    return session.get(BASE + path, params=params, timeout=45)
+def first_video_pid(session: requests.Session) -> str:
+    response = session.get(
+        BASE + "/player-services/pitches-seasonal",
+        params={"playerId": OHTANI, "season": 2026},
+        timeout=60,
+    )
+    response.raise_for_status()
+    for rows in (response.json().get("pitches") or {}).values():
+        for row in rows or []:
+            if row.get("pid") and row.get("showVideo"):
+                return str(row["pid"])
+    raise AssertionError("no 2026 Ohtani video pitch found")
+
+
+def page_inventory(session: requests.Session, page_url: str) -> dict:
+    page, scripts = load_page_scripts(session, page_url)
+    inventories = []
+    for url, text in scripts:
+        item = script_inventory(url, text)
+        if item:
+            inventories.append(item)
+    return {
+        "url": page.url,
+        "status": page.status_code,
+        "bytes": len(page.content),
+        "inline_explicit_api_routes": explicit_api_routes(page.text),
+        "inline_relevant_path_literals": relevant_routes(page.text),
+        "script_count": len(scripts),
+        "interesting_scripts": inventories,
+    }
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/9.0)",
-        "Referer": BASE + "/leaderboard/spin-direction-pitches",
-    })
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/10.0)"})
 
-    known = find_known_ff_pitch(session)
-    game_pk = known["pitch3d"].get("game_pk")
-    game_date = known["pitch3d"].get("game_date") or str(known["seasonal"].get("gd") or "")[:10]
-    play_id = known["pid"]
-
-    base_params = {"pitcher": OHTANI, "year": 2026, "pov": "Pit", "pitch_type": "FF"}
-    baseline_response = get_spin(session, base_params)
-    baseline_response.raise_for_status()
-    baseline = response_signature(baseline_response)
-
-    # First establish the pitch-type parameter name by asking for Ohtani's sweeper row.
-    control_trials = [
-        ("pitch_type_ST", {**base_params, "pitch_type": "ST"}),
-        ("pitchType_ST", {**base_params, "pitchType": "ST"}),
-        ("api_pitch_type_ST", {**base_params, "api_pitch_type": "ST"}),
-    ]
-
-    # Then test exact per-pitch / game / date keys already proven to identify this pitch elsewhere in Savant.
-    fine_trials = [
-        ("play_id", {**base_params, "play_id": play_id}),
-        ("playId", {**base_params, "playId": play_id}),
-        ("pid", {**base_params, "pid": play_id}),
-        ("game_pk", {**base_params, "game_pk": game_pk}),
-        ("gamePk", {**base_params, "gamePk": game_pk}),
-        ("game_date", {**base_params, "game_date": game_date}),
-        ("date", {**base_params, "date": game_date}),
-        ("type_details", {**base_params, "type": "details"}),
-        ("type_detail", {**base_params, "type": "detail"}),
-        ("detail_true", {**base_params, "detail": "true"}),
-        ("raw_true", {**base_params, "raw": "true"}),
-        ("group_by_play_id", {**base_params, "group_by": "play_id"}),
-        ("groupBy_play_id", {**base_params, "groupBy": "play_id"}),
-        ("min_zero", {**base_params, "min": 0}),
-    ]
-
-    trials = []
-    for name, params in control_trials + fine_trials:
-        response = get_spin(session, params)
-        signature = response_signature(response)
-        trials.append({
-            "name": name,
-            "extra_params": {key: value for key, value in params.items() if base_params.get(key) != value or key not in base_params},
-            "classification": classify(signature, baseline),
-            "signature": signature,
-        })
-
-    # A few route-shape variants are worth one exact request each now that the working route is known.
-    suffix_trials = []
-    for suffix in (f"/{play_id}", "/details", "/detail"):
-        response = get_spin(session, base_params, path=SPIN_PATH + suffix)
-        signature = response_signature(response)
-        suffix_trials.append({
-            "suffix": suffix,
-            "classification": classify(signature, baseline),
-            "signature": signature,
-        })
-
+    pid = first_video_pid(session)
     report = {
-        "known_exact_pitch": known,
-        "baseline": baseline,
-        "query_trials": trials,
-        "suffix_trials": suffix_trials,
+        "player_page": page_inventory(session, PLAYER_URL),
+        "spin_direction_page": page_inventory(session, SPIN_URL),
+        "sporty_video_page": page_inventory(session, f"{BASE}/sporty-videos?playId={pid}"),
     }
+
+    # Flat union makes it obvious whether a raw-looking route exists anywhere in the loaded frontend.
+    route_sources: dict[str, list[str]] = {}
+    for page_name, page in report.items():
+        for route in page["inline_explicit_api_routes"] + page["inline_relevant_path_literals"]:
+            route_sources.setdefault(route, []).append(f"{page_name}:inline")
+        for script in page["interesting_scripts"]:
+            for route in script["explicit_api_routes"] + script["relevant_path_literals"]:
+                route_sources.setdefault(route, []).append(script["script"])
+    report["route_union"] = [
+        {"route": route, "sources": sorted(set(sources))}
+        for route, sources in sorted(route_sources.items())
+    ]
+
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 110_000, f"research report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SPIN DIRECTION PER-PITCH FILTER PROBE =====\n" + rendered)
+    assert len(rendered) < 220_000, f"endpoint inventory unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
