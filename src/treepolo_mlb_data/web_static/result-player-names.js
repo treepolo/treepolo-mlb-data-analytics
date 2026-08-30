@@ -79,6 +79,15 @@
       .filter(header => !header.dataset.playerNameFor);
   }
 
+  function headerKey(header) {
+    return String(
+      header?.dataset?.resultKey
+      || header?.getAttribute?.("title")
+      || header?.textContent
+      || ""
+    ).trim();
+  }
+
   function existingNameHeader(table, field) {
     return Array.from(table?.querySelectorAll("thead tr:first-child > th") || [])
       .find(header => header.dataset.playerNameFor === field) || null;
@@ -91,10 +100,10 @@
   function prepareTable(table) {
     if (!table) return [];
     const headers = rawHeaders(table);
-    const rawKeys = new Set(headers.map(header => header.textContent.trim()));
+    const rawKeys = new Set(headers.map(headerKey));
     const matches = [];
     headers.forEach((header, rawIndex) => {
-      const field = header.textContent.trim();
+      const field = headerKey(header);
       const config = PLAYER_FIELDS[field];
       if (!config || config.existing.some(key => rawKeys.has(key))) return;
       matches.push({ field, config, header, rawIndex });
