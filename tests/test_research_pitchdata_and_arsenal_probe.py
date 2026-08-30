@@ -18,6 +18,12 @@ PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
 SPIN_URL = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&min=0"
 CANDIDATE_TERMS = ("hawk", "orient", "seam", "track", "spin", "pitch")
 API_MARKERS = ("/savant/api/", "/player-services/", "/app/", "/api/")
+DETAIL_PATH = "/leaderboard/spin-axis-by-pitcher"
+DETAIL_FIELDS = (
+    "play_id", "pid", "game_pk", "at_bat_number", "pitch_number",
+    "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
+    "hawkeye_measured", "movement_inferred", "spinAxis",
+)
 
 
 def first_video_pid(session: requests.Session) -> str:
@@ -87,6 +93,7 @@ def summarize_urls(urls: list[str]) -> dict:
     api = [url for url in target if any(marker in url for marker in API_MARKERS)]
     candidates = [url for url in target if any(term in url.lower() for term in CANDIDATE_TERMS)]
     same_origin = [url for url in target if urlparse(url).netloc.lower() == "baseballsavant.mlb.com"]
+    detail_urls = sorted({url for url in target if urlparse(url).path == DETAIL_PATH})
     return {
         "all_url_count": len(urls),
         "target_url_count": len(target),
@@ -94,6 +101,7 @@ def summarize_urls(urls: list[str]) -> dict:
         "same_origin_endpoint_count": len(endpoint_inventory(same_origin)),
         "api_endpoints": endpoint_inventory(api),
         "pitch_spin_tracking_endpoints": endpoint_inventory(candidates),
+        "spin_axis_by_pitcher_urls": detail_urls[:20],
     }
 
 
@@ -131,7 +139,7 @@ def capture_network(chrome: str, page_url: str) -> dict:
         item = {
             "page_url": page_url,
             "returncode": completed.returncode,
-            "stderr_tail": completed.stderr[-1800:],
+            "stderr_tail": completed.stderr[-800:],
             "netlog_exists": netlog_path.exists(),
             "netlog_bytes": netlog_path.stat().st_size if netlog_path.exists() else 0,
         }
@@ -146,21 +154,45 @@ def capture_network(chrome: str, page_url: str) -> dict:
         return item
 
 
+def probe_detail_url(session: requests.Session, url: str) -> dict:
+    response = session.get(url, timeout=60)
+    text = response.text
+    return {
+        "url": url,
+        "status": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "bytes": len(response.content),
+        "field_counts": {field: text.count(field) for field in DETAIL_FIELDS},
+        "title": (re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.I | re.S).group(1).strip()
+                  if re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.I | re.S) else None),
+    }
+
+
 def test_deep_spin_orientation_probe():
     chrome = chrome_executable()
     version = subprocess.run([chrome, "--version"], capture_output=True, text=True, check=False)
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/14.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/15.0)"})
     pid = first_video_pid(session)
+
+    captures = [
+        capture_network(chrome, PLAYER_URL),
+        capture_network(chrome, SPIN_URL),
+        capture_network(chrome, f"{BASE}/sporty-videos?playId={pid}"),
+    ]
+    discovered_detail_urls = sorted({
+        url
+        for capture in captures
+        for url in capture.get("spin_axis_by_pitcher_urls", [])
+    })
+    fallback_detail = f"{BASE}{DETAIL_PATH}?pitcher={OHTANI}&pov=Pit&type=FF"
+    urls_to_probe = discovered_detail_urls[:5] or [fallback_detail]
 
     report = {
         "chrome": chrome,
         "chrome_version": version.stdout.strip() or version.stderr.strip(),
-        "captures": [
-            capture_network(chrome, PLAYER_URL),
-            capture_network(chrome, SPIN_URL),
-            capture_network(chrome, f"{BASE}/sporty-videos?playId={pid}"),
-        ],
+        "captures": captures,
+        "spin_axis_by_pitcher_probes": [probe_detail_url(session, url) for url in urls_to_probe],
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
     assert len(rendered) < 60_000, f"browser network report unexpectedly grew to {len(rendered)} bytes"
