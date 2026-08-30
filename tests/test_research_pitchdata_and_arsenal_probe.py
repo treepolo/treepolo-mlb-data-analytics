@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import csv
-import hashlib
-import io
+import html as html_lib
 import json
 import re
 from urllib.parse import urljoin
@@ -13,128 +11,234 @@ import requests
 pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
+FIELDS = (
+    "image_spin_x",
+    "image_spin_y",
+    "image_spin_z",
+    "image_orientation_angle",
+    "hawkeye_measured",
+    "movement_inferred",
+    "alan_active_spin_pct",
+    "active_spin",
+)
+PATH_TERMS = (
+    "spin", "pitch", "hawk", "orientation", "seam", "leaderboard",
+    "player-service", "statcast", "csv", "download",
+)
 
 
-def ctx(text: str, needle: str, radius: int = 1800, max_hits: int = 5):
-    low = text.lower(); nlow = needle.lower(); start = 0; out = []
-    while True:
-        i = low.find(nlow, start)
-        if i < 0 or len(out) >= max_hits: break
-        left = max(0, i-radius); right = min(len(text), i+len(needle)+radius)
-        frag = text[left:right]
-        # nearest source-path marker when available in webpack bundle
-        srcs = re.findall(r"/usr/local/app/[^`\"']+", frag)
-        out.append({"source_hints": srcs[-3:], "text": frag})
-        start = i + len(needle)
-    return out
+def compact(text: str, limit: int = 1400) -> str:
+    value = re.sub(r"\s+", " ", text).strip()
+    if len(value) <= limit:
+        return value
+    half = max(1, (limit - 5) // 2)
+    return value[:half] + " ... " + value[-half:]
 
 
-def asset_urls(html: str, base_url: str):
-    vals = []
-    for raw in re.findall(r'''(?:src|href)=[\"']([^\"']+)[\"']''', html, flags=re.I):
-        if raw.startswith("javascript:") or raw.startswith("#"): continue
-        u = urljoin(base_url, raw)
-        if u not in vals: vals.append(u)
-    return vals
+def context(text: str, needle: str, radius: int = 900, limit: int = 1800) -> str | None:
+    index = text.lower().find(needle.lower())
+    if index < 0:
+        return None
+    return compact(text[max(0, index - radius): index + len(needle) + radius], limit)
 
 
-def report_contexts(report, label, text, needles, radius=1800):
-    for needle in needles:
-        hits = ctx(text, needle, radius=radius)
-        if hits:
-            report.append(f"\n===== {label} {needle} HITS={len(hits)} =====")
-            for i, hit in enumerate(hits, 1):
-                report.append(f"--- HIT {i} SOURCE_HINTS={json.dumps(hit['source_hints'])} ---\n{hit['text']}")
+def asset_urls(page: str, base_url: str) -> list[str]:
+    values: list[str] = []
+    for raw in re.findall(r'''(?:src|href)=[\"']([^\"']+)[\"']''', page, flags=re.I):
+        raw = html_lib.unescape(raw)
+        if raw.startswith("javascript:") or raw.startswith("#"):
+            continue
+        url = urljoin(base_url, raw)
+        if url not in values:
+            values.append(url)
+    return values
+
+
+def script_urls(page: str, base_url: str) -> list[str]:
+    values: list[str] = []
+    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
+        url = urljoin(base_url, html_lib.unescape(raw))
+        if url not in values:
+            values.append(url)
+    return values
+
+
+def path_literals(text: str, *, limit: int = 80) -> list[str]:
+    found: list[str] = []
+    for raw in re.findall(r'''[\"'`]((?:/|https?://)[^\"'`\s]{2,260})[\"'`]''', text):
+        value = html_lib.unescape(raw)
+        low = value.lower()
+        if any(term in low for term in PATH_TERMS) and value not in found:
+            found.append(value)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def nearby_paths(text: str, needle: str, radius: int = 9000) -> list[str]:
+    index = text.lower().find(needle.lower())
+    if index < 0:
+        return []
+    return path_literals(text[max(0, index - radius): index + len(needle) + radius], limit=50)
+
+
+def nearest_array_owner(text: str, needle: str) -> dict | None:
+    index = text.lower().find(needle.lower())
+    if index < 0:
+        return None
+    start = max(0, index - 60000)
+    prefix = text[start:index]
+    patterns = (
+        r'''([A-Za-z_$][\w$]*)\s*:\s*\[\s*\{''',
+        r'''[\"']([^\"']+)[\"']\s*:\s*\[\s*\{''',
+        r'''(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*\[\s*\{''',
+    )
+    best = None
+    for pattern in patterns:
+        for match in re.finditer(pattern, prefix):
+            absolute = start + match.start()
+            if best is None or absolute > best[0]:
+                best = (absolute, match.group(1))
+    if best is None:
+        return None
+    absolute, owner = best
+    return {
+        "owner": owner,
+        "distance_to_field": index - absolute,
+        "declaration_context": compact(text[max(0, absolute - 500): absolute + 500], 1000),
+    }
+
+
+def fetch_like_snippets(text: str, *, limit: int = 30) -> list[str]:
+    snippets: list[str] = []
+    patterns = (
+        r'''fetch\s*\(''',
+        r'''axios\s*\.\s*(?:get|post|request)\s*\(''',
+        r'''\$\s*\.\s*(?:ajax|get|getJSON|post)\s*\(''',
+        r'''XMLHttpRequest''',
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.I):
+            snippet = compact(text[max(0, match.start() - 220): match.start() + 700], 900)
+            low = snippet.lower()
+            if any(term in low for term in PATH_TERMS) and snippet not in snippets:
+                snippets.append(snippet)
+            if len(snippets) >= limit:
+                return snippets
+    return snippets
+
+
+def summarize_page(page: str, page_url: str) -> dict:
+    return {
+        "url": page_url,
+        "bytes": len(page.encode("utf-8")),
+        "field_counts": {field: page.count(field) for field in FIELDS},
+        "spinAxis_count": page.count("spinAxis"),
+        "spin_axis_owner": nearest_array_owner(page, "image_spin_x"),
+        "spin_axis_context": context(page, "spinAxis", radius=1100, limit=2200),
+        "download_csv_context": context(page, "Download CSV", radius=800, limit=1600),
+        "script_urls": script_urls(page, page_url),
+        "interesting_paths": path_literals(page, limit=70),
+    }
+
+
+def summarize_script(session: requests.Session, url: str) -> dict:
+    response = session.get(url, timeout=60)
+    item = {"url": url, "status": response.status_code, "bytes": len(response.content)}
+    if not response.ok or len(response.content) > 12_000_000:
+        return item
+    text = response.text
+    item.update({
+        "field_counts": {field: text.count(field) for field in FIELDS},
+        "spinAxis_count": text.count("spinAxis"),
+        "interesting_paths": path_literals(text, limit=80),
+        "near_image_spin_paths": nearby_paths(text, "image_spin_x"),
+        "near_orientation_paths": nearby_paths(text, "image_orientation_angle"),
+        "fetch_like": fetch_like_snippets(text),
+        "renderer_context": (
+            context(text, "spinAxisPoint", radius=1600, limit=3200)
+            or context(text, "image_spin_x", radius=1600, limit=3200)
+        ),
+    })
+    return item
 
 
 def test_deep_spin_orientation_probe():
-    s = requests.Session()
-    s.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/1.0)", "Referer": BASE + "/"})
-    report = []
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/2.0)",
+        "Referer": BASE + "/",
+    })
+    report: dict = {}
 
-    # 1) Verify conditional-refresh semantics on the trajectory endpoint.
-    purl = f"{BASE}/app/pitch-data/{OHTANI}"
-    r = s.get(purl, timeout=60); r.raise_for_status()
-    lm = r.headers.get("last-modified")
-    cond_headers = {"If-Modified-Since": lm} if lm else {}
-    cr = s.get(purl, headers=cond_headers, timeout=60)
-    report.append("=== CONDITIONAL PITCH-DATA ===")
-    report.append(json.dumps({
-        "url": purl, "first_status": r.status_code, "last_modified": lm,
-        "cache_control": r.headers.get("cache-control"), "age": r.headers.get("age"),
-        "conditional_status": cr.status_code, "conditional_bytes": len(cr.content),
-        "conditional_last_modified": cr.headers.get("last-modified"),
-    }, sort_keys=True))
+    # Pitch3D trajectory endpoint: retain its refresh semantics as already useful integration evidence.
+    pitch_url = f"{BASE}/app/pitch-data/{OHTANI}"
+    first = session.get(pitch_url, timeout=60)
+    first.raise_for_status()
+    last_modified = first.headers.get("last-modified")
+    conditional = session.get(
+        pitch_url,
+        headers={"If-Modified-Since": last_modified} if last_modified else {},
+        timeout=60,
+    )
+    report["pitch_data_refresh"] = {
+        "url": pitch_url,
+        "status": first.status_code,
+        "bytes": len(first.content),
+        "last_modified": last_modified,
+        "cache_control": first.headers.get("cache-control"),
+        "conditional_status": conditional.status_code,
+        "conditional_bytes": len(conditional.content),
+    }
 
-    # 2) Player page: exact aggregate spin/orientation payload and JS implementation.
-    page_url = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
-    pr = s.get(page_url, timeout=60); pr.raise_for_status(); html = pr.text
-    report.append("\n=== PLAYER PAGE EXACT SPIN PAYLOAD ===")
-    report.append(f"url={page_url} status={pr.status_code} bytes={len(pr.content)}")
-    payload_needles = [
-        "serverVals.spinAxis", "image_spin_x", "image_spin_y", "image_spin_z",
-        "image_orientation_angle", "hawkeye_measured", "movement_inferred",
-        "alan_active_spin_pct", "active_spin",
+    # Player page: establish the server-rendered owner and inspect only scripts that can matter.
+    player_url = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
+    player_response = session.get(player_url, timeout=60)
+    player_response.raise_for_status()
+    player_html = player_response.text
+    report["player_page"] = summarize_page(player_html, player_url)
+    report["player_scripts"] = [
+        summarize_script(session, url)
+        for url in report["player_page"]["script_urls"]
+        if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
     ]
-    report_contexts(report, "PLAYER_HTML", html, payload_needles, radius=2600)
 
-    assets = asset_urls(html, page_url)
-    js_urls = [u for u in assets if (u.lower().endswith(".js") or ".js?" in u.lower()) and ("mlbstatic.com" in u.lower() or "baseballsavant.mlb.com" in u.lower())]
-    report.append("\nPLAYER_JS_URLS=" + json.dumps(js_urls))
-    exact_needles = [
-        "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
-        "hawkeye_measured", "movement_inferred", "alan_active_spin_pct", "active_spin",
-        "spinAxis", "SphereGeometry", "Quaternion", "quaternion", "rotateOnAxis",
-        "setFromAxisAngle", "Canvas", "useFrame", "baseball", "seam", ".glb", ".gltf",
+    # Spin Direction page: determine whether the download/table is server-rendered and expose its route clues.
+    leaderboard_url = (
+        f"{BASE}/leaderboard/spin-direction-pitches"
+        "?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
+    )
+    leaderboard_response = session.get(leaderboard_url, timeout=60)
+    leaderboard_response.raise_for_status()
+    leaderboard_html = leaderboard_response.text
+    report["spin_direction_page"] = summarize_page(leaderboard_html, leaderboard_url)
+    report["spin_direction_scripts"] = [
+        summarize_script(session, url)
+        for url in report["spin_direction_page"]["script_urls"]
+        if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
     ]
-    for u in js_urls:
-        try:
-            jr = s.get(u, timeout=60)
-            if not jr.ok or len(jr.content) > 12_000_000: continue
-            text = jr.text
-            if any(n.lower() in text.lower() for n in exact_needles):
-                report.append(f"\n=== PLAYER_JS {u} status={jr.status_code} bytes={len(jr.content)} ===")
-                report_contexts(report, "PLAYER_JS", text, exact_needles, radius=2200)
-                # Pull nearby URL/path literals from neighborhoods around exact data-field names.
-                for field in ("image_spin_x", "image_orientation_angle", "hawkeye_measured"):
-                    for hit in ctx(text, field, radius=5000, max_hits=3):
-                        paths = sorted(set(re.findall(r'''[\"'`]((?:/|https?://)[^\"'`\s]{2,180})[\"'`]''', hit["text"])))
-                        report.append(f"NEARBY_PATHS field={field} paths=" + json.dumps(paths[:80]))
-        except Exception as exc:
-            report.append(f"PLAYER_JS_ERROR {u} {exc!r}")
 
-    # 3) Spin Direction leaderboard: inspect server payload / download path / scripts.
-    lb_url = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
-    lr = s.get(lb_url, timeout=60); lr.raise_for_status(); lhtml = lr.text
-    report.append("\n=== SPIN DIRECTION LEADERBOARD ===")
-    report.append(f"url={lb_url} status={lr.status_code} bytes={len(lr.content)}")
-    report_contexts(report, "LEADERBOARD_HTML", lhtml, [
-        "Download CSV", "image_spin_x", "image_orientation_angle", "hawkeye_measured",
-        "movement_inferred", "active_spin", "spin-direction-pitches", "csv", "download",
-    ], radius=2600)
-    la = asset_urls(lhtml, lb_url)
-    report.append("LEADERBOARD_ASSETS=" + json.dumps(la))
-    ljs = [u for u in la if (u.lower().endswith(".js") or ".js?" in u.lower()) and ("mlbstatic.com" in u.lower() or "baseballsavant.mlb.com" in u.lower())]
-    for u in ljs:
-        try:
-            jr = s.get(u, timeout=60)
-            if not jr.ok or len(jr.content) > 12_000_000: continue
-            text = jr.text
-            needles = ["spin-direction-pitches", "Download CSV", "download-csv", "image_spin_x", "hawkeye_measured", "movement_inferred", "active_spin", ".csv", "/leaderboard/"]
-            if any(n.lower() in text.lower() for n in needles):
-                report.append(f"\n=== LEADERBOARD_JS {u} bytes={len(jr.content)} ===")
-                report_contexts(report, "LEADERBOARD_JS", text, needles, radius=2200)
-        except Exception as exc:
-            report.append(f"LB_JS_ERROR {u} {exc!r}")
-
-    # 4) Generic exact-field search across a few known Savant pages; helps expose a reusable data route.
-    for probe_url in [
+    # Nearby public Savant pages can reveal a shared source even if the player page itself is server-rendered.
+    report["other_pages"] = []
+    for url in (
         f"{BASE}/leaderboard/spin-direction-comparison?year=2026&team=&min=0",
         f"{BASE}/leaderboard/active-spin?year=2026&team=&min=0",
-    ]:
-        rr = s.get(probe_url, timeout=60)
-        report.append(f"\n=== OTHER_PAGE {probe_url} status={rr.status_code} bytes={len(rr.content)} ===")
-        if rr.ok:
-            report_contexts(report, "OTHER_HTML", rr.text, ["image_spin_x", "image_orientation_angle", "hawkeye_measured", "movement_inferred", "active_spin", "Download CSV"], radius=2200)
+    ):
+        response = session.get(url, timeout=60)
+        item = {"url": url, "status": response.status_code, "bytes": len(response.content)}
+        if response.ok:
+            summary = summarize_page(response.text, url)
+            item.update({
+                "field_counts": summary["field_counts"],
+                "spinAxis_count": summary["spinAxis_count"],
+                "spin_axis_owner": summary["spin_axis_owner"],
+                "download_csv_context": summary["download_csv_context"],
+                "interesting_paths": summary["interesting_paths"],
+                "script_urls": summary["script_urls"],
+            })
+        report["other_pages"].append(item)
 
-    pytest.fail("\n===== DEEP SPIN ORIENTATION RESEARCH REPORT =====\n" + "\n".join(report)[:650_000])
+    # This is deliberately a research failure: the payload is compact JSON so Actions logs remain searchable.
+    rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
+    assert len(rendered) < 120_000, f"compact research report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== COMPACT SPIN ORIENTATION RESEARCH REPORT =====\n" + rendered)
