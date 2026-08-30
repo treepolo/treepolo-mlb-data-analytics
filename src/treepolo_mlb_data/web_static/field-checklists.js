@@ -53,6 +53,7 @@
     style.id = "field-checklist-styles";
     style.textContent = `
       input[data-multi-field]{width:100%;box-sizing:border-box}
+      input[data-multi-field].ta-invalid{outline:2px solid #b12828;background:#fff3f3}
       .field-checklist{width:100%;max-width:100%;min-width:0;border:1px solid #7f9db9;background:#fff;max-height:190px;overflow:auto}
       .field-checklist-tools{position:sticky;top:0;z-index:4;background:#f4f7fb;border-bottom:1px solid #b6c1ce;padding:4px}
       .field-checklist-summary{display:flex;gap:4px;align-items:center;flex-wrap:wrap;min-height:20px;font-size:11px}
@@ -90,12 +91,37 @@
     return model()?.values?.(control) || String(control?.value || "").split(",").map(item => item.trim()).filter(Boolean);
   }
 
+  function legalSelection(control) {
+    const raw = selectedValues(control);
+    const legal = new Set(descriptors(control).map(item => item.value));
+    return {
+      raw,
+      accepted: raw.filter(value => legal.has(value)),
+      rejected: raw.filter(value => !legal.has(value)),
+    };
+  }
+
   function writeValues(control, values) {
     if (model()?.write) model().write(control, values, { emit:true });
     else {
       control.value = values.join(",");
       control.dispatchEvent(new Event("change", { bubbles:true }));
     }
+  }
+
+  function sanitizeControl(control) {
+    if (!isControl(control) || control.dataset.fieldChecklistSanitizing === "1") return true;
+    const selection = legalSelection(control);
+    control.classList.toggle("ta-invalid", selection.rejected.length > 0);
+    if (!selection.rejected.length) return true;
+    control.dataset.fieldChecklistSanitizing = "1";
+    try {
+      writeValues(control, selection.accepted);
+    } finally {
+      delete control.dataset.fieldChecklistSanitizing;
+    }
+    control.classList.remove("ta-invalid");
+    return false;
   }
 
   function hostFor(control) {
@@ -117,8 +143,10 @@
   }
 
   function syncState(state) {
-    const selected = selectedValues(state.control);
+    const selection = legalSelection(state.control);
+    const selected = selection.accepted;
     const current = new Set(selected);
+    state.control.classList.toggle("ta-invalid", selection.rejected.length > 0);
     state.rows.forEach(row => { row.checkbox.checked = current.has(row.value); });
 
     const selectionSignature = selected.join("\u0001");
@@ -162,7 +190,7 @@
 
     const rows = [];
     const rowByValue = new Map();
-    const selected = new Set(selectedValues(control));
+    const selected = new Set(legalSelection(control).accepted);
 
     items.forEach(item => {
       const row = document.createElement("div");
@@ -184,7 +212,7 @@
 
       checkbox.addEventListener("click", event => event.stopPropagation());
       checkbox.addEventListener("change", () => {
-        let values = selectedValues(control);
+        let values = legalSelection(control).accepted;
         if (checkbox.checked) {
           if (!values.includes(item.value)) values.push(item.value);
         } else {
@@ -292,8 +320,18 @@
       if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
     });
     document.addEventListener("change", event => {
+      if (isControl(event.target)) sanitizeControl(event.target);
       syncChangedControl(event.target);
       if (event.target?.matches?.(PIPELINE_SHAPE_SELECTORS)) scheduleRefresh();
+    });
+    document.addEventListener("focusout", event => {
+      if (isControl(event.target)) sanitizeControl(event.target);
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Enter" || !isControl(event.target)) return;
+      const wasValid = sanitizeControl(event.target);
+      if (!wasValid) event.preventDefault();
+      syncChangedControl(event.target);
     });
 
     new MutationObserver(handleAddedControls).observe(document.body, { childList:true, subtree:true });
@@ -303,6 +341,7 @@
     owns: isControl,
     refresh: scheduleRefresh,
     refreshRoot,
+    sanitize: sanitizeControl,
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once:true });
