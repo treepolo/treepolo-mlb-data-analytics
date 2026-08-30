@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import html as html_lib
 import json
 import re
-from urllib.parse import urljoin
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -13,59 +16,8 @@ BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
 PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
 SPIN_URL = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&min=0"
-ROUTE_PREFIXES = ("/savant/api/", "/player-services/", "/app/", "/api/")
 CANDIDATE_TERMS = ("hawk", "orient", "seam", "track", "spin", "pitch")
-FIELD_TERMS = (
-    "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
-    "hawkeye_measured", "movement_inferred", "spinAxis", "play_id", "pid",
-)
-
-
-def script_urls(page: str, base_url: str) -> list[str]:
-    out: list[str] = []
-    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
-        url = urljoin(base_url, html_lib.unescape(raw))
-        if url not in out:
-            out.append(url)
-    return out
-
-
-def load_page_scripts(session: requests.Session, page_url: str) -> tuple[requests.Response, list[tuple[str, str]]]:
-    page = session.get(page_url, timeout=60)
-    page.raise_for_status()
-    scripts: list[tuple[str, str]] = []
-    for url in script_urls(page.text, page.url):
-        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
-            continue
-        response = session.get(url, timeout=90)
-        if response.ok and len(response.content) <= 12_000_000:
-            scripts.append((url, response.text))
-    return page, scripts
-
-
-def quoted_literals(text: str) -> list[str]:
-    out = []
-    for _, value in re.findall(r'''([\"'`])((?:(?!\1).){2,420})\1''', text, flags=re.S):
-        value = html_lib.unescape(value).strip()
-        if value not in out:
-            out.append(value)
-    return out
-
-
-def selected_routes(text: str) -> list[str]:
-    out = []
-    for value in quoted_literals(text):
-        if not (value.startswith("/") or value.startswith("http")):
-            continue
-        low = value.lower()
-        if value.startswith(ROUTE_PREFIXES) or any(term in low for term in CANDIDATE_TERMS):
-            if value not in out:
-                out.append(value)
-    return sorted(out)
-
-
-def field_counts(text: str) -> dict[str, int]:
-    return {term: text.lower().count(term.lower()) for term in FIELD_TERMS}
+API_MARKERS = ("/savant/api/", "/player-services/", "/app/", "/api/")
 
 
 def first_video_pid(session: requests.Session) -> str:
@@ -82,54 +34,121 @@ def first_video_pid(session: requests.Session) -> str:
     raise AssertionError("no 2026 Ohtani video pitch found")
 
 
-def inspect_page(session: requests.Session, name: str, page_url: str, route_sources: dict[str, set[str]]) -> dict:
-    page, scripts = load_page_scripts(session, page_url)
-    for route in selected_routes(page.text):
-        route_sources.setdefault(route, set()).add(f"{name}:inline")
+def chrome_executable() -> str:
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        path = shutil.which(name)
+        if path:
+            return path
+    raise AssertionError("GitHub Actions runner has no Chrome/Chromium executable")
 
-    hits = []
-    for url, text in scripts:
-        routes = selected_routes(text)
-        counts = {key: value for key, value in field_counts(text).items() if value}
-        for route in routes:
-            route_sources.setdefault(route, set()).add(url)
-        if counts:
-            hits.append({"script": url, "field_counts": counts})
 
+def iter_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from iter_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_strings(child)
+
+
+def extract_urls(netlog: dict) -> list[str]:
+    urls = set()
+    for text in iter_strings(netlog):
+        if text.startswith("http://") or text.startswith("https://"):
+            urls.add(text)
+        else:
+            for match in re.findall(r"https?://[^\s\"'<>]+", text):
+                urls.add(match.rstrip(",);]"))
+    return sorted(urls)
+
+
+def target_url(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return host == "baseballsavant.mlb.com" or host == "statsapi.mlb.com"
+
+
+def summarize_urls(urls: list[str]) -> dict:
+    target = [url for url in urls if target_url(url)]
+    api = [url for url in target if any(marker in url for marker in API_MARKERS)]
+    candidates = [url for url in target if any(term in url.lower() for term in CANDIDATE_TERMS)]
+    same_origin = [url for url in target if urlparse(url).netloc.lower() == "baseballsavant.mlb.com"]
     return {
-        "url": page.url,
-        "status": page.status_code,
-        "inline_field_counts": {key: value for key, value in field_counts(page.text).items() if value},
-        "field_hit_scripts": hits,
+        "all_url_count": len(urls),
+        "target_url_count": len(target),
+        "same_origin_url_count": len(same_origin),
+        "api_requests": api,
+        "pitch_spin_tracking_requests": candidates,
+        "same_origin_requests": same_origin,
     }
+
+
+def capture_network(chrome: str, page_url: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="savant-netlog-") as temp:
+        root = Path(temp)
+        netlog_path = root / "netlog.json"
+        profile = root / "profile"
+        command = [
+            chrome,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--user-data-dir={profile}",
+            f"--log-net-log={netlog_path}",
+            "--net-log-capture-mode=IncludeSensitive",
+            "--virtual-time-budget=12000",
+            "--dump-dom",
+            page_url,
+        ]
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        item = {
+            "page_url": page_url,
+            "returncode": completed.returncode,
+            "stderr_tail": completed.stderr[-1800:],
+            "netlog_exists": netlog_path.exists(),
+            "netlog_bytes": netlog_path.stat().st_size if netlog_path.exists() else 0,
+        }
+        if not netlog_path.exists():
+            return item
+        try:
+            netlog = json.loads(netlog_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            item["netlog_parse_error"] = repr(exc)
+            return item
+        item.update(summarize_urls(extract_urls(netlog)))
+        return item
 
 
 def test_deep_spin_orientation_probe():
+    chrome = chrome_executable()
+    version = subprocess.run([chrome, "--version"], capture_output=True, text=True, check=False)
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/12.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/13.0)"})
     pid = first_video_pid(session)
-    route_sources: dict[str, set[str]] = {}
-    pages = {
-        "player_page": inspect_page(session, "player_page", PLAYER_URL, route_sources),
-        "spin_direction_page": inspect_page(session, "spin_direction_page", SPIN_URL, route_sources),
-        "sporty_video_page": inspect_page(session, "sporty_video_page", f"{BASE}/sporty-videos?playId={pid}", route_sources),
-    }
-
-    api_routes = []
-    candidate_routes = []
-    for route, sources in sorted(route_sources.items()):
-        item = {"route": route, "sources": sorted(sources)}
-        if route.startswith(ROUTE_PREFIXES):
-            api_routes.append(item)
-        if any(term in route.lower() for term in CANDIDATE_TERMS):
-            candidate_routes.append(item)
 
     report = {
-        "pages": pages,
-        "all_selected_route_count": len(route_sources),
-        "explicit_api_routes": api_routes,
-        "pitch_spin_tracking_candidates": candidate_routes,
+        "chrome": chrome,
+        "chrome_version": version.stdout.strip() or version.stderr.strip(),
+        "captures": [
+            capture_network(chrome, PLAYER_URL),
+            capture_network(chrome, SPIN_URL),
+            capture_network(chrome, f"{BASE}/sporty-videos?playId={pid}"),
+        ],
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 70_000, f"focused endpoint inventory unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== FOCUSED SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
+    assert len(rendered) < 90_000, f"browser network report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== REAL CHROME SAVANT NETWORK REPORT =====\n" + rendered)
