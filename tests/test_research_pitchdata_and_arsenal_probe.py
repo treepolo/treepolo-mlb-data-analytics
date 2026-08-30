@@ -48,7 +48,6 @@ def load_page_scripts(session: requests.Session, page_url: str) -> tuple[request
 
 def quoted_literals(text: str) -> list[str]:
     out = []
-    # Preserve template literals too; ${...} is useful evidence about route construction.
     for _, value in re.findall(r'''([\"'`])((?:(?!\1).){2,420})\1''', text, flags=re.S):
         value = html_lib.unescape(value).strip()
         if value not in out:
@@ -60,8 +59,7 @@ def relevant_routes(text: str) -> list[str]:
     out = []
     for value in quoted_literals(text):
         low = value.lower()
-        pathish = value.startswith("/") or value.startswith("http")
-        if not pathish:
+        if not (value.startswith("/") or value.startswith("http")):
             continue
         if value.startswith(ROUTE_PREFIXES) or any(term in low for term in ROUTE_TERMS):
             if value not in out:
@@ -69,54 +67,8 @@ def relevant_routes(text: str) -> list[str]:
     return sorted(out)
 
 
-def explicit_api_routes(text: str) -> list[str]:
-    return sorted({
-        value for value in quoted_literals(text)
-        if value.startswith(ROUTE_PREFIXES)
-    })
-
-
-def source_hints(text: str) -> list[str]:
-    return sorted(set(re.findall(r"/usr/local/app/[^`\"'\s]{2,260}", text)))[:200]
-
-
-def contexts(text: str, needle: str, radius: int = 900, max_hits: int = 3) -> list[str]:
-    low = text.lower()
-    target = needle.lower()
-    start = 0
-    out = []
-    while len(out) < max_hits:
-        index = low.find(target, start)
-        if index < 0:
-            break
-        fragment = re.sub(r"\s+", " ", text[max(0, index - radius): index + len(needle) + radius]).strip()
-        out.append(fragment[:2200])
-        start = index + len(target)
-    return out
-
-
-def script_inventory(url: str, text: str) -> dict | None:
-    routes = relevant_routes(text)
-    api = explicit_api_routes(text)
-    counts = {term: text.lower().count(term.lower()) for term in FIELD_TERMS}
-    if not routes and not any(counts.values()):
-        return None
-    field_contexts = {
-        term: contexts(text, term)
-        for term, count in counts.items()
-        if count and term.lower() in {
-            "image_spin_x", "image_orientation_angle", "hawkeye_measured", "spinaxis", "play_id"
-        }
-    }
-    return {
-        "script": url,
-        "bytes": len(text.encode("utf-8", errors="ignore")),
-        "explicit_api_routes": api,
-        "relevant_path_literals": routes,
-        "field_counts": counts,
-        "field_contexts": field_contexts,
-        "source_hints": source_hints(text),
-    }
+def field_counts(text: str) -> dict[str, int]:
+    return {term: text.lower().count(term.lower()) for term in FIELD_TERMS}
 
 
 def first_video_pid(session: requests.Session) -> str:
@@ -133,48 +85,60 @@ def first_video_pid(session: requests.Session) -> str:
     raise AssertionError("no 2026 Ohtani video pitch found")
 
 
-def page_inventory(session: requests.Session, page_url: str) -> dict:
+def inspect_page(session: requests.Session, name: str, page_url: str, route_sources: dict[str, set[str]]) -> dict:
     page, scripts = load_page_scripts(session, page_url)
-    inventories = []
+    for route in relevant_routes(page.text):
+        route_sources.setdefault(route, set()).add(f"{name}:inline")
+
+    interesting_scripts = []
     for url, text in scripts:
-        item = script_inventory(url, text)
-        if item:
-            inventories.append(item)
+        routes = relevant_routes(text)
+        counts = field_counts(text)
+        for route in routes:
+            route_sources.setdefault(route, set()).add(url)
+        if any(counts.values()):
+            interesting_scripts.append({
+                "script": url,
+                "field_counts": {key: value for key, value in counts.items() if value},
+                "routes": routes,
+            })
+
     return {
         "url": page.url,
         "status": page.status_code,
         "bytes": len(page.content),
-        "inline_explicit_api_routes": explicit_api_routes(page.text),
-        "inline_relevant_path_literals": relevant_routes(page.text),
+        "inline_field_counts": {key: value for key, value in field_counts(page.text).items() if value},
         "script_count": len(scripts),
-        "interesting_scripts": inventories,
+        "field_hit_scripts": interesting_scripts,
     }
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/10.0)"})
-
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/11.0)"})
     pid = first_video_pid(session)
-    report = {
-        "player_page": page_inventory(session, PLAYER_URL),
-        "spin_direction_page": page_inventory(session, SPIN_URL),
-        "sporty_video_page": page_inventory(session, f"{BASE}/sporty-videos?playId={pid}"),
+    route_sources: dict[str, set[str]] = {}
+
+    pages = {
+        "player_page": inspect_page(session, "player_page", PLAYER_URL, route_sources),
+        "spin_direction_page": inspect_page(session, "spin_direction_page", SPIN_URL, route_sources),
+        "sporty_video_page": inspect_page(session, "sporty_video_page", f"{BASE}/sporty-videos?playId={pid}", route_sources),
     }
 
-    # Flat union makes it obvious whether a raw-looking route exists anywhere in the loaded frontend.
-    route_sources: dict[str, list[str]] = {}
-    for page_name, page in report.items():
-        for route in page["inline_explicit_api_routes"] + page["inline_relevant_path_literals"]:
-            route_sources.setdefault(route, []).append(f"{page_name}:inline")
-        for script in page["interesting_scripts"]:
-            for route in script["explicit_api_routes"] + script["relevant_path_literals"]:
-                route_sources.setdefault(route, []).append(script["script"])
-    report["route_union"] = [
-        {"route": route, "sources": sorted(set(sources))}
+    route_union = [
+        {"route": route, "sources": sorted(sources)}
         for route, sources in sorted(route_sources.items())
     ]
-
+    raw_candidates = [
+        item for item in route_union
+        if any(term in item["route"].lower() for term in ("hawk", "orient", "seam", "track", "spin", "pitch"))
+    ]
+    report = {
+        "pages": pages,
+        "route_count": len(route_union),
+        "raw_candidate_routes": raw_candidates,
+        "route_union": route_union,
+    }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 220_000, f"endpoint inventory unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
+    assert len(rendered) < 130_000, f"compact endpoint inventory unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== COMPACT SAVANT FRONTEND ENDPOINT INVENTORY =====\n" + rendered)
