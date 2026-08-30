@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import csv
-import html as html_lib
-import io
 import json
 import re
-from urllib.parse import urljoin
 
 import pytest
 import requests
@@ -14,26 +10,14 @@ pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
 PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
-SPIN_PAGE_URL = (
-    f"{BASE}/leaderboard/spin-direction-pitches"
-    "?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
-)
-SPIN_API = "/savant/api/v1/spin-direction-by-pitcher"
-CANDIDATE_SERVICES = (
-    "/player-services/pitches-seasonal",
-    "/player-services/statcast-pitches-breakdown",
-    "/player-services/roll",
-    "/player-services/gamelogs",
-    "/player-services/range",
-    "/player-services/histogram",
-)
-ORIENTATION_FIELDS = (
+TARGET_TERMS = (
     "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
-    "hawkeye_measured", "movement_inferred", "alan_active_spin_pct", "active_spin",
+    "hawkeye_measured", "movement_inferred", "orientation", "seam",
+    "game_pk", "play_id", "at_bat", "pitch_number", "game_date",
 )
 
 
-def compact(text: str, limit: int = 1800) -> str:
+def compact(text: str, limit: int = 3500) -> str:
     value = re.sub(r"\s+", " ", text).strip()
     if len(value) <= limit:
         return value
@@ -48,173 +32,165 @@ def context(text: str, needle: str, radius: int = 2200, limit: int = 4400) -> st
     return compact(text[max(0, index - radius): index + len(needle) + radius], limit)
 
 
-def script_urls(page: str, base_url: str) -> list[str]:
-    out: list[str] = []
-    for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
-        url = urljoin(base_url, html_lib.unescape(raw))
-        if url not in out:
-            out.append(url)
+def all_keys(value, out=None, depth=0):
+    if out is None:
+        out = set()
+    if depth > 8:
+        return out
+    if isinstance(value, dict):
+        for key, child in value.items():
+            out.add(str(key))
+            all_keys(child, out, depth + 1)
+    elif isinstance(value, list):
+        for child in value[:40]:
+            all_keys(child, out, depth + 1)
     return out
 
 
-def endpoint_literals(text: str) -> list[str]:
-    patterns = (
-        r'''[\"'`](/savant/api/v1/[^\"'`?\s${}]+)''',
-        r'''[\"'`](/player-services/[^\"'`?\s${}]+)''',
-        r'''[\"'`](/app/[^\"'`?\s${}]+)''',
-    )
-    out: list[str] = []
-    for pattern in patterns:
-        for value in re.findall(pattern, text):
-            if value not in out:
-                out.append(value)
-    return sorted(out)
+def shape(value, depth=0):
+    if depth >= 4:
+        return type(value).__name__
+    if isinstance(value, dict):
+        out = {"type": "dict", "keys": list(value)[:120]}
+        children = {}
+        for key, child in list(value.items())[:30]:
+            if isinstance(child, (dict, list)):
+                children[key] = shape(child, depth + 1)
+        if children:
+            out["children"] = children
+        return out
+    if isinstance(value, list):
+        out = {"type": "list", "length": len(value)}
+        if value:
+            out["first"] = shape(value[0], depth + 1)
+        return out
+    return {"type": type(value).__name__, "value": value}
 
 
-def response_shape(response: requests.Response, *, include_first: bool = True) -> dict:
+def interesting_keys(value):
+    keys = sorted(all_keys(value))
+    tokens = ("spin", "orient", "seam", "hawk", "game", "play", "pitch", "date", "bat", "uid", "id")
+    return [key for key in keys if any(token in key.lower() for token in tokens)][:300]
+
+
+def json_probe(response: requests.Response) -> dict:
     out = {
         "url": response.url,
         "status": response.status_code,
         "content_type": response.headers.get("content-type"),
         "bytes": len(response.content),
+        "target_term_counts": {term: response.text.lower().count(term.lower()) for term in TARGET_TERMS},
     }
     try:
         body = response.json()
     except Exception:
-        out["text_head"] = compact(response.text[:7000], 3000)
+        out["text_head"] = compact(response.text[:10000], 5000)
         return out
-    out["json_type"] = type(body).__name__
-    rows = None
-    if isinstance(body, list):
-        rows = body
-        out["row_container"] = "$root"
+    out["shape"] = shape(body)
+    out["interesting_keys"] = interesting_keys(body)
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        out["first_row"] = body[0]
     elif isinstance(body, dict):
-        out["top_keys"] = list(body)[:100]
-        for key, value in body.items():
-            if isinstance(value, list) and value and isinstance(value[0], dict):
-                rows = value
-                out["row_container"] = key
-                break
-    if rows:
-        out["row_count"] = len(rows)
-        out["first_row_keys"] = list(rows[0])[:160]
-        if include_first:
-            out["first_row"] = rows[0]
+        for key in ("pitches", "pitchDetails", "pitchBreakdown", "data", "rows"):
+            child = body.get(key)
+            if isinstance(child, list) and child:
+                out[f"sample_{key}"] = child[0]
+            elif isinstance(child, dict) and child:
+                first_key = next(iter(child))
+                sample = child[first_key]
+                out[f"sample_{key}"] = {
+                    "first_key": first_key,
+                    "value_type": type(sample).__name__,
+                    "value_length": len(sample) if isinstance(sample, (list, dict)) else None,
+                    "first_value": sample[0] if isinstance(sample, list) and sample else sample if not isinstance(sample, (list, dict)) else None,
+                    "child_keys": list(sample)[:120] if isinstance(sample, dict) else None,
+                    "first_child": sample[0] if isinstance(sample, list) and sample else None,
+                }
     return out
 
 
-def load_scripts(session: requests.Session, page: str, page_url: str) -> list[tuple[str, str]]:
-    loaded: list[tuple[str, str]] = []
-    for url in script_urls(page, page_url):
-        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
-            continue
-        response = session.get(url, timeout=60)
-        if response.ok and len(response.content) <= 12_000_000:
-            loaded.append((url, response.text))
-    return loaded
-
-
-def service_contexts(scripts: list[tuple[str, str]]) -> dict:
-    out: dict[str, list[dict]] = {}
-    for service in CANDIDATE_SERVICES:
-        hits = []
-        for url, text in scripts:
-            if service not in text:
-                continue
-            hits.append({
-                "script": url,
-                "context": context(text, service, radius=3500, limit=7000),
-            })
-        out[service] = hits
-    return out
-
-
-def orientation_summary(page: str) -> dict:
+def html_probe(response: requests.Response) -> dict:
+    text = response.text
     return {
-        "field_counts": {field: page.count(field) for field in ORIENTATION_FIELDS},
-        "spinAxis_count": page.count("spinAxis"),
-        "leaderboardData_count": page.count("leaderboardData"),
-    }
-
-
-def csv_shape(response: requests.Response) -> dict:
-    out = {
         "url": response.url,
         "status": response.status_code,
         "content_type": response.headers.get("content-type"),
         "bytes": len(response.content),
+        "target_term_counts": {term: text.lower().count(term.lower()) for term in TARGET_TERMS},
+        "game_pk_context": context(text, "game_pk", radius=1600, limit=3200),
+        "play_id_context": context(text, "play_id", radius=1600, limit=3200),
+        "orientation_context": context(text, "orientation", radius=1600, limit=3200),
+        "text_head": compact(text[:8000], 3500),
     }
-    text = response.text
-    reader = csv.reader(io.StringIO(text))
-    rows = []
-    for index, row in enumerate(reader):
-        rows.append(row)
-        if index >= 2:
-            break
-    out["header"] = rows[0] if rows else []
-    out["first_data_row"] = rows[1] if len(rows) > 1 else []
-    out["line_count"] = text.count("\n")
-    return out
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/4.0)",
-        "Referer": BASE + "/",
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/5.0)",
+        "Referer": PLAYER_URL,
     })
     report: dict = {}
 
-    player_response = session.get(PLAYER_URL, timeout=60)
-    player_response.raise_for_status()
-    player_html = player_response.text
-    player_scripts = load_scripts(session, player_html, PLAYER_URL)
-
-    spin_response = session.get(SPIN_PAGE_URL, timeout=60)
-    spin_response.raise_for_status()
-    spin_html = spin_response.text
-    spin_scripts = load_scripts(session, spin_html, SPIN_PAGE_URL)
-
-    report["confirmed_aggregate_surfaces"] = {
-        "player_page": orientation_summary(player_html),
-        "spin_page": orientation_summary(spin_html),
+    page = session.get(PLAYER_URL, timeout=60)
+    page.raise_for_status()
+    html = page.text
+    report["initial_servervals_contexts"] = {
+        name: context(html, name, radius=2600, limit=5200)
+        for name in ("pitchDetails", "statcastPitches", "pitchBreakdown", "spinAxis")
     }
 
-    report["player_script_endpoints"] = [
-        {"script": url, "endpoints": endpoint_literals(text)}
-        for url, text in player_scripts
-        if endpoint_literals(text)
-    ]
-    report["spin_script_endpoints"] = [
-        {"script": url, "endpoints": endpoint_literals(text)}
-        for url, text in spin_scripts
-        if endpoint_literals(text)
-    ]
-    report["candidate_service_contexts"] = service_contexts(player_scripts)
-
-    # Confirm that the leaderboard CSV surface is the same aggregate family.
-    csv_response = session.get(SPIN_PAGE_URL + "&csv=true", timeout=60)
-    report["spin_page_csv"] = csv_shape(csv_response)
-
-    # Keep the exact known expand-row API call as a control.
-    spin_api_response = session.get(
-        BASE + SPIN_API,
-        params={"pitcher": OHTANI, "year": 2026, "pov": "Pit"},
+    seasonal = session.get(
+        BASE + "/player-services/pitches-seasonal",
+        params={"playerId": OHTANI, "season": 2026},
         timeout=60,
     )
-    report["spin_direction_api_control"] = response_shape(spin_api_response, include_first=True)
+    report["pitches_seasonal"] = json_probe(seasonal)
 
-    # Search source contexts around every orientation-related field in the player bundle.
-    report["orientation_code_contexts"] = []
-    for url, text in player_scripts:
-        contexts = {}
-        for field in ("image_spin_x", "image_orientation_angle", "hawkeye_measured", "spinAxisPoint"):
-            hit = context(text, field, radius=2600, limit=5200)
-            if hit:
-                contexts[field] = hit
-        if contexts:
-            report["orientation_code_contexts"].append({"script": url, "contexts": contexts})
+    gamelogs = session.get(
+        BASE + "/player-services/gamelogs",
+        params={"playerId": OHTANI, "playerType": 1, "viewType": "pitching", "season": 2026},
+        timeout=60,
+    )
+    report["gamelogs_pitching"] = json_probe(gamelogs)
+
+    # The detailed-pitch table service returns HTML. Empty/default filter values mirror the initial UI state.
+    breakdown = session.get(
+        BASE + "/player-services/statcast-pitches-breakdown",
+        params={
+            "playerId": OHTANI,
+            "position": 1,
+            "hand": "",
+            "pitchBreakdown": "pitch-type",
+            "timeFrame": "year",
+            "season": 2026,
+            "pitchType": "",
+            "count": 50,
+            "gameType": "R",
+            "updatePitches": "false",
+        },
+        timeout=60,
+    )
+    report["statcast_pitches_breakdown"] = html_probe(breakdown)
+
+    # A few other JSON player services are included only to establish whether any carries raw spin/orientation fields.
+    histogram = session.get(
+        BASE + "/player-services/histogram",
+        params={
+            "playerId": OHTANI, "pos": 1, "fieldType": "release_speed", "hand": "",
+            "size": 5, "season": 2026, "event": "", "pitchType": "",
+        },
+        timeout=60,
+    )
+    report["histogram"] = json_probe(histogram)
+
+    rolling = session.get(
+        BASE + "/player-services/roll",
+        params={"playerId": OHTANI, "playerType": 1, "count": 50, "type": "release_speed", "year": 2026},
+        timeout=60,
+    )
+    report["roll"] = json_probe(rolling)
 
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
     assert len(rendered) < 150_000, f"research report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT RAW ORIENTATION UPSTREAM TRACE =====\n" + rendered)
+    pytest.fail("\n===== SAVANT PLAYER PITCH SERVICE GRANULARITY =====\n" + rendered)
