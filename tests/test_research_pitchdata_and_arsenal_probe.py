@@ -25,6 +25,7 @@ PATH_TERMS = (
     "spin", "pitch", "hawk", "orientation", "seam", "leaderboard",
     "player-service", "statcast", "csv", "download",
 )
+SPIN_DIRECTION_API = "/savant/api/v1/spin-direction-by-pitcher"
 
 
 def compact(text: str, limit: int = 1400) -> str:
@@ -155,6 +156,9 @@ def summarize_script(session: requests.Session, url: str) -> dict:
         "near_image_spin_paths": nearby_paths(text, "image_spin_x"),
         "near_orientation_paths": nearby_paths(text, "image_orientation_angle"),
         "fetch_like": fetch_like_snippets(text),
+        "spin_direction_api_context": context(text, SPIN_DIRECTION_API, radius=3000, limit=6000),
+        "btn_csv_context": context(text, "btnCSV", radius=2200, limit=4400),
+        "leaderboard_data_context": context(text, "leaderboardData", radius=1800, limit=3600),
         "renderer_context": (
             context(text, "spinAxisPoint", radius=1600, limit=3200)
             or context(text, "image_spin_x", radius=1600, limit=3200)
@@ -163,15 +167,49 @@ def summarize_script(session: requests.Session, url: str) -> dict:
     return item
 
 
+def response_shape(response: requests.Response) -> dict:
+    item = {
+        "url": response.url,
+        "status": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "bytes": len(response.content),
+    }
+    try:
+        body = response.json()
+    except Exception:
+        item["text_head"] = compact(response.text[:5000], 2500)
+        return item
+    item["json_type"] = type(body).__name__
+    if isinstance(body, dict):
+        item["top_keys"] = list(body)[:80]
+        rows = None
+        for key, value in body.items():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                rows = value
+                item["row_container"] = key
+                break
+        if rows is None and body and all(not isinstance(v, (dict, list)) for v in body.values()):
+            rows = [body]
+    elif isinstance(body, list):
+        rows = body
+        item["row_container"] = "$root"
+    else:
+        rows = None
+    if rows:
+        item["row_count"] = len(rows)
+        item["first_row_keys"] = list(rows[0])[:120]
+        item["first_row"] = rows[0]
+    return item
+
+
 def test_deep_spin_orientation_probe():
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/2.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/3.0)",
         "Referer": BASE + "/",
     })
     report: dict = {}
 
-    # Pitch3D trajectory endpoint: retain its refresh semantics as already useful integration evidence.
     pitch_url = f"{BASE}/app/pitch-data/{OHTANI}"
     first = session.get(pitch_url, timeout=60)
     first.raise_for_status()
@@ -191,7 +229,6 @@ def test_deep_spin_orientation_probe():
         "conditional_bytes": len(conditional.content),
     }
 
-    # Player page: establish the server-rendered owner and inspect only scripts that can matter.
     player_url = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
     player_response = session.get(player_url, timeout=60)
     player_response.raise_for_status()
@@ -203,7 +240,6 @@ def test_deep_spin_orientation_probe():
         if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
     ]
 
-    # Spin Direction page: determine whether the download/table is server-rendered and expose its route clues.
     leaderboard_url = (
         f"{BASE}/leaderboard/spin-direction-pitches"
         "?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
@@ -218,7 +254,6 @@ def test_deep_spin_orientation_probe():
         if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
     ]
 
-    # Nearby public Savant pages can reveal a shared source even if the player page itself is server-rendered.
     report["other_pages"] = []
     for url in (
         f"{BASE}/leaderboard/spin-direction-comparison?year=2026&team=&min=0",
@@ -238,7 +273,21 @@ def test_deep_spin_orientation_probe():
             })
         report["other_pages"].append(item)
 
-    # This is deliberately a research failure: the payload is compact JSON so Actions logs remain searchable.
+    # Deliberately try conservative query shapes that are consistent with the leaderboard's visible filters.
+    api_url = BASE + SPIN_DIRECTION_API
+    report["spin_direction_api_trials"] = []
+    trials = (
+        {"player_id": OHTANI, "year": 2026, "pitch_type": "FF"},
+        {"playerId": OHTANI, "year": 2026, "pitch_type": "FF"},
+        {"pitcher": OHTANI, "year": 2026, "pitch_type": "FF"},
+        {"player_id": OHTANI, "season": 2026, "pitch_type": "FF"},
+    )
+    for params in trials:
+        response = session.get(api_url, params=params, timeout=60)
+        item = {"params": params}
+        item.update(response_shape(response))
+        report["spin_direction_api_trials"].append(item)
+
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 120_000, f"compact research report unexpectedly grew to {len(rendered)} bytes"
+    assert len(rendered) < 160_000, f"compact research report unexpectedly grew to {len(rendered)} bytes"
     pytest.fail("\n===== COMPACT SPIN ORIENTATION RESEARCH REPORT =====\n" + rendered)
