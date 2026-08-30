@@ -1,0 +1,23 @@
+{
+  "source_repository": "Vac1911/spinrate-visual",
+  "source_ref": "master",
+  "source_url": "https://github.com/Vac1911/spinrate-visual",
+  "files": {
+    "README.md": {
+      "raw_url": "https://raw.githubusercontent.com/Vac1911/spinrate-visual/master/README.md",
+      "git_blob_sha1": "109b1c2de52f4c81113c60ffed55f03115cd78ed",
+      "size_bytes": 1647
+    },
+    "app.json": {
+      "raw_url": "https://raw.githubusercontent.com/Vac1911/spinrate-visual/master/app.json",
+      "git_blob_sha1": "e69c19e7538c0c79a8b5e3e47b7a82e2dae5b87e",
+      "size_bytes": 337329
+    },
+    "index.html": {
+      "raw_url": "https://raw.githubusercontent.com/Vac1911/spinrate-visual/master/index.html",
+      "git_blob_sha1": "a217aca295f64050b7a32f4183ae74ec8f2c2198",
+      "size_bytes": 1170
+    }
+  },
+  "licensing_note": "No explicit LICENSE file was observed at the upstream repository root during this research pass. Preserve provenance and check rights before redistribution or commercial use."
+}
