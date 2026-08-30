@@ -1,37 +1,30 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
-from urllib.parse import urljoin
 
 import pytest
 import requests
 
 pytestmark = pytest.mark.integration
+BASE = "https://baseballsavant.mlb.com"
+OHTANI = 660271
 
-BUNDLE = (
-    "https://builds.mlbstatic.com/baseballsavant.mlb.com/v1/sections/player-update/"
-    "builds/365eecaecb2cdd235bf4378010b37fef2f181f45/scripts/build/index.js"
-)
-TERMS = (
-    "image_spin_x",
-    "image_orientation_angle",
-    "hawkeye_measured",
-    "spinAxis",
-    "pitches-seasonal",
-    "statcast-pitches-breakdown",
-    "/evp/add",
-    "play_id",
-    "sporty-videos",
-)
-SOURCE_HINTS = (
-    "Chart/Pitch/Spin/Axis.jsx",
-    "player-update/scripts/lib/evp/Index.jsx",
-    "player-update",
+CANDIDATE_PATHS = (
+    "/player-services/spin-axis",
+    "/player-services/spin-axis-pitcher",
+    "/player-services/spin-direction",
+    "/player-services/spin-direction-pitches",
+    "/player-services/spin",
+    "/savant/api/v1/spin-axis",
+    "/savant/api/v1/spin-axis-by-pitcher",
+    "/savant/api/v1/spin-direction-pitches",
 )
 
 
-def compact(text: str, limit: int = 5000) -> str:
+def compact(text: str, limit: int = 2200) -> str:
     value = re.sub(r"\s+", " ", str(text)).strip()
     if len(value) <= limit:
         return value
@@ -39,129 +32,119 @@ def compact(text: str, limit: int = 5000) -> str:
     return value[:half] + " ... " + value[-half:]
 
 
-def contexts(text: str, needle: str, radius: int = 2200, max_hits: int = 4) -> list[str]:
-    low = text.lower()
-    target = needle.lower()
-    start = 0
-    out = []
-    while len(out) < max_hits:
-        index = low.find(target, start)
-        if index < 0:
-            break
-        out.append(compact(text[max(0, index - radius): index + len(needle) + radius], radius * 2 + 800))
-        start = index + len(target)
-    return out
-
-
-def endpoint_literals(text: str, limit: int = 80) -> list[str]:
-    out = []
-    for raw in re.findall(r'''["'`]((?:https?://[^"'`\s${}]+|/[^"'`\s${}]+))["'`]''', text):
-        low = raw.lower()
-        if any(token in low for token in ("spin", "pitch", "hawk", "orient", "evp", "play", "video", "player-service", "savant/api")):
-            if raw not in out:
-                out.append(raw)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def network_snippets(text: str, needle: str) -> list[str]:
-    out = []
-    for hit in contexts(text, needle, radius=4000, max_hits=5):
-        if any(token in hit.lower() for token in ("fetch(", ".ajax(", "ajax({", ".get(", ".post(", "axios", "xmlhttprequest")):
-            out.append(hit)
-    return out
-
-
-def sourcemap_candidates(bundle_text: str) -> list[str]:
-    out = []
-    for raw in re.findall(r"sourceMappingURL=([^\s*]+)", bundle_text[-5000:]):
-        url = urljoin(BUNDLE, raw.strip())
-        if url not in out:
-            out.append(url)
-    conventional = BUNDLE + ".map"
-    if conventional not in out:
-        out.append(conventional)
-    return out
-
-
-def source_report(source_name: str, content: str) -> dict:
-    found = {term: content.lower().count(term.lower()) for term in TERMS}
-    return {
-        "source": source_name,
-        "bytes": len(content.encode("utf-8", errors="ignore")),
-        "term_counts": found,
-        "endpoints": endpoint_literals(content),
-        "contexts": {
-            term: contexts(content, term, radius=1800, max_hits=3)
-            for term, count in found.items()
-            if count
-        },
+def response_probe(response: requests.Response) -> dict:
+    out = {
+        "url": response.url,
+        "status": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "bytes": len(response.content),
     }
+    if not response.ok:
+        out["text_head"] = compact(response.text[:2500], 1200)
+        return out
+    try:
+        body = response.json()
+    except Exception:
+        out["text_head"] = compact(response.text[:5000], 2200)
+        return out
+    out["json_type"] = type(body).__name__
+    if isinstance(body, dict):
+        out["top_keys"] = list(body)[:100]
+        for key, value in body.items():
+            if isinstance(value, list) and value:
+                out["row_container"] = key
+                out["row_count"] = len(value)
+                out["first_row"] = value[0]
+                break
+    elif isinstance(body, list):
+        out["row_count"] = len(body)
+        out["first_row"] = body[0] if body else None
+    return out
+
+
+def csv_probe(response: requests.Response) -> dict:
+    out = {
+        "url": response.url,
+        "status": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "bytes": len(response.content),
+    }
+    text = response.content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    headers = list(reader.fieldnames or [])
+    out["headers"] = headers
+    out["row_count"] = len(rows)
+    id_like = [
+        field for field in headers
+        if any(token in field.lower() for token in ("play", "game_pk", "at_bat", "pitch_number", "date", "uid"))
+    ]
+    out["per_pitch_identifier_fields"] = id_like
+    ohtani_rows = [
+        row for row in rows
+        if str(row.get("player_id") or row.get("pitcher") or "").strip() == str(OHTANI)
+        or "ohtani" in str(row.get("last_name, first_name") or row.get("name") or "").lower()
+    ]
+    out["ohtani_row_count"] = len(ohtani_rows)
+    out["ohtani_examples"] = ohtani_rows[:10]
+    out["first_row"] = rows[0] if rows else None
+    return out
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/7.0)"})
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/8.0)",
+        "Referer": BASE + "/leaderboard/spin-direction-pitches",
+    })
     report = {}
 
-    bundle = session.get(BUNDLE, timeout=90)
-    bundle.raise_for_status()
-    text = bundle.text
-    report["bundle"] = {
-        "url": BUNDLE,
-        "status": bundle.status_code,
-        "bytes": len(bundle.content),
-        "tail": compact(text[-3000:], 3000),
-        "term_counts": {term: text.lower().count(term.lower()) for term in TERMS},
-        "evp_add_contexts": contexts(text, "/evp/add", radius=5000, max_hits=5),
-        "evp_add_network_contexts": network_snippets(text, "/evp/add"),
-        "spin_axis_contexts": contexts(text, "image_spin_x", radius=3500, max_hits=3),
-        "seasonal_network_contexts": network_snippets(text, "pitches-seasonal"),
-        "breakdown_network_contexts": network_snippets(text, "statcast-pitches-breakdown"),
-    }
+    # Verify the export itself, rather than relying on a third-party label saying "per-pitch".
+    csv_response = session.get(
+        BASE + "/leaderboard/spin-direction-pitches",
+        params={
+            "year": 2026,
+            "team": "",
+            "min": 0,
+            "pitch_type": "",
+            "pov": "Pit",
+            "csv": "true",
+        },
+        timeout=90,
+    )
+    csv_response.raise_for_status()
+    report["spin_direction_csv"] = csv_probe(csv_response)
 
-    report["source_maps"] = []
-    for map_url in sourcemap_candidates(text):
-        response = session.get(map_url, timeout=120)
-        item = {
-            "url": response.url,
-            "status": response.status_code,
-            "content_type": response.headers.get("content-type"),
-            "bytes": len(response.content),
-        }
-        if not response.ok:
-            item["text_head"] = compact(response.text[:2000], 1200)
-            report["source_maps"].append(item)
-            continue
-        try:
-            body = response.json()
-        except Exception:
-            item["json"] = False
-            item["text_head"] = compact(response.text[:4000], 1800)
-            report["source_maps"].append(item)
-            continue
+    # A second, narrowly filtered request checks whether filtering changes grain.
+    ff_response = session.get(
+        BASE + "/leaderboard/spin-direction-pitches",
+        params={
+            "year": 2026,
+            "team": "",
+            "min": 0,
+            "pitch_type": "FF",
+            "pov": "Pit",
+            "csv": "true",
+        },
+        timeout=90,
+    )
+    ff_response.raise_for_status()
+    report["spin_direction_ff_csv"] = csv_probe(ff_response)
 
-        item["json"] = True
-        sources = body.get("sources") or []
-        contents = body.get("sourcesContent") or []
-        item["source_count"] = len(sources)
-        item["has_sources_content"] = bool(contents)
-        item["matching_source_names"] = [
-            name for name in sources
-            if any(hint.lower() in str(name).lower() for hint in SOURCE_HINTS)
-        ][:100]
-        matches = []
-        if contents and len(contents) == len(sources):
-            for name, content in zip(sources, contents):
-                if not isinstance(content, str):
-                    continue
-                lower = content.lower()
-                if any(term.lower() in lower for term in TERMS):
-                    matches.append(source_report(str(name), content))
-        item["matching_sources"] = matches[:40]
-        report["source_maps"].append(item)
+    # The UI receives spinAxis server-rendered. Probe conservative route names derived from that serverVals key.
+    trials = []
+    parameter_sets = (
+        {"playerId": OHTANI, "season": 2026},
+        {"pitcher": OHTANI, "year": 2026, "pov": "Pit"},
+    )
+    for path in CANDIDATE_PATHS:
+        for params in parameter_sets:
+            response = session.get(BASE + path, params=params, timeout=45)
+            item = {"path": path, "params": params}
+            item.update(response_probe(response))
+            trials.append(item)
+    report["candidate_spin_services"] = trials
 
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 220_000, f"source-map report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT PLAYER SOURCE MAP TRACE =====\n" + rendered)
+    assert len(rendered) < 140_000, f"research report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT SPIN CSV GRAIN AND SERVICE PROBE =====\n" + rendered)
