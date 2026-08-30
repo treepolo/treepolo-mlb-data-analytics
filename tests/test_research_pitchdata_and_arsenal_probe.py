@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import html as html_lib
+import io
 import json
 import re
 from urllib.parse import urljoin
@@ -11,24 +13,27 @@ import requests
 pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
-FIELDS = (
-    "image_spin_x",
-    "image_spin_y",
-    "image_spin_z",
-    "image_orientation_angle",
-    "hawkeye_measured",
-    "movement_inferred",
-    "alan_active_spin_pct",
-    "active_spin",
+PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
+SPIN_PAGE_URL = (
+    f"{BASE}/leaderboard/spin-direction-pitches"
+    "?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
 )
-PATH_TERMS = (
-    "spin", "pitch", "hawk", "orientation", "seam", "leaderboard",
-    "player-service", "statcast", "csv", "download",
+SPIN_API = "/savant/api/v1/spin-direction-by-pitcher"
+CANDIDATE_SERVICES = (
+    "/player-services/pitches-seasonal",
+    "/player-services/statcast-pitches-breakdown",
+    "/player-services/roll",
+    "/player-services/gamelogs",
+    "/player-services/range",
+    "/player-services/histogram",
 )
-SPIN_DIRECTION_API = "/savant/api/v1/spin-direction-by-pitcher"
+ORIENTATION_FIELDS = (
+    "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
+    "hawkeye_measured", "movement_inferred", "alan_active_spin_pct", "active_spin",
+)
 
 
-def compact(text: str, limit: int = 1400) -> str:
+def compact(text: str, limit: int = 1800) -> str:
     value = re.sub(r"\s+", " ", text).strip()
     if len(value) <= limit:
         return value
@@ -36,139 +41,38 @@ def compact(text: str, limit: int = 1400) -> str:
     return value[:half] + " ... " + value[-half:]
 
 
-def context(text: str, needle: str, radius: int = 900, limit: int = 1800) -> str | None:
-    index = text.lower().find(needle.lower())
+def context(text: str, needle: str, radius: int = 2200, limit: int = 4400) -> str | None:
+    index = text.find(needle)
     if index < 0:
         return None
     return compact(text[max(0, index - radius): index + len(needle) + radius], limit)
 
 
-def asset_urls(page: str, base_url: str) -> list[str]:
-    values: list[str] = []
-    for raw in re.findall(r'''(?:src|href)=[\"']([^\"']+)[\"']''', page, flags=re.I):
-        raw = html_lib.unescape(raw)
-        if raw.startswith("javascript:") or raw.startswith("#"):
-            continue
-        url = urljoin(base_url, raw)
-        if url not in values:
-            values.append(url)
-    return values
-
-
 def script_urls(page: str, base_url: str) -> list[str]:
-    values: list[str] = []
+    out: list[str] = []
     for raw in re.findall(r'''<script[^>]+src=[\"']([^\"']+)[\"']''', page, flags=re.I):
         url = urljoin(base_url, html_lib.unescape(raw))
-        if url not in values:
-            values.append(url)
-    return values
+        if url not in out:
+            out.append(url)
+    return out
 
 
-def path_literals(text: str, *, limit: int = 80) -> list[str]:
-    found: list[str] = []
-    for raw in re.findall(r'''[\"'`]((?:/|https?://)[^\"'`\s]{2,260})[\"'`]''', text):
-        value = html_lib.unescape(raw)
-        low = value.lower()
-        if any(term in low for term in PATH_TERMS) and value not in found:
-            found.append(value)
-        if len(found) >= limit:
-            break
-    return found
-
-
-def nearby_paths(text: str, needle: str, radius: int = 9000) -> list[str]:
-    index = text.lower().find(needle.lower())
-    if index < 0:
-        return []
-    return path_literals(text[max(0, index - radius): index + len(needle) + radius], limit=50)
-
-
-def nearest_array_owner(text: str, needle: str) -> dict | None:
-    index = text.lower().find(needle.lower())
-    if index < 0:
-        return None
-    start = max(0, index - 60000)
-    prefix = text[start:index]
+def endpoint_literals(text: str) -> list[str]:
     patterns = (
-        r'''([A-Za-z_$][\w$]*)\s*:\s*\[\s*\{''',
-        r'''[\"']([^\"']+)[\"']\s*:\s*\[\s*\{''',
-        r'''(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*\[\s*\{''',
+        r'''[\"'`](/savant/api/v1/[^\"'`?\s${}]+)''',
+        r'''[\"'`](/player-services/[^\"'`?\s${}]+)''',
+        r'''[\"'`](/app/[^\"'`?\s${}]+)''',
     )
-    best = None
+    out: list[str] = []
     for pattern in patterns:
-        for match in re.finditer(pattern, prefix):
-            absolute = start + match.start()
-            if best is None or absolute > best[0]:
-                best = (absolute, match.group(1))
-    if best is None:
-        return None
-    absolute, owner = best
-    return {
-        "owner": owner,
-        "distance_to_field": index - absolute,
-        "declaration_context": compact(text[max(0, absolute - 500): absolute + 500], 1000),
-    }
+        for value in re.findall(pattern, text):
+            if value not in out:
+                out.append(value)
+    return sorted(out)
 
 
-def fetch_like_snippets(text: str, *, limit: int = 30) -> list[str]:
-    snippets: list[str] = []
-    patterns = (
-        r'''fetch\s*\(''',
-        r'''axios\s*\.\s*(?:get|post|request)\s*\(''',
-        r'''\$\s*\.\s*(?:ajax|get|getJSON|post)\s*\(''',
-        r'''XMLHttpRequest''',
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text, flags=re.I):
-            snippet = compact(text[max(0, match.start() - 220): match.start() + 700], 900)
-            low = snippet.lower()
-            if any(term in low for term in PATH_TERMS) and snippet not in snippets:
-                snippets.append(snippet)
-            if len(snippets) >= limit:
-                return snippets
-    return snippets
-
-
-def summarize_page(page: str, page_url: str) -> dict:
-    return {
-        "url": page_url,
-        "bytes": len(page.encode("utf-8")),
-        "field_counts": {field: page.count(field) for field in FIELDS},
-        "spinAxis_count": page.count("spinAxis"),
-        "spin_axis_owner": nearest_array_owner(page, "image_spin_x"),
-        "spin_axis_context": context(page, "spinAxis", radius=1100, limit=2200),
-        "download_csv_context": context(page, "Download CSV", radius=800, limit=1600),
-        "script_urls": script_urls(page, page_url),
-        "interesting_paths": path_literals(page, limit=70),
-    }
-
-
-def summarize_script(session: requests.Session, url: str) -> dict:
-    response = session.get(url, timeout=60)
-    item = {"url": url, "status": response.status_code, "bytes": len(response.content)}
-    if not response.ok or len(response.content) > 12_000_000:
-        return item
-    text = response.text
-    item.update({
-        "field_counts": {field: text.count(field) for field in FIELDS},
-        "spinAxis_count": text.count("spinAxis"),
-        "interesting_paths": path_literals(text, limit=80),
-        "near_image_spin_paths": nearby_paths(text, "image_spin_x"),
-        "near_orientation_paths": nearby_paths(text, "image_orientation_angle"),
-        "fetch_like": fetch_like_snippets(text),
-        "spin_direction_api_context": context(text, SPIN_DIRECTION_API, radius=3000, limit=6000),
-        "btn_csv_context": context(text, "btnCSV", radius=2200, limit=4400),
-        "leaderboard_data_context": context(text, "leaderboardData", radius=1800, limit=3600),
-        "renderer_context": (
-            context(text, "spinAxisPoint", radius=1600, limit=3200)
-            or context(text, "image_spin_x", radius=1600, limit=3200)
-        ),
-    })
-    return item
-
-
-def response_shape(response: requests.Response) -> dict:
-    item = {
+def response_shape(response: requests.Response, *, include_first: bool = True) -> dict:
+    out = {
         "url": response.url,
         "status": response.status_code,
         "content_type": response.headers.get("content-type"),
@@ -177,117 +81,140 @@ def response_shape(response: requests.Response) -> dict:
     try:
         body = response.json()
     except Exception:
-        item["text_head"] = compact(response.text[:5000], 2500)
-        return item
-    item["json_type"] = type(body).__name__
-    if isinstance(body, dict):
-        item["top_keys"] = list(body)[:80]
-        rows = None
+        out["text_head"] = compact(response.text[:7000], 3000)
+        return out
+    out["json_type"] = type(body).__name__
+    rows = None
+    if isinstance(body, list):
+        rows = body
+        out["row_container"] = "$root"
+    elif isinstance(body, dict):
+        out["top_keys"] = list(body)[:100]
         for key, value in body.items():
             if isinstance(value, list) and value and isinstance(value[0], dict):
                 rows = value
-                item["row_container"] = key
+                out["row_container"] = key
                 break
-        if rows is None and body and all(not isinstance(v, (dict, list)) for v in body.values()):
-            rows = [body]
-    elif isinstance(body, list):
-        rows = body
-        item["row_container"] = "$root"
-    else:
-        rows = None
     if rows:
-        item["row_count"] = len(rows)
-        item["first_row_keys"] = list(rows[0])[:120]
-        item["first_row"] = rows[0]
-    return item
+        out["row_count"] = len(rows)
+        out["first_row_keys"] = list(rows[0])[:160]
+        if include_first:
+            out["first_row"] = rows[0]
+    return out
+
+
+def load_scripts(session: requests.Session, page: str, page_url: str) -> list[tuple[str, str]]:
+    loaded: list[tuple[str, str]] = []
+    for url in script_urls(page, page_url):
+        if "mlbstatic.com" not in url.lower() and "baseballsavant.mlb.com" not in url.lower():
+            continue
+        response = session.get(url, timeout=60)
+        if response.ok and len(response.content) <= 12_000_000:
+            loaded.append((url, response.text))
+    return loaded
+
+
+def service_contexts(scripts: list[tuple[str, str]]) -> dict:
+    out: dict[str, list[dict]] = {}
+    for service in CANDIDATE_SERVICES:
+        hits = []
+        for url, text in scripts:
+            if service not in text:
+                continue
+            hits.append({
+                "script": url,
+                "context": context(text, service, radius=3500, limit=7000),
+            })
+        out[service] = hits
+    return out
+
+
+def orientation_summary(page: str) -> dict:
+    return {
+        "field_counts": {field: page.count(field) for field in ORIENTATION_FIELDS},
+        "spinAxis_count": page.count("spinAxis"),
+        "leaderboardData_count": page.count("leaderboardData"),
+    }
+
+
+def csv_shape(response: requests.Response) -> dict:
+    out = {
+        "url": response.url,
+        "status": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "bytes": len(response.content),
+    }
+    text = response.text
+    reader = csv.reader(io.StringIO(text))
+    rows = []
+    for index, row in enumerate(reader):
+        rows.append(row)
+        if index >= 2:
+            break
+    out["header"] = rows[0] if rows else []
+    out["first_data_row"] = rows[1] if len(rows) > 1 else []
+    out["line_count"] = text.count("\n")
+    return out
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/3.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; one-off-research/4.0)",
         "Referer": BASE + "/",
     })
     report: dict = {}
 
-    pitch_url = f"{BASE}/app/pitch-data/{OHTANI}"
-    first = session.get(pitch_url, timeout=60)
-    first.raise_for_status()
-    last_modified = first.headers.get("last-modified")
-    conditional = session.get(
-        pitch_url,
-        headers={"If-Modified-Since": last_modified} if last_modified else {},
-        timeout=60,
-    )
-    report["pitch_data_refresh"] = {
-        "url": pitch_url,
-        "status": first.status_code,
-        "bytes": len(first.content),
-        "last_modified": last_modified,
-        "cache_control": first.headers.get("cache-control"),
-        "conditional_status": conditional.status_code,
-        "conditional_bytes": len(conditional.content),
-    }
-
-    player_url = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
-    player_response = session.get(player_url, timeout=60)
+    player_response = session.get(PLAYER_URL, timeout=60)
     player_response.raise_for_status()
     player_html = player_response.text
-    report["player_page"] = summarize_page(player_html, player_url)
-    report["player_scripts"] = [
-        summarize_script(session, url)
-        for url in report["player_page"]["script_urls"]
-        if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
+    player_scripts = load_scripts(session, player_html, PLAYER_URL)
+
+    spin_response = session.get(SPIN_PAGE_URL, timeout=60)
+    spin_response.raise_for_status()
+    spin_html = spin_response.text
+    spin_scripts = load_scripts(session, spin_html, SPIN_PAGE_URL)
+
+    report["confirmed_aggregate_surfaces"] = {
+        "player_page": orientation_summary(player_html),
+        "spin_page": orientation_summary(spin_html),
+    }
+
+    report["player_script_endpoints"] = [
+        {"script": url, "endpoints": endpoint_literals(text)}
+        for url, text in player_scripts
+        if endpoint_literals(text)
     ]
-
-    leaderboard_url = (
-        f"{BASE}/leaderboard/spin-direction-pitches"
-        "?year=2026&pitch_type=FF&playerName=Shohei%20Ohtani&min=0"
-    )
-    leaderboard_response = session.get(leaderboard_url, timeout=60)
-    leaderboard_response.raise_for_status()
-    leaderboard_html = leaderboard_response.text
-    report["spin_direction_page"] = summarize_page(leaderboard_html, leaderboard_url)
-    report["spin_direction_scripts"] = [
-        summarize_script(session, url)
-        for url in report["spin_direction_page"]["script_urls"]
-        if "mlbstatic.com" in url.lower() or "baseballsavant.mlb.com" in url.lower()
+    report["spin_script_endpoints"] = [
+        {"script": url, "endpoints": endpoint_literals(text)}
+        for url, text in spin_scripts
+        if endpoint_literals(text)
     ]
+    report["candidate_service_contexts"] = service_contexts(player_scripts)
 
-    report["other_pages"] = []
-    for url in (
-        f"{BASE}/leaderboard/spin-direction-comparison?year=2026&team=&min=0",
-        f"{BASE}/leaderboard/active-spin?year=2026&team=&min=0",
-    ):
-        response = session.get(url, timeout=60)
-        item = {"url": url, "status": response.status_code, "bytes": len(response.content)}
-        if response.ok:
-            summary = summarize_page(response.text, url)
-            item.update({
-                "field_counts": summary["field_counts"],
-                "spinAxis_count": summary["spinAxis_count"],
-                "spin_axis_owner": summary["spin_axis_owner"],
-                "download_csv_context": summary["download_csv_context"],
-                "interesting_paths": summary["interesting_paths"],
-                "script_urls": summary["script_urls"],
-            })
-        report["other_pages"].append(item)
+    # Confirm that the leaderboard CSV surface is the same aggregate family.
+    csv_response = session.get(SPIN_PAGE_URL + "&csv=true", timeout=60)
+    report["spin_page_csv"] = csv_shape(csv_response)
 
-    # Deliberately try conservative query shapes that are consistent with the leaderboard's visible filters.
-    api_url = BASE + SPIN_DIRECTION_API
-    report["spin_direction_api_trials"] = []
-    trials = (
-        {"player_id": OHTANI, "year": 2026, "pitch_type": "FF"},
-        {"playerId": OHTANI, "year": 2026, "pitch_type": "FF"},
-        {"pitcher": OHTANI, "year": 2026, "pitch_type": "FF"},
-        {"player_id": OHTANI, "season": 2026, "pitch_type": "FF"},
+    # Keep the exact known expand-row API call as a control.
+    spin_api_response = session.get(
+        BASE + SPIN_API,
+        params={"pitcher": OHTANI, "year": 2026, "pov": "Pit"},
+        timeout=60,
     )
-    for params in trials:
-        response = session.get(api_url, params=params, timeout=60)
-        item = {"params": params}
-        item.update(response_shape(response))
-        report["spin_direction_api_trials"].append(item)
+    report["spin_direction_api_control"] = response_shape(spin_api_response, include_first=True)
+
+    # Search source contexts around every orientation-related field in the player bundle.
+    report["orientation_code_contexts"] = []
+    for url, text in player_scripts:
+        contexts = {}
+        for field in ("image_spin_x", "image_orientation_angle", "hawkeye_measured", "spinAxisPoint"):
+            hit = context(text, field, radius=2600, limit=5200)
+            if hit:
+                contexts[field] = hit
+        if contexts:
+            report["orientation_code_contexts"].append({"script": url, "contexts": contexts})
 
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 160_000, f"compact research report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== COMPACT SPIN ORIENTATION RESEARCH REPORT =====\n" + rendered)
+    assert len(rendered) < 150_000, f"research report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT RAW ORIENTATION UPSTREAM TRACE =====\n" + rendered)
