@@ -21,125 +21,66 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Apply final integration patch
+        run: python .github/finalize_cap04.py
       - name: Install project
         run: python -m pip install -e '.[dev]'
-      - name: Wire implementation and refine CAP-04 selector
+      - name: Synthetic CAP-04 diagnostics
         shell: bash
         run: |
           python - <<'PY'
-          from pathlib import Path
+          import json
+          import numpy as np
+          from treepolo_mlb_data.analysis import ClusteringSpec, NumericalExecutor, NumericalTable
+          from treepolo_mlb_data.analysis.model import Grain
 
-          def replace(path, old, new):
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
-              if old not in text:
-                  raise SystemExit(f'expected snippet not found in {path}: {old[:120]!r}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          # Install CAP-04 after numerical.py has been imported, preserving all manual-K behavior.
-          replace(
-              'src/treepolo_mlb_data/analysis/__init__.py',
-              'from .semantics import SemanticRegistry, default_registry\n',
-              'from .semantics import SemanticRegistry, default_registry\nfrom .auto_cluster import install_auto_cluster\n',
-          )
-          replace(
-              'src/treepolo_mlb_data/analysis/__init__.py',
-              '\n__all__ = [\n',
-              '\ninstall_auto_cluster()\n\n__all__ = [\n',
-          )
-
-          # Supplemental data lives beside, but outside, the existing Statcast analysis path.
-          replace(
-              'src/treepolo_mlb_data/webapp.py',
-              '    def data_action(self, action: str, payload: dict[str, Any]) -> Any:\n        if action == "status":\n            return self.status()\n        with self.sync_lock:\n',
-              '    def data_action(self, action: str, payload: dict[str, Any]) -> Any:\n        if action == "status":\n            return self.status()\n        if action.startswith("supplemental-"):\n            from .supplemental_data import handle_supplemental_action\n            return handle_supplemental_action(self.config, action, payload)\n        with self.sync_lock:\n',
-          )
-
-          replace(
-              'src/treepolo_mlb_data/web_static/fast-status.js',
-              '    await loadScriptOnce("/navigation-routes.js", "navigationRoutes");\n\n    await waitForFieldCatalog();\n',
-              '    await loadScriptOnce("/navigation-routes.js", "navigationRoutes");\n    await loadScriptOnce("/supplemental-data.js", "supplementalData");\n    await loadScriptOnce("/cap04-auto-cluster.js", "cap04AutoCluster");\n\n    await waitForFieldCatalog();\n',
-          )
-
-          # Pitch3D MLB/MiLB share one physical table and therefore one source-column map.
-          path = Path('src/treepolo_mlb_data/supplemental_data.py')
-          text = path.read_text(encoding='utf-8')
-          text = text.replace(
-              '    def _column_map(self, source: str, dataset: str) -> dict[str, str]:\n        return {\n            str(row[0]): str(row[1])\n            for row in self.conn.execute(\n                "SELECT original_name,column_name FROM supplemental_schema WHERE source=? AND dataset=?",\n                (source, dataset),\n            )\n        }\n',
-              '    @staticmethod\n    def _schema_dataset(source: str, dataset: str) -> str:\n        return "__shared__" if source == "pitch3d" else dataset\n\n    def _column_map(self, source: str, dataset: str) -> dict[str, str]:\n        schema_dataset = self._schema_dataset(source, dataset)\n        return {\n            str(row[0]): str(row[1])\n            for row in self.conn.execute(\n                "SELECT original_name,column_name FROM supplemental_schema WHERE source=? AND dataset=?",\n                (source, schema_dataset),\n            )\n        }\n',
-              1,
-          )
-          text = text.replace(
-              '        mapping = self._column_map(source, dataset)\n        table_columns = {str(row[1]) for row in self.conn.execute(f"PRAGMA table_info({_quote(table)})")}\n',
-              '        schema_dataset = self._schema_dataset(source, dataset)\n        mapping = self._column_map(source, dataset)\n        table_columns = {str(row[1]) for row in self.conn.execute(f"PRAGMA table_info({_quote(table)})")}\n',
-              1,
-          )
-          text = text.replace(
-              '(now, source, dataset, original),\n',
-              '(now, source, schema_dataset, original),\n',
-              1,
-          )
-          text = text.replace(
-              '(source, dataset, original, candidate, sql_type, now, now),\n',
-              '(source, schema_dataset, original, candidate, sql_type, now, now),\n',
-              1,
-          )
-          path.write_text(text, encoding='utf-8')
-
-          # K-means model selection: spherical-Gaussian BIC proxy makes K=1 a legitimate candidate.
-          path = Path('src/treepolo_mlb_data/analysis/auto_cluster.py')
-          text = path.read_text(encoding='utf-8')
-          start = text.index('def _fit_candidate(')
-          end = text.index('\n\ndef _choose_k', start)
-          replacement = '''def _fit_candidate(matrix: Any, method: str, k: int, seed: int) -> tuple[Any, Any, Any, float]:
-              if method == "kmeans":
-                  if k == 1:
-                      labels = n.np.zeros(len(matrix), dtype=int)
-                      centers = n.np.mean(matrix, axis=0, keepdims=True)
-                  else:
-                      model = n.KMeans(n_clusters=k, random_state=seed, n_init=10)
-                      labels = model.fit_predict(matrix)
-                      centers = model.cluster_centers_
-                  selector = n.GaussianMixture(
-                      n_components=k, covariance_type="spherical", random_state=seed, n_init=3
-                  )
-                  selector.fit(matrix)
-                  return labels, centers, None, float(selector.bic(matrix))
-              if method == "gmm":
-                  if len(matrix) < 2 and k == 1:
-                      labels = n.np.zeros(len(matrix), dtype=int)
-                      centers = n.np.mean(matrix, axis=0, keepdims=True)
-                      return labels, centers, n.np.ones(len(matrix), dtype=float), 0.0
-                  model = n.GaussianMixture(n_components=k, random_state=seed, n_init=3)
-                  labels = model.fit_predict(matrix)
-                  probabilities = n.np.max(model.predict_proba(matrix), axis=1)
-                  return labels, model.means_, probabilities, float(model.bic(matrix))
-              raise ValueError(f"unsupported clustering method: {method}")
-          '''
-          # Dedent because triple-quoted replacement is embedded inside workflow Python.
-          import textwrap
-          text = text[:start] + textwrap.dedent(replacement) + text[end:]
-          text = text.replace('"criterion": "BIC" if spec.method == "gmm" else "K-means spherical BIC",', '"criterion": "BIC" if spec.method == "gmm" else "Spherical-Gaussian BIC (K-means selector)",')
-          text = text.replace('"selection_criterion": "BIC" if spec.method == "gmm" else "K-means spherical BIC",', '"selection_criterion": "BIC" if spec.method == "gmm" else "Spherical-Gaussian BIC (K-means selector)",')
-          text = text.replace('"complete_rows": len(complete_assignment_rows),\n', '"complete_rows": len(complete_assignment_rows),\n            "excluded_rows": max(0, len(table.rows) - len(complete_assignment_rows)),\n', 1)
-          path.write_text(text, encoding='utf-8')
-
-          # Match persistent tests/UI wording to the refined selector name.
-          replace(
-              'tests/test_cap04_auto_cluster.py',
-              'assert rows[0]["criterion"] == "K-means spherical BIC"',
-              'assert rows[0]["criterion"] == "Spherical-Gaussian BIC (K-means selector)"',
-          )
-          replace(
-              'src/treepolo_mlb_data/web_static/cap04-auto-cluster.js',
-              'const criterion = method?.value === "gmm" ? "BIC" : "K-means spherical BIC";',
-              'const criterion = method?.value === "gmm" ? "BIC" : "Spherical-Gaussian BIC（K-means 選模）";',
-          )
+          def run(matrix):
+              rows=tuple({'pitch_uid':str(i),'x':float(v[0]),'y':float(v[1])} for i,v in enumerate(matrix))
+              table=NumericalTable(('pitch_uid','x','y'),rows,Grain(('pitch_uid',),'pitch'))
+              result=NumericalExecutor().clustering(table,ClusteringSpec(features=('x','y'),method='kmeans',clusters=0,seed=42,assignment_limit=0))
+              diag=next(s for s in result['sections'] if s['title'].startswith('自動群數診斷'))
+              return {'selected':result['numerical']['selected_clusters'],'candidates':diag['rows']}
+          rng=np.random.default_rng(20260831)
+          one=rng.normal(0,1,size=(500,2))
+          rng=np.random.default_rng(7)
+          two=np.vstack([rng.normal((-4.5,0),(0.45,0.45),size=(220,2)),rng.normal((4.5,0),(0.45,0.45),size=(220,2))])
+          report={'one_cluster':run(one),'two_clusters':run(two)}
+          print('===== SYNTHETIC CAP-04 DIAGNOSTICS =====')
+          print(json.dumps(report,indent=2))
+          if report['one_cluster']['selected'] != 1 or report['two_clusters']['selected'] != 2:
+              raise SystemExit('synthetic Auto K acceptance failed')
           PY
       - name: Run persistent tests
         run: pytest -q -m 'not integration'
       - name: Run live Savant integration suite
         run: pytest -q -m integration
+      - name: Live supplemental-source smoke
+        shell: bash
+        run: |
+          python - <<'PY'
+          import csv, io, json, tempfile
+          from treepolo_mlb_data.config import AppConfig
+          from treepolo_mlb_data.supplemental_data import SupplementalClient, handle_supplemental_action
+
+          with tempfile.TemporaryDirectory() as td:
+              cfg=AppConfig(data_dir=td,request_timeout_seconds=120,request_retries=1,request_backoff_seconds=0.5,request_pause_seconds=0)
+              client=SupplementalClient(cfg)
+              source_report={}
+              for dataset in ('mlb','milb'):
+                  response=client.pitch3d(660271,dataset)
+                  rows=list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
+                  fields=set(rows[0].keys()) if rows else set()
+                  required={'game_pk','play_id','pitcher'}
+                  if rows and not required.issubset(fields):
+                      raise SystemExit(f'Pitch3D {dataset} missing required fields: {required-fields}')
+                  source_report[f'pitch3d_{dataset}']={'rows':len(rows),'columns':len(fields),'has_required_fields':required.issubset(fields) if rows else None}
+              spin=handle_supplemental_action(cfg,'supplemental-run',{'source':'spin_aggregate','dataset':'mlb','mode':'update','pitcher_ids':[660271]})
+              if spin.get('status') != 'success' or int(spin.get('rows_received') or 0) < 1:
+                  raise SystemExit(f'live spin aggregate smoke failed: {spin}')
+              source_report['spin_aggregate']={'rows':spin['rows_received'],'status':spin['status']}
+              print('===== LIVE SUPPLEMENTAL SOURCE SMOKE =====')
+              print(json.dumps(source_report,ensure_ascii=False,indent=2))
+          PY
       - name: Natural CAP-04 acceptance — Scherzer 2024 cutter plus slider
         shell: bash
         run: |
@@ -148,7 +89,7 @@ jobs:
           from treepolo_mlb_data.analysis import ClusteringSpec, NumericalExecutor, NumericalTable
           from treepolo_mlb_data.analysis.model import Grain
 
-          url = (
+          url=(
               'https://baseballsavant.mlb.com/statcast_search/csv?all=true&hfPT=&hfAB=&hfBBT=&hfPR=&hfZ=&stadium='
               '&hfBBL=&hfNewZones=&hfGT=R%7C=&hfSea=&hfSit=&player_type=pitcher&hfOuts=&opponent='
               '&pitcher_throws=&batter_stands=&hfSA=&game_date_gt=2024-01-01&game_date_lt=2024-12-31'
@@ -156,55 +97,37 @@ jobs:
               '&min_pitches=0&min_results=0&group_by=name&sort_col=pitches&player_event_sort=h_launch_speed'
               '&sort_order=desc&min_abs=0&type=details&'
           )
-          response = requests.get(url, timeout=120, headers={'User-Agent':'treepolo-cap04-acceptance/1.0'})
+          response=requests.get(url,timeout=120,headers={'User-Agent':'treepolo-cap04-acceptance/1.0'})
           response.raise_for_status()
-          source_rows = list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
-          filtered = []
-          counts = {'FC':0, 'SL':0}
-          for index, row in enumerate(source_rows):
-              pitch_type = row.get('pitch_type')
-              if pitch_type not in counts:
-                  continue
-              try:
-                  values = [float(row[field]) for field in ('release_speed','pfx_x','pfx_z','release_spin_rate')]
-              except (TypeError, ValueError):
-                  continue
-              counts[pitch_type] += 1
-              filtered.append({
-                  'pitch_uid': f"{row.get('game_pk')}:{row.get('at_bat_number')}:{row.get('pitch_number')}:{index}",
-                  'release_speed': values[0], 'pfx_x': values[1], 'pfx_z': values[2], 'release_spin_rate': values[3],
-              })
+          source_rows=list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
+          filtered=[]
+          counts={'FC':0,'SL':0}
+          for index,row in enumerate(source_rows):
+              pt=row.get('pitch_type')
+              if pt not in counts: continue
+              try: values=[float(row[f]) for f in ('release_speed','pfx_x','pfx_z','release_spin_rate')]
+              except (TypeError,ValueError): continue
+              counts[pt]+=1
+              filtered.append({'pitch_uid':f"{row.get('game_pk')}:{row.get('at_bat_number')}:{row.get('pitch_number')}:{index}",'release_speed':values[0],'pfx_x':values[1],'pfx_z':values[2],'release_spin_rate':values[3]})
           if min(counts.values()) < 20 or len(filtered) < 150:
               raise SystemExit(f'Unexpected Scherzer 2024 sample: {counts}, complete={len(filtered)}')
-          table = NumericalTable(
-              ('pitch_uid','release_speed','pfx_x','pfx_z','release_spin_rate'),
-              tuple(filtered), Grain(('pitch_uid',),'pitch')
-          )
-          result = NumericalExecutor().clustering(table, ClusteringSpec(
-              features=('release_speed','pfx_x','pfx_z','release_spin_rate'), method='kmeans', clusters=0,
-              standardize=True, seed=42, assignment_limit=0,
-          ))
-          diag = next(section for section in result['sections'] if section['title'].startswith('自動群數診斷'))
-          report = {
-              'pitch_labels': counts,
-              'complete_rows': len(filtered),
-              'selected_k': result['numerical']['selected_clusters'],
-              'criterion': result['numerical']['selection_criterion'],
-              'candidates': diag['rows'],
-          }
+          table=NumericalTable(('pitch_uid','release_speed','pfx_x','pfx_z','release_spin_rate'),tuple(filtered),Grain(('pitch_uid',),'pitch'))
+          report={'pitch_labels':counts,'complete_rows':len(filtered),'models':{}}
+          for method in ('kmeans','gmm'):
+              result=NumericalExecutor().clustering(table,ClusteringSpec(features=('release_speed','pfx_x','pfx_z','release_spin_rate'),method=method,clusters=0,standardize=True,seed=42,assignment_limit=0))
+              diag=next(s for s in result['sections'] if s['title'].startswith('自動群數診斷'))
+              if not any(r['candidate_k']==1 and r['valid'] for r in diag['rows']): raise SystemExit(f'{method}: K=1 invalid')
+              if not any(r['selected'] and r['valid'] for r in diag['rows']): raise SystemExit(f'{method}: no valid selected K')
+              report['models'][method]={'selected_k':result['numerical']['selected_clusters'],'criterion':result['numerical']['selection_criterion'],'candidates':diag['rows']}
           print('===== CAP-04 SCHERZER 2024 FC+SL NATURAL ACCEPTANCE =====')
-          print(json.dumps(report, ensure_ascii=False, indent=2))
-          if not any(row['candidate_k'] == 1 and row['valid'] for row in diag['rows']):
-              raise SystemExit('K=1 was not a valid candidate')
-          if not any(row['selected'] and row['valid'] for row in diag['rows']):
-              raise SystemExit('No valid selected K')
+          print(json.dumps(report,ensure_ascii=False,indent=2))
           PY
-      - name: Commit integrated implementation and remove one-shot workflow
+      - name: Commit integrated implementation and remove temporary integration files
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/one-shot-combined-dev.yml
+          git rm .github/workflows/one-shot-combined-dev.yml .github/finalize_cap04.py
           git add src/treepolo_mlb_data tests
           git commit -m "Integrate supplemental Savant data and CAP-04 Auto K"
           git push origin HEAD:refactor/unify-multifield-and-panel-lifecycle
