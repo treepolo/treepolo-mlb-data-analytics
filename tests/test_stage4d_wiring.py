@@ -13,7 +13,9 @@ def read(relative: str) -> str:
 def test_cli_installs_stage4d_before_serving_ui():
     cli = read("src/treepolo_mlb_data/cli.py")
     assert "from .stage4d import install as install_stage4d" in cli
+    assert "from .stage4d_frontend_patch import install as install_stage4d_frontend_patch" in cli
     assert "install_stage4d(webapp)" in cli
+    assert "install_stage4d_frontend_patch(webapp)" in cli
 
 
 def test_visualization_workspace_wiring_and_output_navigation():
@@ -47,6 +49,17 @@ def test_sampling_and_export_choices_are_visible_in_ui():
     for value in ("html", "pdf"):
         assert f"<option>{value}</option>" in script
     assert "Sampled:" in script
+
+
+def test_horizontal_stacked_bar_and_saved_section_fixups_are_loaded():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes.js")
+    assert "stage4d-visualization-fixes.js" in patch
+    assert "drawHorizontal" in fixups
+    assert "drawVertical" in fixups
+    assert "stacked" in fixups
+    assert 'pendingSavedVisualization.save_mode==="live"' in fixups
+    assert "pendingSavedVisualization.section_index" in fixups
 
 
 def test_baseball_presets_do_not_add_an_external_asset_source():
