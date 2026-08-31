@@ -13,10 +13,9 @@ pytestmark = pytest.mark.integration
 BASE = "https://baseballsavant.mlb.com"
 OHTANI = 660271
 YEAR = 2026
-PLAYER_URL = f"{BASE}/savant-player/shohei-ohtani-{OHTANI}?playerType=pitcher"
 STATCAST_CSV_URL = (
     f"{BASE}/statcast_search/csv?all=true&hfPT=&hfAB=&hfBBT=&hfPR=&hfZ=&stadium="
-    "&hfBBL=&hfNewZones=&hfGT=R%7CPO%7CS%7C=&hfSea=&hfSit=&player_type=pitcher"
+    "&hfBBL=&hfNewZones=&hfGT=R%7C=&hfSea=&hfSit=&player_type=pitcher"
     "&hfOuts=&opponent=&pitcher_throws=&batter_stands=&hfSA="
     f"&game_date_gt={YEAR}-01-01&game_date_lt={YEAR}-12-31&pitchers_lookup%5B%5D={OHTANI}"
     "&team=&position=&hfRO=&home_road=&hfFlag=&metric_1=&hfInn=&min_pitches=0"
@@ -31,8 +30,7 @@ def circular_mean_degrees(values: list[float]) -> float | None:
         return None
     x = sum(math.cos(math.radians(value)) for value in values) / len(values)
     y = sum(math.sin(math.radians(value)) for value in values) / len(values)
-    angle = math.degrees(math.atan2(y, x))
-    return angle % 360
+    return math.degrees(math.atan2(y, x)) % 360
 
 
 def circular_difference(a: float | None, b: float | None) -> float | None:
@@ -53,22 +51,26 @@ def parse_float(value):
 def csv_probe(session: requests.Session) -> dict:
     response = session.get(STATCAST_CSV_URL, timeout=120)
     response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.text))
+    text = response.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
     by_pitch = defaultdict(list)
     missing_by_pitch = defaultdict(int)
+    total_by_pitch = defaultdict(int)
     sample_rows = []
     for row in rows:
         pitch_type = row.get("pitch_type") or ""
         axis = parse_float(row.get("spin_axis"))
         if pitch_type:
+            total_by_pitch[pitch_type] += 1
             if axis is None:
                 missing_by_pitch[pitch_type] += 1
             else:
                 by_pitch[pitch_type].append(axis)
-        if len(sample_rows) < 4 and pitch_type:
+        if len(sample_rows) < 6 and pitch_type:
             sample_rows.append({
                 "game_date": row.get("game_date"),
+                "game_type": row.get("game_type"),
                 "game_pk": row.get("game_pk"),
                 "at_bat_number": row.get("at_bat_number"),
                 "pitch_number": row.get("pitch_number"),
@@ -82,9 +84,14 @@ def csv_probe(session: requests.Session) -> dict:
         "content_type": response.headers.get("content-type"),
         "bytes": len(response.content),
         "row_count": len(rows),
-        "columns": reader.fieldnames,
+        "columns_prefix": (reader.fieldnames or [])[:12],
+        "game_type_counts": dict(sorted({
+            game_type: sum(1 for row in rows if row.get("game_type") == game_type)
+            for game_type in {row.get("game_type") for row in rows if row.get("game_type")}
+        }.items())),
         "pitch_types": {
             pitch_type: {
+                "total_n": total_by_pitch[pitch_type],
                 "spin_axis_n": len(values),
                 "missing_spin_axis_n": missing_by_pitch[pitch_type],
                 "circular_mean_spin_axis": circular_mean_degrees(values),
@@ -133,9 +140,12 @@ def comparison(csv_data: dict, spin_data: dict) -> list[dict]:
         mean_axis = metrics["circular_mean_spin_axis"]
         out.append({
             "pitch_type": pitch_type,
+            "csv_total_n": metrics["total_n"],
             "csv_spin_axis_n": metrics["spin_axis_n"],
+            "csv_missing_spin_axis_n": metrics["missing_spin_axis_n"],
             "leaderboard_n_pitches": aggregate.get("n_pitches"),
             "csv_circular_mean_spin_axis": mean_axis,
+            "csv_arithmetic_mean_spin_axis": metrics["arithmetic_mean_spin_axis"],
             "leaderboard_hawkeye_measured": aggregate.get("hawkeye_measured"),
             "difference_deg": circular_difference(mean_axis, aggregate.get("hawkeye_measured")),
             "leaderboard_movement_inferred": aggregate.get("movement_inferred"),
@@ -148,7 +158,7 @@ def comparison(csv_data: dict, spin_data: dict) -> list[dict]:
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/20.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/21.0)"})
     csv_data = csv_probe(session)
     spin_data = spin_aggregate_probe(session)
     report = {
@@ -156,4 +166,4 @@ def test_deep_spin_orientation_probe():
         "spin_direction_aggregate": spin_data,
         "per_pitch_spin_axis_vs_hawkeye_measured": comparison(csv_data, spin_data),
     }
-    pytest.fail("\n===== STATCAST SPIN_AXIS VS HAWKEYE_MEASURED REPORT =====\n" + json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    pytest.fail("\n===== REGULAR-SEASON SPIN_AXIS VS HAWKEYE_MEASURED REPORT =====\n" + json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
