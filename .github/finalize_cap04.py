@@ -26,7 +26,7 @@ replace(
     '    await loadScriptOnce("/navigation-routes.js", "navigationRoutes");\n    await loadScriptOnce("/supplemental-data.js", "supplementalData");\n    await loadScriptOnce("/cap04-auto-cluster.js", "cap04AutoCluster");\n\n    await waitForFieldCatalog();\n',
 )
 
-# Pitch3D MLB and MiLB use one physical table; therefore source-column names must share one registry.
+# Pitch3D MLB and MiLB use one physical table; source-column names therefore share one registry.
 p = Path("src/treepolo_mlb_data/supplemental_data.py")
 text = p.read_text(encoding="utf-8")
 old = '''    def _column_map(self, source: str, dataset: str) -> dict[str, str]:
@@ -64,11 +64,16 @@ text = text.replace('(now, source, dataset, original),\n', '(now, source, schema
 text = text.replace('(source, dataset, original, candidate, sql_type, now, now),\n', '(source, schema_dataset, original, candidate, sql_type, now, now),\n', 1)
 p.write_text(text, encoding="utf-8")
 
-# CAP-04 K-means: PCA-aligned Gap reference distribution plus an explicit K=1
-# clusterability gate.  If K=2 does not improve Gap beyond reference uncertainty,
-# K=1 wins.  Once structure is established, apply the classical adjacent 1-SE rule.
+# CAP-04 K-means selection has two distinct questions:
+#   1. Is there enough evidence to leave K=1?  Gap Statistic answers this because K=1 is defined.
+#   2. If yes, how many clusters?  Silhouette selects among valid K>=2 and avoids Gap over-cutting.
 p = Path("src/treepolo_mlb_data/analysis/auto_cluster.py")
 text = p.read_text(encoding="utf-8")
+text = text.replace(
+    '    sizes: list[int]\n',
+    '    sizes: list[int]\n    silhouette_score: float | None = None\n',
+    1,
+)
 start = text.index("def _gap_candidates(")
 end = text.index("\n\ndef _bic_candidates", start)
 replacement = r'''def _gap_candidates(
@@ -79,11 +84,12 @@ replacement = r'''def _gap_candidates(
     *,
     references: int = 8,
 ) -> list[_Candidate]:
-    """Compute Gap Statistic candidates including K=1.
+    """Build K-means candidates with a K=1-capable Gap gate and K>=2 Silhouette.
 
-    The null reference box is built in principal-component coordinates.  This
-    avoids the axis-aligned bounding-box inflation that can make K=1 look
-    artificially competitive for strongly elongated or rotated data.
+    The Gap null box is constructed after a principal-component rotation.  This
+    avoids an axis-aligned reference box exaggerating empty space for rotated or
+    strongly elongated samples.  Silhouette is deliberately used only after the
+    K=1-vs-K>=2 gate, because Silhouette itself is undefined at K=1.
     """
     if len(matrix) == 0:
         return []
@@ -118,7 +124,18 @@ replacement = r'''def _gap_candidates(
                 standard_error = std * sqrt(1.0 + 1.0 / len(reference_logs))
             else:
                 standard_error = 0.0
-            candidates.append(_Candidate(k, gap, standard_error, valid, reason, sizes))
+
+            silhouette = None
+            if valid and k >= 2 and len(rotated) > k:
+                metric_module = __import__("sklearn.metrics", fromlist=["silhouette_score"])
+                silhouette_fn = getattr(metric_module, "silhouette_score")
+                if len(rotated) > 2000:
+                    silhouette = float(
+                        silhouette_fn(rotated, labels, sample_size=2000, random_state=seed)
+                    )
+                else:
+                    silhouette = float(silhouette_fn(rotated, labels))
+            candidates.append(_Candidate(k, gap, standard_error, valid, reason, sizes, silhouette))
         except Exception as exc:
             candidates.append(_Candidate(k, None, None, False, str(exc), []))
     return candidates
@@ -129,47 +146,64 @@ def _select_gap_k(candidates: list[_Candidate]) -> int:
     valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
     if not valid:
         return 1
+
     one = by_k.get(1)
     two = by_k.get(2)
     if one is not None and one.valid and one.score is not None:
         if two is None or not two.valid or two.score is None:
             return 1
-        improvement = float(two.score) - float(one.score)
-        uncertainty = max(float(one.standard_error or 0.0), float(two.standard_error or 0.0))
-        if improvement <= uncertainty:
+        gap_improvement = float(two.score) - float(one.score)
+        reference_uncertainty = max(
+            float(one.standard_error or 0.0),
+            float(two.standard_error or 0.0),
+        )
+        if gap_improvement <= reference_uncertainty:
             return 1
 
-    max_k = max(candidate.k for candidate in candidates)
-    for k in range(2, max_k):
-        candidate = by_k.get(k)
-        next_candidate = by_k.get(k + 1)
-        if (
-            candidate is None or next_candidate is None
-            or not candidate.valid or not next_candidate.valid
-            or candidate.score is None or next_candidate.score is None
-        ):
-            continue
-        next_error = float(next_candidate.standard_error or 0.0)
-        if float(candidate.score) >= float(next_candidate.score) - next_error:
-            return candidate.k
-
-    structured = [candidate for candidate in valid if candidate.k >= 2]
+    structured = [
+        candidate
+        for candidate in valid
+        if candidate.k >= 2 and candidate.silhouette_score is not None
+    ]
     if structured:
-        return max(structured, key=lambda item: (float(item.score), -item.k)).k
-    return valid[0].k
+        return max(
+            structured,
+            key=lambda item: (float(item.silhouette_score), -item.k),
+        ).k
+    return 1
 '''
 text = text[:start] + textwrap.dedent(replacement) + text[end:]
+text = text.replace(
+    '        criterion = "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)"',
+    '        criterion = "BIC" if spec.method == "gmm" else "Gap K=1 gate + Silhouette"',
+    1,
+)
+text = text.replace(
+    '                    "selection_standard_error": candidate.standard_error,\n',
+    '                    "selection_standard_error": candidate.standard_error,\n                    "silhouette_score": candidate.silhouette_score,\n',
+    1,
+)
+text = text.replace(
+    '        "selection_standard_error",\n        "valid",',
+    '        "selection_standard_error",\n        "silhouette_score",\n        "valid",',
+    1,
+)
+text = text.replace(
+    '            "selection_criterion": "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)",',
+    '            "selection_criterion": "BIC" if spec.method == "gmm" else "Gap K=1 gate + Silhouette",',
+    1,
+)
 p.write_text(text, encoding="utf-8")
 
 replace(
     "tests/test_cap04_auto_cluster.py",
     'assert rows[0]["criterion"] == "K-means spherical BIC"',
-    'assert rows[0]["criterion"] == "Gap statistic (1-SE)"',
+    'assert rows[0]["criterion"] == "Gap K=1 gate + Silhouette"',
 )
 replace(
     "src/treepolo_mlb_data/web_static/cap04-auto-cluster.js",
     'const criterion = method?.value === "gmm" ? "BIC" : "K-means spherical BIC";',
-    'const criterion = method?.value === "gmm" ? "BIC" : "Gap Statistic + 1-SE 規則";',
+    'const criterion = method?.value === "gmm" ? "BIC" : "Gap K=1 Gate + Silhouette";',
 )
 
 # Strengthen the shared-schema regression and verify wiring remains intentional.
@@ -202,5 +236,5 @@ def test_supplemental_api_and_frontend_loader_are_wired():
 def test_cap04_ui_describes_current_kmeans_selector():
     ui = Path("src/treepolo_mlb_data/web_static/cap04-auto-cluster.js").read_text(encoding="utf-8")
     assert "Auto K（允許 K=1）" in ui
-    assert "Gap Statistic + 1-SE 規則" in ui
+    assert "Gap K=1 Gate + Silhouette" in ui
 ''', encoding="utf-8")
