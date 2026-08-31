@@ -15,6 +15,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -e '.[dev]'
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-visualization.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-visualization-fixes.js
       - run: pytest -q -m 'not integration'
 
   live-savant-smoke:
