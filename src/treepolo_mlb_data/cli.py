@@ -68,8 +68,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Initialized {config.database_path}")
         return 0
     if args.command == "ui":
-        from .webapp import serve
-        serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
+        from . import webapp
+        from .stage4d import install as install_stage4d
+        install_stage4d(webapp)
+        webapp.serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
         return 0
     if args.command == "analytics-sync":
         from .duckdb_mirror import DuckDBMirror
