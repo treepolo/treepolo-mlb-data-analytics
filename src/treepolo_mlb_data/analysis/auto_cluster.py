@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, log
+from math import ceil, log, sqrt
 from typing import Any
 
 from . import numerical as n
@@ -12,73 +12,160 @@ from .model import Grain
 class _Candidate:
     k: int
     score: float | None
+    standard_error: float | None
     valid: bool
     reason: str | None
     sizes: list[int]
 
 
 def _minimum_cluster_size(row_count: int) -> int:
-    """Protect against tiny nuisance clusters while remaining usable on small samples."""
+    """Protect Auto K against nuisance clusters that are too small to interpret."""
     return max(5, min(30, int(ceil(row_count * 0.03))))
 
 
 def _adaptive_max_k(row_count: int, minimum_size: int) -> int:
     if row_count <= 0:
         return 1
-    return max(1, min(8, 50, row_count // max(1, minimum_size)))
+    return max(1, min(8, row_count // max(1, minimum_size)))
 
 
-def _kmeans_bic(inertia: float, row_count: int, dimensions: int, k: int) -> float:
-    """Spherical-Gaussian BIC approximation for K-means, valid for K=1.
+def _fit_kmeans(matrix: Any, k: int, seed: int) -> tuple[Any, Any, float]:
+    if k == 1:
+        labels = n.np.zeros(len(matrix), dtype=int)
+        centers = n.np.mean(matrix, axis=0, keepdims=True)
+        inertia = float(n.np.sum((matrix - centers[0]) ** 2))
+        return labels, centers, inertia
+    model = n.KMeans(n_clusters=k, random_state=seed, n_init=10)
+    labels = model.fit_predict(matrix)
+    return labels, model.cluster_centers_, float(model.inertia_)
 
-    Silhouette is deliberately not used as the selector because it has no K=1
-    definition.  The score penalizes additional centroids/mixture weights and is
-    minimized, matching the direction of GaussianMixture.bic().
+
+def _fit_gmm(matrix: Any, k: int, seed: int) -> tuple[Any, Any, Any, float]:
+    if len(matrix) == 1 and k == 1:
+        labels = n.np.zeros(1, dtype=int)
+        centers = n.np.asarray(matrix, dtype=float).reshape(1, -1)
+        return labels, centers, n.np.ones(1, dtype=float), 0.0
+    model = n.GaussianMixture(n_components=k, random_state=seed, n_init=3)
+    labels = model.fit_predict(matrix)
+    probabilities = n.np.max(model.predict_proba(matrix), axis=1)
+    return labels, model.means_, probabilities, float(model.bic(matrix))
+
+
+def _cluster_sizes(labels: Any, k: int) -> list[int]:
+    return [int(n.np.sum(labels == cluster)) for cluster in range(k)]
+
+
+def _candidate_validity(k: int, sizes: list[int], minimum_size: int) -> tuple[bool, str | None]:
+    if k == 1:
+        return True, None
+    if not sizes:
+        return False, "clustering returned no cluster sizes"
+    smallest = min(sizes)
+    if smallest < minimum_size:
+        return False, f"minimum cluster size {smallest} < required {minimum_size}"
+    return True, None
+
+
+def _gap_candidates(
+    matrix: Any,
+    max_k: int,
+    minimum_size: int,
+    seed: int,
+    *,
+    references: int = 8,
+) -> list[_Candidate]:
+    """Compute Tibshirani-style Gap Statistic candidates including K=1.
+
+    Reference datasets are sampled uniformly from the observed feature-wise
+    bounding box.  Selection later applies the standard 1-SE stopping rule so
+    Auto K prefers the smallest K whose compactness is already statistically
+    indistinguishable from the next valid candidate.
     """
-    observations = max(1, row_count * dimensions)
-    variance = max(float(inertia) / observations, 1e-12)
-    parameters = k * dimensions + max(0, k - 1)
-    return observations * log(variance) + parameters * log(max(row_count, 2))
+    if len(matrix) == 0:
+        return []
+    matrix = n.np.asarray(matrix, dtype=float)
+    lower = n.np.min(matrix, axis=0)
+    upper = n.np.max(matrix, axis=0)
+    span = upper - lower
+    rng = n.np.random.default_rng(seed)
+    reference_matrices = [lower + rng.random(matrix.shape) * span for _ in range(max(1, references))]
+    epsilon = 1e-12
+    candidates: list[_Candidate] = []
+
+    for k in range(1, max_k + 1):
+        try:
+            labels, _, inertia = _fit_kmeans(matrix, k, seed)
+            sizes = _cluster_sizes(labels, k)
+            valid, reason = _candidate_validity(k, sizes, minimum_size)
+            reference_logs: list[float] = []
+            for ref_index, reference in enumerate(reference_matrices):
+                _, _, ref_inertia = _fit_kmeans(reference, k, seed + ref_index + 1)
+                reference_logs.append(log(max(ref_inertia, epsilon)))
+            observed_log = log(max(inertia, epsilon))
+            mean_reference_log = float(n.np.mean(reference_logs))
+            gap = mean_reference_log - observed_log
+            if len(reference_logs) > 1:
+                std = float(n.np.std(reference_logs, ddof=1))
+                standard_error = std * sqrt(1.0 + 1.0 / len(reference_logs))
+            else:
+                standard_error = 0.0
+            candidates.append(_Candidate(k, gap, standard_error, valid, reason, sizes))
+        except Exception as exc:
+            candidates.append(_Candidate(k, None, None, False, str(exc), []))
+    return candidates
 
 
-def _fit_candidate(matrix: Any, method: str, k: int, seed: int) -> tuple[Any, Any, Any, float]:
-    if method == "kmeans":
-        if k == 1:
-            labels = n.np.zeros(len(matrix), dtype=int)
-            center = n.np.mean(matrix, axis=0, keepdims=True)
-            inertia = float(n.np.sum((matrix - center[0]) ** 2))
-            return labels, center, None, _kmeans_bic(inertia, len(matrix), matrix.shape[1], 1)
-        model = n.KMeans(n_clusters=k, random_state=seed, n_init=10)
-        labels = model.fit_predict(matrix)
-        score = _kmeans_bic(float(model.inertia_), len(matrix), matrix.shape[1], k)
-        return labels, model.cluster_centers_, None, score
-    if method == "gmm":
-        model = n.GaussianMixture(n_components=k, random_state=seed, n_init=3)
-        labels = model.fit_predict(matrix)
-        probabilities = n.np.max(model.predict_proba(matrix), axis=1)
-        return labels, model.means_, probabilities, float(model.bic(matrix))
-    raise ValueError(f"unsupported clustering method: {method}")
+def _select_gap_k(candidates: list[_Candidate]) -> int:
+    valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
+    if not valid:
+        return 1
+    if len(valid) == 1:
+        return valid[0].k
+    for index, candidate in enumerate(valid[:-1]):
+        next_candidate = valid[index + 1]
+        next_error = float(next_candidate.standard_error or 0.0)
+        if float(candidate.score) >= float(next_candidate.score) - next_error:
+            return candidate.k
+    best = max(valid, key=lambda item: (float(item.score), -item.k))
+    return best.k
+
+
+def _bic_candidates(matrix: Any, max_k: int, minimum_size: int, seed: int) -> list[_Candidate]:
+    candidates: list[_Candidate] = []
+    for k in range(1, max_k + 1):
+        try:
+            labels, _, _, bic = _fit_gmm(matrix, k, seed)
+            sizes = _cluster_sizes(labels, k)
+            valid, reason = _candidate_validity(k, sizes, minimum_size)
+            candidates.append(_Candidate(k, bic, None, valid, reason, sizes))
+        except Exception as exc:
+            candidates.append(_Candidate(k, None, None, False, str(exc), []))
+    return candidates
 
 
 def _choose_k(matrix: Any, method: str, seed: int) -> tuple[int, list[_Candidate], int, int]:
     row_count = len(matrix)
+    if row_count <= 0:
+        raise ValueError("no complete rows remain for automatic clustering")
     minimum_size = min(row_count, _minimum_cluster_size(row_count))
-    max_k = _adaptive_max_k(row_count, minimum_size)
-    diagnostics: list[_Candidate] = []
-    for k in range(1, max_k + 1):
-        try:
-            labels, _, _, score = _fit_candidate(matrix, method, k, seed)
-            sizes = [int(n.np.sum(labels == cluster)) for cluster in range(k)]
-            valid = k == 1 or (bool(sizes) and min(sizes) >= minimum_size)
-            reason = None if valid else f"minimum cluster size {min(sizes)} < required {minimum_size}"
-            diagnostics.append(_Candidate(k, score, valid, reason, sizes))
-        except Exception as exc:
-            diagnostics.append(_Candidate(k, None, False, str(exc), []))
-    valid = [candidate for candidate in diagnostics if candidate.valid and candidate.score is not None]
-    if not valid:
-        return 1, diagnostics, minimum_size, max_k
-    selected = min(valid, key=lambda item: (float(item.score), item.k))
-    return selected.k, diagnostics, minimum_size, max_k
+    max_k = min(row_count, _adaptive_max_k(row_count, minimum_size))
+    if method == "kmeans":
+        candidates = _gap_candidates(matrix, max_k, minimum_size, seed)
+        return _select_gap_k(candidates), candidates, minimum_size, max_k
+    if method == "gmm":
+        candidates = _bic_candidates(matrix, max_k, minimum_size, seed)
+        valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
+        selected = min(valid, key=lambda item: (float(item.score), item.k)).k if valid else 1
+        return selected, candidates, minimum_size, max_k
+    raise ValueError(f"unsupported clustering method: {method}")
+
+
+def _fit_selected(matrix: Any, method: str, k: int, seed: int) -> tuple[Any, Any, Any | None]:
+    if method == "kmeans":
+        labels, centers, _ = _fit_kmeans(matrix, k, seed)
+        return labels, centers, None
+    labels, centers, probabilities, _ = _fit_gmm(matrix, k, seed)
+    return labels, centers, probabilities
 
 
 def _auto_clustering(
@@ -97,12 +184,16 @@ def _auto_clustering(
     if missing:
         raise ValueError(f"clustering fields are missing from input: {missing}")
     rows, raw = n._numeric_rows(table, spec.features)
+    if not rows:
+        raise ValueError("no complete numeric rows remain for clustering")
 
     groups: dict[tuple[Any, ...], list[int]] = {}
+    excluded_partition_rows = 0
     if spec.partition_fields:
         for index, row in enumerate(rows):
             key = tuple(row.get(field) for field in spec.partition_fields)
             if any(value is None for value in key):
+                excluded_partition_rows += 1
                 continue
             groups.setdefault(key, []).append(index)
         if not groups:
@@ -133,25 +224,37 @@ def _auto_clustering(
             f"Auto-selecting cluster count for partition {group_index}/{group_count} ({len(indices)} complete rows)",
         )
         selected_k, candidates, minimum_size, max_k = _choose_k(matrix, spec.method, spec.seed)
-        labels, centers, probabilities, _ = _fit_candidate(matrix, spec.method, selected_k, spec.seed)
+        labels, centers, probabilities = _fit_selected(matrix, spec.method, selected_k, spec.seed)
         if spec.standardize:
             centers = centers * scales + offsets
 
         partition_info = {field: value for field, value in zip(spec.partition_fields, partition_key)}
-        selected_by_partition.append({**partition_info, "selected_k": selected_k, "complete_rows": len(indices)})
-        for candidate in candidates:
-            diagnostic_rows.append({
+        selected_by_partition.append(
+            {
                 **partition_info,
-                "candidate_k": candidate.k,
-                "criterion": "BIC" if spec.method == "gmm" else "K-means spherical BIC",
-                "score": candidate.score,
-                "valid": candidate.valid,
-                "selected": candidate.k == selected_k,
-                "cluster_sizes": ",".join(str(size) for size in candidate.sizes),
+                "selected_k": selected_k,
+                "complete_rows": len(indices),
                 "minimum_cluster_size": minimum_size,
                 "adaptive_max_k": max_k,
-                "rejection_reason": candidate.reason,
-            })
+            }
+        )
+        criterion = "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)"
+        for candidate in candidates:
+            diagnostic_rows.append(
+                {
+                    **partition_info,
+                    "candidate_k": candidate.k,
+                    "criterion": criterion,
+                    "score": candidate.score,
+                    "selection_standard_error": candidate.standard_error,
+                    "valid": candidate.valid,
+                    "selected": candidate.k == selected_k,
+                    "cluster_sizes": ",".join(str(size) for size in candidate.sizes),
+                    "minimum_cluster_size": minimum_size,
+                    "adaptive_max_k": max_k,
+                    "rejection_reason": candidate.reason,
+                }
+            )
 
         for local_index, global_index in enumerate(indices):
             cluster_labels[global_index] = int(labels[local_index])
@@ -165,8 +268,12 @@ def _auto_clustering(
             row.update({"cluster": int(cluster), "sample_size": int(mask.sum())})
             for feature_index, field in enumerate(spec.features):
                 row[f"center_{field}"] = float(centers[cluster, feature_index])
-                row[f"mean_{field}"] = float(n.np.mean(cluster_subset[:, feature_index])) if cluster_subset.size else None
-                row[f"std_{field}"] = float(n.np.std(cluster_subset[:, feature_index], ddof=0)) if cluster_subset.size else None
+                row[f"mean_{field}"] = (
+                    float(n.np.mean(cluster_subset[:, feature_index])) if cluster_subset.size else None
+                )
+                row[f"std_{field}"] = (
+                    float(n.np.std(cluster_subset[:, feature_index], ddof=0)) if cluster_subset.size else None
+                )
             summary_rows.append(row)
 
     complete_assignment_rows: list[dict[str, Any]] = []
@@ -189,8 +296,16 @@ def _auto_clustering(
         Grain(spec.partition_fields + ("cluster",), "cluster"),
     )
     diagnostic_columns = spec.partition_fields + (
-        "candidate_k", "criterion", "score", "valid", "selected", "cluster_sizes",
-        "minimum_cluster_size", "adaptive_max_k", "rejection_reason",
+        "candidate_k",
+        "criterion",
+        "score",
+        "selection_standard_error",
+        "valid",
+        "selected",
+        "cluster_sizes",
+        "minimum_cluster_size",
+        "adaptive_max_k",
+        "rejection_reason",
     )
     diagnostics = n.NumericalSection(
         "自動群數診斷 Auto Cluster Diagnostics",
@@ -227,11 +342,15 @@ def _auto_clustering(
             "seed": spec.seed,
             "input_rows": len(table.rows),
             "complete_rows": len(complete_assignment_rows),
+            "excluded_rows": max(0, len(table.rows) - len(complete_assignment_rows)),
+            "excluded_partition_rows": excluded_partition_rows,
             "assignment_rows_returned": len(visible_rows),
             "identity_fields": list(identity_fields),
             "auto_cluster_count": True,
-            "selection_criterion": "BIC" if spec.method == "gmm" else "K-means spherical BIC",
-            "selected_clusters": selected_by_partition[0]["selected_k"] if len(selected_by_partition) == 1 else selected_by_partition,
+            "selection_criterion": "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)",
+            "selected_clusters": (
+                selected_by_partition[0]["selected_k"] if len(selected_by_partition) == 1 else selected_by_partition
+            ),
             "selection_by_partition": selected_by_partition,
         },
     }
@@ -242,7 +361,12 @@ def install_auto_cluster() -> None:
         return
     original = n.NumericalExecutor.clustering
 
-    def clustering(self: n.NumericalExecutor, table: n.NumericalTable, spec: n.ClusteringSpec, progress=None):
+    def clustering(
+        self: n.NumericalExecutor,
+        table: n.NumericalTable,
+        spec: n.ClusteringSpec,
+        progress=None,
+    ):
         if int(spec.clusters) != 0:
             return original(self, table, spec, progress)
         return _auto_clustering(table, spec, progress)
