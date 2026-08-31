@@ -22,148 +22,105 @@ STATCAST_CSV_URL = (
     "&min_results=0&group_by=name&sort_col=pitches&player_event_sort=h_launch_speed"
     "&sort_order=desc&min_abs=0&type=details&"
 )
-SPIN_API_URL = f"{BASE}/savant/api/v1/spin-direction-pitches?pitcher={OHTANI}&year={YEAR}&pov=Pit"
+SPIN_API = f"{BASE}/savant/api/v1/spin-direction-pitches"
 
 
-def circular_mean_degrees(values: list[float]) -> float | None:
+def parse_float(value):
+    try:
+        return None if value in (None, "") else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def circular_mean(values: list[float]) -> float | None:
     if not values:
         return None
-    x = sum(math.cos(math.radians(value)) for value in values) / len(values)
-    y = sum(math.sin(math.radians(value)) for value in values) / len(values)
+    x = sum(math.cos(math.radians(v)) for v in values)
+    y = sum(math.sin(math.radians(v)) for v in values)
     return math.degrees(math.atan2(y, x)) % 360
 
 
-def circular_difference(a: float | None, b: float | None) -> float | None:
+def circular_diff(a: float | None, b: float | None) -> float | None:
     if a is None or b is None:
         return None
     return abs((a - b + 180) % 360 - 180)
 
 
-def parse_float(value):
-    try:
-        if value is None or value == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def csv_probe(session: requests.Session) -> dict:
+def load_pitch_axes(session: requests.Session) -> tuple[int, dict[str, list[float]]]:
     response = session.get(STATCAST_CSV_URL, timeout=120)
     response.raise_for_status()
-    text = response.content.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")))
     rows = list(reader)
-    by_pitch = defaultdict(list)
-    missing_by_pitch = defaultdict(int)
-    total_by_pitch = defaultdict(int)
-    sample_rows = []
+    by_pitch: dict[str, list[float]] = defaultdict(list)
     for row in rows:
         pitch_type = row.get("pitch_type") or ""
         axis = parse_float(row.get("spin_axis"))
-        if pitch_type:
-            total_by_pitch[pitch_type] += 1
-            if axis is None:
-                missing_by_pitch[pitch_type] += 1
-            else:
-                by_pitch[pitch_type].append(axis)
-        if len(sample_rows) < 6 and pitch_type:
-            sample_rows.append({
-                "game_date": row.get("game_date"),
-                "game_type": row.get("game_type"),
-                "game_pk": row.get("game_pk"),
-                "at_bat_number": row.get("at_bat_number"),
-                "pitch_number": row.get("pitch_number"),
-                "pitch_type": pitch_type,
-                "release_speed": row.get("release_speed"),
-                "release_spin_rate": row.get("release_spin_rate"),
-                "spin_axis": row.get("spin_axis"),
-            })
-    return {
-        "status": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "bytes": len(response.content),
-        "row_count": len(rows),
-        "columns_prefix": (reader.fieldnames or [])[:12],
-        "game_type_counts": dict(sorted({
-            game_type: sum(1 for row in rows if row.get("game_type") == game_type)
-            for game_type in {row.get("game_type") for row in rows if row.get("game_type")}
-        }.items())),
-        "pitch_types": {
-            pitch_type: {
-                "total_n": total_by_pitch[pitch_type],
-                "spin_axis_n": len(values),
-                "missing_spin_axis_n": missing_by_pitch[pitch_type],
-                "circular_mean_spin_axis": circular_mean_degrees(values),
-                "arithmetic_mean_spin_axis": sum(values) / len(values) if values else None,
-                "min": min(values) if values else None,
-                "max": max(values) if values else None,
-            }
-            for pitch_type, values in sorted(by_pitch.items())
+        if pitch_type and axis is not None:
+            by_pitch[pitch_type].append(axis)
+    return len(rows), dict(by_pitch)
+
+
+def load_savant_aggregate(session: requests.Session, pitch_type: str) -> dict:
+    response = session.get(
+        SPIN_API,
+        params={
+            "pitcher": OHTANI,
+            "year": YEAR,
+            "pitch_type": pitch_type,
+            "pov": "Pit",
         },
-        "sample_rows": sample_rows,
-    }
-
-
-def spin_aggregate_probe(session: requests.Session) -> dict:
-    response = session.get(SPIN_API_URL, timeout=60)
+        timeout=60,
+    )
     response.raise_for_status()
     payload = response.json()
-    rows = payload if isinstance(payload, list) else payload.get("data", payload.get("rows", [])) if isinstance(payload, dict) else []
-    selected = []
-    for row in rows:
-        if not isinstance(row, dict) or int(row.get("season") or YEAR) != YEAR:
-            continue
-        selected.append({
-            "api_pitch_type": row.get("api_pitch_type"),
-            "n_pitches": row.get("n_pitches"),
-            "hawkeye_measured": parse_float(row.get("hawkeye_measured")),
-            "movement_inferred": parse_float(row.get("movement_inferred")),
-            "hawkeye_measured_clock_label": row.get("hawkeye_measured_clock_label"),
-            "movement_inferred_clock_label": row.get("movement_inferred_clock_label"),
-        })
+    rows = payload if isinstance(payload, list) else payload.get("data", payload.get("rows", []))
+    candidates = [
+        row for row in rows
+        if isinstance(row, dict)
+        and row.get("api_pitch_type") == pitch_type
+        and int(row.get("season") or YEAR) == YEAR
+    ]
+    if not candidates:
+        return {"pitch_type": pitch_type, "found": False, "response_rows": len(rows)}
+    row = candidates[0]
     return {
-        "status": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "bytes": len(response.content),
-        "rows": selected,
+        "pitch_type": pitch_type,
+        "found": True,
+        "n_pitches": row.get("n_pitches"),
+        "hawkeye_measured": parse_float(row.get("hawkeye_measured")),
+        "movement_inferred": parse_float(row.get("movement_inferred")),
+        "hawkeye_clock": row.get("hawkeye_measured_clock_label"),
+        "inferred_clock": row.get("movement_inferred_clock_label"),
     }
-
-
-def comparison(csv_data: dict, spin_data: dict) -> list[dict]:
-    by_type = {row["api_pitch_type"]: row for row in spin_data["rows"] if row.get("api_pitch_type")}
-    out = []
-    for pitch_type, metrics in csv_data["pitch_types"].items():
-        aggregate = by_type.get(pitch_type)
-        if not aggregate:
-            continue
-        mean_axis = metrics["circular_mean_spin_axis"]
-        out.append({
-            "pitch_type": pitch_type,
-            "csv_total_n": metrics["total_n"],
-            "csv_spin_axis_n": metrics["spin_axis_n"],
-            "csv_missing_spin_axis_n": metrics["missing_spin_axis_n"],
-            "leaderboard_n_pitches": aggregate.get("n_pitches"),
-            "csv_circular_mean_spin_axis": mean_axis,
-            "csv_arithmetic_mean_spin_axis": metrics["arithmetic_mean_spin_axis"],
-            "leaderboard_hawkeye_measured": aggregate.get("hawkeye_measured"),
-            "difference_deg": circular_difference(mean_axis, aggregate.get("hawkeye_measured")),
-            "leaderboard_movement_inferred": aggregate.get("movement_inferred"),
-            "difference_vs_inferred_deg": circular_difference(mean_axis, aggregate.get("movement_inferred")),
-            "measured_clock": aggregate.get("hawkeye_measured_clock_label"),
-            "inferred_clock": aggregate.get("movement_inferred_clock_label"),
-        })
-    return out
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/21.0)"})
-    csv_data = csv_probe(session)
-    spin_data = spin_aggregate_probe(session)
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/22.0)"})
+    row_count, by_pitch = load_pitch_axes(session)
+    comparisons = []
+    for pitch_type, values in sorted(by_pitch.items()):
+        aggregate = load_savant_aggregate(session, pitch_type)
+        mean_axis = circular_mean(values)
+        reverse_axis = None if mean_axis is None else (360 - mean_axis) % 360
+        comparisons.append({
+            **aggregate,
+            "csv_n": len(values),
+            "csv_circular_mean_spin_axis": mean_axis,
+            "reverse_360_minus_spin_axis": reverse_axis,
+            "direct_difference_deg": circular_diff(mean_axis, aggregate.get("hawkeye_measured")),
+            "reverse_difference_deg": circular_diff(reverse_axis, aggregate.get("hawkeye_measured")),
+            "reverse_difference_vs_inferred_deg": circular_diff(reverse_axis, aggregate.get("movement_inferred")),
+            "csv_min": min(values),
+            "csv_max": max(values),
+        })
     report = {
-        "statcast_csv": csv_data,
-        "spin_direction_aggregate": spin_data,
-        "per_pitch_spin_axis_vs_hawkeye_measured": comparison(csv_data, spin_data),
+        "regular_season_csv_rows": row_count,
+        "pitch_types": sorted(by_pitch),
+        "comparisons": comparisons,
+        "mean_reverse_difference_deg": (
+            sum(row["reverse_difference_deg"] for row in comparisons if row.get("reverse_difference_deg") is not None)
+            / sum(row.get("reverse_difference_deg") is not None for row in comparisons)
+        ),
     }
-    pytest.fail("\n===== REGULAR-SEASON SPIN_AXIS VS HAWKEYE_MEASURED REPORT =====\n" + json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    pytest.fail("\n===== ALL-PITCH-TYPE SPIN AXIS COORDINATE REPORT =====\n" + json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
