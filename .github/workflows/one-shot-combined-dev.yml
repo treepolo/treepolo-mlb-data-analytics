@@ -1,6 +1,6 @@
 name: One-shot supplemental data and CAP-04 integration
 
-# Temporary integration harness; deletes itself after all acceptance checks pass.
+# Temporary integration harness; deletes itself after all acceptance checks pass. Attempt 4.
 on:
   push:
     branches:
