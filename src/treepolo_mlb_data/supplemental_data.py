@@ -142,7 +142,19 @@ class SupplementalClient:
         return self.get(f"{BASE}/app/pitch-data/{pitcher}", params=params)
 
     def spin_aggregate(self, pitcher: int) -> requests.Response:
-        return self.get(f"{BASE}/savant-player/{pitcher}", params={"playerType": "pitcher"})
+        # Savant's numeric-only player route can silently render the batting
+        # variant even when playerType=pitcher is requested.  Resolve the
+        # canonical slug from that page, then fetch the slugged pitching page,
+        # which is the page that actually embeds serverVals.spinAxis.
+        first = self.get(f"{BASE}/savant-player/{pitcher}", params={"playerType": "pitcher"})
+        first_text = first.content.decode("utf-8", errors="replace")
+        if "image_spin_x" in first_text and re.search(r"\bspinAxis\s*:\s*\[", first_text):
+            return first
+        match = re.search(r"\bslug\s*:\s*['\"]([^'\"]+)['\"]", first_text)
+        if not match:
+            raise ValueError(f"Could not resolve Savant player slug for pitcher {pitcher}")
+        slug = match.group(1)
+        return self.get(f"{BASE}/savant-player/{slug}", params={"playerType": "pitcher"})
 
 
 class SupplementalStore:
@@ -334,18 +346,24 @@ class SupplementalStore:
             return "REAL"
         return "TEXT"
 
+    @staticmethod
+    def _schema_dataset(source: str, dataset: str) -> str:
+        return "__shared__" if source == "pitch3d" else dataset
+
     def _column_map(self, source: str, dataset: str) -> dict[str, str]:
+        schema_dataset = self._schema_dataset(source, dataset)
         return {
             str(row[0]): str(row[1])
             for row in self.conn.execute(
                 "SELECT original_name,column_name FROM supplemental_schema WHERE source=? AND dataset=?",
-                (source, dataset),
+                (source, schema_dataset),
             )
         }
 
     def _ensure_dynamic_columns(
         self, table: str, source: str, dataset: str, rows: list[dict[str, Any]], reserved: set[str]
     ) -> dict[str, str]:
+        schema_dataset = self._schema_dataset(source, dataset)
         mapping = self._column_map(source, dataset)
         table_columns = {str(row[1]) for row in self.conn.execute(f"PRAGMA table_info({_quote(table)})")}
         keys = list(dict.fromkeys(key for row in rows for key in row.keys()))
@@ -354,7 +372,7 @@ class SupplementalStore:
             if original in mapping:
                 self.conn.execute(
                     "UPDATE supplemental_schema SET last_seen_at=? WHERE source=? AND dataset=? AND original_name=?",
-                    (now, source, dataset, original),
+                    (now, source, schema_dataset, original),
                 )
                 continue
             base = _SAFE_NAME.sub("_", str(original)).strip("_") or "field"
@@ -373,7 +391,7 @@ class SupplementalStore:
                 """INSERT INTO supplemental_schema
                    (source,dataset,original_name,column_name,sqlite_type,first_seen_at,last_seen_at)
                    VALUES(?,?,?,?,?,?,?)""",
-                (source, dataset, original, candidate, sql_type, now, now),
+                (source, schema_dataset, original, candidate, sql_type, now, now),
             )
             mapping[original] = candidate
             table_columns.add(candidate)

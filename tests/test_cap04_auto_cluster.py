@@ -37,7 +37,7 @@ def test_auto_kmeans_can_select_one_cluster():
     assert rows[0]["candidate_k"] == 1
     assert rows[0]["valid"] is True
     assert rows[0]["selected"] is True
-    assert rows[0]["criterion"] == "K-means spherical BIC"
+    assert rows[0]["criterion"] == "Full-covariance GMM BIC (K-means selector)"
 
 
 def test_auto_kmeans_finds_two_clear_groups():

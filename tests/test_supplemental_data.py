@@ -156,3 +156,35 @@ def test_pitch3d_mlb_and_milb_are_separate_namespaces(tmp_path):
         assert store.conn.execute("SELECT COUNT(*) FROM pitch3d_pitches").fetchone()[0] == 2
         assert store.conn.execute("SELECT COUNT(*) FROM pitch3d_pitches WHERE dataset='mlb'").fetchone()[0] == 1
         assert store.conn.execute("SELECT COUNT(*) FROM pitch3d_pitches WHERE dataset='milb'").fetchone()[0] == 1
+        schema_datasets = {
+            row[0] for row in store.conn.execute(
+                "SELECT DISTINCT dataset FROM supplemental_schema WHERE source='pitch3d'"
+            )
+        }
+        assert schema_datasets == {"__shared__"}
+
+
+def test_spin_aggregate_resolves_slugged_pitcher_page(tmp_path, monkeypatch):
+    cfg = config(tmp_path)
+    client = SupplementalClient(cfg)
+    numeric = FakeResponse(
+        b"<html><script>var serverVals={slug: 'shohei-ohtani-660271', spinAxis: {}};</script></html>",
+        "text/html; charset=utf-8",
+    )
+    pitching = FakeResponse(
+        b'<html><script>var serverVals={spinAxis: [{"image_spin_x":0.1}]};</script></html>',
+        "text/html; charset=utf-8",
+    )
+    calls = []
+
+    def fake_get(url, *, params=None):
+        calls.append((url, params))
+        return numeric if url.endswith('/savant-player/660271') else pitching
+
+    monkeypatch.setattr(client, 'get', fake_get)
+    response = client.spin_aggregate(660271)
+    assert response is pitching
+    assert calls == [
+        ('https://baseballsavant.mlb.com/savant-player/660271', {'playerType': 'pitcher'}),
+        ('https://baseballsavant.mlb.com/savant-player/shohei-ohtani-660271', {'playerType': 'pitcher'}),
+    ]

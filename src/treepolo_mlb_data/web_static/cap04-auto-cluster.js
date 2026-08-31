@@ -23,7 +23,7 @@
     const method = document.querySelector("#s4-cluster-method");
 
     function renderHint() {
-      const criterion = method?.value === "gmm" ? "BIC" : "K-means spherical BIC";
+      const criterion = method?.value === "gmm" ? "BIC" : "Full-covariance GMM BIC（K-means 選模）";
       hint.textContent = auto.checked
         ? `Auto K 會從 K=1 開始比較，使用 ${criterion}；K 上限依樣本數自動調整，並拒絕過小群。結果會另外輸出每個候選 K 的診斷。`
         : "手動模式維持原本 K=2～50。";

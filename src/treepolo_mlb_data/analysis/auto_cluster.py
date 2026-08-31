@@ -66,68 +66,30 @@ def _candidate_validity(k: int, sizes: list[int], minimum_size: int) -> tuple[bo
     return True, None
 
 
-def _gap_candidates(
+def _kmeans_bic_candidates(
     matrix: Any,
     max_k: int,
     minimum_size: int,
     seed: int,
-    *,
-    references: int = 8,
 ) -> list[_Candidate]:
-    """Compute Tibshirani-style Gap Statistic candidates including K=1.
+    """Score candidate K with full-covariance Gaussian-mixture BIC, including K=1.
 
-    Reference datasets are sampled uniformly from the observed feature-wise
-    bounding box.  Selection later applies the standard 1-SE stopping rule so
-    Auto K prefers the smallest K whose compactness is already statistically
-    indistinguishable from the next valid candidate.
+    Candidate validity is still evaluated on the actual K-means partition, so
+    minimum-cluster-size protection describes the model that will be returned.
+    Full covariance is important here: a spherical Gaussian proxy can reduce BIC
+    by fragmenting one elongated cluster into many nuisance components.
     """
-    if len(matrix) == 0:
-        return []
-    matrix = n.np.asarray(matrix, dtype=float)
-    lower = n.np.min(matrix, axis=0)
-    upper = n.np.max(matrix, axis=0)
-    span = upper - lower
-    rng = n.np.random.default_rng(seed)
-    reference_matrices = [lower + rng.random(matrix.shape) * span for _ in range(max(1, references))]
-    epsilon = 1e-12
     candidates: list[_Candidate] = []
-
     for k in range(1, max_k + 1):
         try:
-            labels, _, inertia = _fit_kmeans(matrix, k, seed)
+            labels, _, _ = _fit_kmeans(matrix, k, seed)
             sizes = _cluster_sizes(labels, k)
             valid, reason = _candidate_validity(k, sizes, minimum_size)
-            reference_logs: list[float] = []
-            for ref_index, reference in enumerate(reference_matrices):
-                _, _, ref_inertia = _fit_kmeans(reference, k, seed + ref_index + 1)
-                reference_logs.append(log(max(ref_inertia, epsilon)))
-            observed_log = log(max(inertia, epsilon))
-            mean_reference_log = float(n.np.mean(reference_logs))
-            gap = mean_reference_log - observed_log
-            if len(reference_logs) > 1:
-                std = float(n.np.std(reference_logs, ddof=1))
-                standard_error = std * sqrt(1.0 + 1.0 / len(reference_logs))
-            else:
-                standard_error = 0.0
-            candidates.append(_Candidate(k, gap, standard_error, valid, reason, sizes))
+            _, _, _, bic = _fit_gmm(matrix, k, seed)
+            candidates.append(_Candidate(k, bic, None, valid, reason, sizes))
         except Exception as exc:
             candidates.append(_Candidate(k, None, None, False, str(exc), []))
     return candidates
-
-
-def _select_gap_k(candidates: list[_Candidate]) -> int:
-    valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
-    if not valid:
-        return 1
-    if len(valid) == 1:
-        return valid[0].k
-    for index, candidate in enumerate(valid[:-1]):
-        next_candidate = valid[index + 1]
-        next_error = float(next_candidate.standard_error or 0.0)
-        if float(candidate.score) >= float(next_candidate.score) - next_error:
-            return candidate.k
-    best = max(valid, key=lambda item: (float(item.score), -item.k))
-    return best.k
 
 
 def _bic_candidates(matrix: Any, max_k: int, minimum_size: int, seed: int) -> list[_Candidate]:
@@ -150,8 +112,10 @@ def _choose_k(matrix: Any, method: str, seed: int) -> tuple[int, list[_Candidate
     minimum_size = min(row_count, _minimum_cluster_size(row_count))
     max_k = min(row_count, _adaptive_max_k(row_count, minimum_size))
     if method == "kmeans":
-        candidates = _gap_candidates(matrix, max_k, minimum_size, seed)
-        return _select_gap_k(candidates), candidates, minimum_size, max_k
+        candidates = _kmeans_bic_candidates(matrix, max_k, minimum_size, seed)
+        valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
+        selected = min(valid, key=lambda item: (float(item.score), item.k)).k if valid else 1
+        return selected, candidates, minimum_size, max_k
     if method == "gmm":
         candidates = _bic_candidates(matrix, max_k, minimum_size, seed)
         valid = [candidate for candidate in candidates if candidate.valid and candidate.score is not None]
@@ -238,7 +202,7 @@ def _auto_clustering(
                 "adaptive_max_k": max_k,
             }
         )
-        criterion = "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)"
+        criterion = "BIC" if spec.method == "gmm" else "Full-covariance GMM BIC (K-means selector)"
         for candidate in candidates:
             diagnostic_rows.append(
                 {
@@ -347,7 +311,7 @@ def _auto_clustering(
             "assignment_rows_returned": len(visible_rows),
             "identity_fields": list(identity_fields),
             "auto_cluster_count": True,
-            "selection_criterion": "BIC" if spec.method == "gmm" else "Gap statistic (1-SE)",
+            "selection_criterion": "BIC" if spec.method == "gmm" else "Full-covariance GMM BIC (K-means selector)",
             "selected_clusters": (
                 selected_by_partition[0]["selected_k"] if len(selected_by_partition) == 1 else selected_by_partition
             ),

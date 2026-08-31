@@ -88,6 +88,8 @@
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
+    await loadScriptOnce("/supplemental-data.js", "supplementalData");
+    await loadScriptOnce("/cap04-auto-cluster.js", "cap04AutoCluster");
 
     await waitForFieldCatalog();
     commitFieldLegality();
