@@ -388,7 +388,7 @@ Stage 4D 前，結果維持 table-first，不建立第二套圖表統計邏輯�
 
 ## 3. 十個架構壓力測試需求
 
-十題同時扮演長期架構題與 acceptance suite。Stage 4A–C closure 時十題核心能力皆已覆蓋；詳細 remediation 與人工驗收見 `docs/STAGE4_ACCEPTANCE_REPORT.md`。
+十題同時扮演長期架構題與 acceptance suite。Stage 4A–4C closure 時十題核心能力皆已覆蓋；詳細 remediation 與人工驗收見 `docs/STAGE4_ACCEPTANCE_REPORT.md`。
 
 ### 1. 三顆 Sweeper 的兩個極端球序
 
@@ -450,7 +450,7 @@ Arsenal Signature → group-level relative selector → per-entity clustering �
 
 **狀態：PASS。Multi-stage Cluster Comparison 已產品化；CAP-04 又補上 Auto K，包括 K=1。**
 
-K-means 與 Gaussian Mixture 已支援；DBSCAN / HDBSCAN 仍只是候選擴充，不是 Stage 4A–C 完成條件。
+K-means 與 Gaussian Mixture 已支援；DBSCAN / HDBSCAN 仍只是候選擴充，不是 Stage 4A–4C 完成條件。
 
 ---
 
@@ -573,7 +573,6 @@ Window / lag / lead / rank / percentile、cross-grain Join、CollectSet / arsena
 - sample-size / uncertainty visualization。
 - richer comparison presentation。
 - preset / library UX 深化。
-- 視需要 AI → AST。
 
 圖表不得另寫第二套統計邏輯；只能消費正式 analysis result / typed result contract。
 
