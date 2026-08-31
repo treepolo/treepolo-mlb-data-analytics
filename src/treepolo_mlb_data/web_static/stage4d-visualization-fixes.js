@@ -107,8 +107,18 @@
 
   function drawHorizontal(svg,groups,opts){const {left,right,top,bottom,vMin,vMax,yField,seriesField,categories,stacked,opacity,showLabels}=opts;const sx=scale([vMin,vMax],[left,right]),zero=sx(Math.max(vMin,Math.min(vMax,0))),groupHeight=(bottom-top)/Math.max(1,groups.length);for(let tick=0;tick<=5;tick++){const ratio=tick/5,x=left+ratio*(right-left),value=vMin+ratio*(vMax-vMin);svg.append(svgEl("line",{x1:x,y1:top,x2:x,y2:bottom,class:"viz-gridline"}),svgEl("text",{x,y:bottom+18,"text-anchor":"middle",class:"viz-label"},fmt(value)));}svg.append(svgEl("line",{x1:left,y1:bottom,x2:right,y2:bottom,class:"viz-axis"}),svgEl("line",{x1:left,y1:top,x2:left,y2:bottom,class:"viz-axis"}));groups.forEach((group,gIndex)=>{const cy=top+(gIndex+.5)*groupHeight;svg.append(svgEl("text",{x:left-8,y:cy+4,"text-anchor":"end",class:"viz-label"},group.label.slice(0,20)));let pos=0,neg=0;const barHeight=stacked?Math.max(4,groupHeight*.62):Math.max(3,groupHeight*.7/Math.max(1,group.rows.length));group.rows.forEach((row,rIndex)=>{const value=numeric(row[yField]);if(value==null)return;const category=seriesField?String(row[seriesField]??"—"):"All";let start=0,end=value,y=cy;if(stacked){if(value>=0){start=pos;pos+=value;end=pos;}else{start=neg;neg+=value;end=neg;}}else{y=cy+(rIndex-(group.rows.length-1)/2)*barHeight;}const x1=sx(start),x2=sx(end);const rect=svgEl("rect",{x:Math.min(x1,x2),y:y-barHeight/2,width:Math.max(1,Math.abs(x2-x1)),height:Math.max(2,barHeight-1),fill:color(category,categories),opacity});rect.append(svgEl("title",{},`${group.label} · ${category} · ${fmt(value)}`));svg.append(rect);if(showLabels&&!stacked)svg.append(svgEl("text",{x:x2+(value>=0?4:-4),y:y+4,"text-anchor":value>=0?"start":"end",class:"viz-label"},fmt(value)));});});}
 
+  function restoreNavigationOrder(){
+    const nav=$(".navigation-pane");if(!nav)return;
+    const groups=Array.from(nav.querySelectorAll(":scope > .task-group"));
+    const dataGroup=groups.find(group=>group.querySelector(".task-group-title")?.textContent.includes("資料 Data"));
+    const output=$("#stage4d-output-nav",nav);
+    if(dataGroup&&nav.firstElementChild!==dataGroup)nav.prepend(dataGroup);
+    if(output&&nav.lastElementChild!==output)nav.append(output);
+  }
+
   function scheduleIfNeeded(){setTimeout(renderAdvancedBars,0);}
   document.addEventListener("DOMContentLoaded",()=>{
+    restoreNavigationOrder();setTimeout(restoreNavigationOrder,0);
     const panel=$("#visualization-panel")||document.body;
     panel.addEventListener("change",event=>{if(event.target?.closest?.("#viz-type,#viz-bar-orientation,#viz-stacked,#viz-x,#viz-y,#viz-series,#viz-data-labels,#viz-title,#viz-subtitle,#viz-width,#viz-height,#viz-opacity,#viz-x-min,#viz-x-max,#viz-y-min,#viz-y-max,#viz-legend,#viz-show-n"))scheduleIfNeeded();});
     panel.addEventListener("click",event=>{if(event.target?.closest?.("#viz-render"))scheduleIfNeeded();});
