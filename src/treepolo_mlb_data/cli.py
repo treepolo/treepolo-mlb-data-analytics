@@ -70,7 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ui":
         from . import webapp
         from .stage4d import install as install_stage4d
+        from .stage4d_frontend_patch import install as install_stage4d_frontend_patch
         install_stage4d(webapp)
+        install_stage4d_frontend_patch(webapp)
         webapp.serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
         return 0
     if args.command == "analytics-sync":
