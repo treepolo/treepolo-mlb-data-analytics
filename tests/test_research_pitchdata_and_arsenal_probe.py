@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import PurePosixPath
 from urllib.parse import urljoin, urlparse
 
 import pytest
@@ -38,13 +39,14 @@ HIGH_VALUE_TERMS = (
     "orientation",
     "seam",
 )
+CALL_TERMS = ("fetch(", "$.ajax", "$.get", "axios", "d3.json", "XMLHttpRequest", "/player-services/", "/savant/api/")
 ENDPOINT_RE = re.compile(
     r"[\"'](\/+(?:player-services|savant\/api|leaderboard|api|app)\/[^\"'\\\s<>]{1,220})[\"']"
 )
 SCRIPT_RE = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.I)
 
 
-def compact(text: str, limit: int = 900) -> str:
+def compact(text: str, limit: int = 1100) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
 
 
@@ -60,69 +62,88 @@ def extract_script_urls(page_url: str, html: str) -> list[str]:
 
 
 def extract_endpoints(text: str) -> list[str]:
-    return sorted(set(ENDPOINT_RE.findall(text)))[:120]
+    return sorted(set(ENDPOINT_RE.findall(text)))[:160]
 
 
-def term_evidence(text: str, max_snippets: int = 28) -> dict:
+def counts(text: str, terms=HIGH_VALUE_TERMS) -> dict:
     lower = text.lower()
-    counts = {term: lower.count(term.lower()) for term in HIGH_VALUE_TERMS}
-    snippets = []
+    return {term: lower.count(term.lower()) for term in terms if lower.count(term.lower())}
+
+
+def snippets_for_terms(text: str, terms, max_total: int = 24, max_per_term: int = 3) -> list[dict]:
+    lower = text.lower()
+    out = []
     seen = set()
-    for term in HIGH_VALUE_TERMS:
+    for term in terms:
         needle = term.lower()
         start = 0
-        while len(snippets) < max_snippets:
+        found = 0
+        while len(out) < max_total and found < max_per_term:
             index = lower.find(needle, start)
             if index < 0:
                 break
-            snippet = compact(text[max(0, index - 340): index + len(term) + 620])
+            snippet = compact(text[max(0, index - 430): index + len(term) + 760])
             if snippet and snippet not in seen:
                 seen.add(snippet)
-                snippets.append({"term": term, "snippet": snippet})
+                out.append({"term": term, "snippet": snippet})
+                found += 1
             start = index + max(1, len(needle))
-        if len(snippets) >= max_snippets:
+        if len(out) >= max_total:
             break
-    return {"counts": counts, "snippets": snippets}
+    return out
 
 
-def probe_text(session: requests.Session, url: str, kind: str) -> dict:
+def fetch_text(session: requests.Session, url: str) -> tuple[requests.Response, str]:
     response = session.get(url, timeout=60)
-    text = response.text
-    evidence = term_evidence(text)
+    return response, response.text
+
+
+def bundle_summary(session: requests.Session, url: str) -> dict:
+    response, text = fetch_text(session, url)
+    term_counts = counts(text)
+    endpoints = extract_endpoints(text)
     return {
-        "kind": kind,
+        "name": PurePosixPath(urlparse(url).path).name,
+        "url": url,
+        "status": response.status_code,
+        "bytes": len(response.content),
+        "term_counts": term_counts,
+        "endpoint_count": len(endpoints),
+        "score": sum(term_counts.values()) + len(endpoints) * 3,
+    }
+
+
+def deep_bundle_probe(session: requests.Session, url: str) -> dict:
+    response, text = fetch_text(session, url)
+    return {
+        "name": PurePosixPath(urlparse(url).path).name,
         "url": url,
         "status": response.status_code,
         "content_type": response.headers.get("content-type"),
         "bytes": len(response.content),
+        "term_counts": counts(text),
+        "call_counts": counts(text, CALL_TERMS),
         "endpoints": extract_endpoints(text),
-        "term_counts": evidence["counts"],
-        "term_snippets": evidence["snippets"],
+        "high_value_snippets": snippets_for_terms(text, HIGH_VALUE_TERMS, max_total=24, max_per_term=2),
+        "call_snippets": snippets_for_terms(text, CALL_TERMS, max_total=16, max_per_term=2),
     }
 
 
-def probe_bundle(session: requests.Session, url: str) -> dict:
-    response = session.get(url, timeout=60)
-    content_type = response.headers.get("content-type") or ""
-    text = response.text if ("javascript" in content_type or "text" in content_type or urlparse(url).path.endswith(".js")) else ""
-    evidence = term_evidence(text, max_snippets=18) if text else {"counts": {}, "snippets": []}
-    hit_count = sum(evidence["counts"].values())
-    endpoints = extract_endpoints(text) if text else []
+def page_probe(session: requests.Session, url: str, kind: str) -> dict:
+    response, text = fetch_text(session, url)
     return {
+        "kind": kind,
         "url": url,
         "status": response.status_code,
-        "content_type": content_type,
         "bytes": len(response.content),
-        "hit_count": hit_count,
-        "endpoints": endpoints,
-        "term_counts": {key: value for key, value in evidence["counts"].items() if value},
-        "term_snippets": evidence["snippets"] if hit_count else [],
+        "term_counts": counts(text),
+        "endpoints": extract_endpoints(text),
     }
 
 
 def test_deep_spin_orientation_probe():
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/17.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/18.0)"})
 
     player = session.get(PLAYER_URL, timeout=60)
     player.raise_for_status()
@@ -137,19 +158,28 @@ def test_deep_spin_orientation_probe():
                 seen.add(url)
                 script_urls.append(url)
 
-    bundle_results = [probe_bundle(session, url) for url in script_urls[:50]]
-    interesting_bundles = [item for item in bundle_results if item["hit_count"] or item["endpoints"]]
+    summaries = [bundle_summary(session, url) for url in script_urls[:60]]
+    ranked = sorted((item for item in summaries if item["score"]), key=lambda item: (-item["score"], item["name"]))
+
+    preferred_urls = []
+    for url in script_urls:
+        name = PurePosixPath(urlparse(url).path).name.lower()
+        if "spin-axis-pitches" in name:
+            preferred_urls.append(url)
+    for item in ranked:
+        if item["url"] not in preferred_urls and len(preferred_urls) < 5:
+            preferred_urls.append(item["url"])
 
     report = {
-        "pages": [
-            probe_text(session, PLAYER_URL, "player_page_source"),
-            probe_text(session, SPIN_URL, "spin_direction_page_source"),
-            probe_text(session, BREAKDOWN_URL, "statcast_pitches_breakdown_fragment"),
-        ],
         "script_url_count": len(script_urls),
-        "script_urls": script_urls[:50],
-        "interesting_bundles": interesting_bundles,
+        "ranked_bundle_summaries": ranked[:15],
+        "deep_bundle_probes": [deep_bundle_probe(session, url) for url in preferred_urls[:5]],
+        "page_summaries": [
+            page_probe(session, PLAYER_URL, "player_page"),
+            page_probe(session, SPIN_URL, "spin_direction_page"),
+            page_probe(session, BREAKDOWN_URL, "pitch_breakdown_fragment"),
+        ],
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 90_000, f"source/bundle report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== SAVANT SOURCE + BUNDLE ENDPOINT REPORT =====\n" + rendered)
+    assert len(rendered) < 80_000, f"targeted bundle report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== TARGETED SAVANT JS BUNDLE REPORT =====\n" + rendered)
