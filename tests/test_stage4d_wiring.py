@@ -33,6 +33,15 @@ def test_visualization_workspace_wiring_and_output_navigation():
     assert "/api/report" in script
 
 
+def test_stage4d_navigation_keeps_data_first_and_output_last():
+    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes.js")
+    assert "function restoreNavigationOrder()" in fixups
+    assert 'textContent.includes("資料 Data")' in fixups
+    assert '$("#stage4d-output-nav",nav)' in fixups
+    assert "nav.prepend(dataGroup)" in fixups
+    assert "nav.append(output)" in fixups
+
+
 def test_stage4d_first_version_is_single_chart_without_permanent_lock_in():
     spec = read("docs/STAGE4D_SPEC.md")
     assert "第一版 Visualization 採 **單圖模式**" in spec
