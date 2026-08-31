@@ -19,10 +19,16 @@ SPIN_URL = f"{BASE}/leaderboard/spin-direction-pitches?year=2026&pitch_type=FF&m
 CANDIDATE_TERMS = ("hawk", "orient", "seam", "track", "spin", "pitch")
 API_MARKERS = ("/savant/api/", "/player-services/", "/app/", "/api/")
 DETAIL_PATH = "/leaderboard/spin-axis-by-pitcher"
+BREAKDOWN_PATH = "/player-services/statcast-pitches-breakdown"
 DETAIL_FIELDS = (
     "play_id", "pid", "game_pk", "at_bat_number", "pitch_number",
+    "pitch_type", "release_speed", "release_spin_rate", "spin_axis",
     "image_spin_x", "image_spin_y", "image_spin_z", "image_orientation_angle",
     "hawkeye_measured", "movement_inferred", "spinAxis",
+)
+DOM_TERMS = (
+    "spin-axis-by-pitcher", "measured", "inferred", "pitch_type", "pitch-type",
+    "spin direction", "spin-direction", "pov", "pitcher",
 )
 
 
@@ -94,6 +100,7 @@ def summarize_urls(urls: list[str]) -> dict:
     candidates = [url for url in target if any(term in url.lower() for term in CANDIDATE_TERMS)]
     same_origin = [url for url in target if urlparse(url).netloc.lower() == "baseballsavant.mlb.com"]
     detail_urls = sorted({url for url in target if urlparse(url).path == DETAIL_PATH})
+    breakdown_urls = sorted({url for url in target if urlparse(url).path == BREAKDOWN_PATH})
     return {
         "all_url_count": len(urls),
         "target_url_count": len(target),
@@ -101,8 +108,25 @@ def summarize_urls(urls: list[str]) -> dict:
         "same_origin_endpoint_count": len(endpoint_inventory(same_origin)),
         "api_endpoints": endpoint_inventory(api),
         "pitch_spin_tracking_endpoints": endpoint_inventory(candidates),
-        "spin_axis_by_pitcher_urls": detail_urls[:20],
+        "spin_axis_by_pitcher_urls": detail_urls[:8],
+        "statcast_pitches_breakdown_urls": breakdown_urls[:12],
     }
+
+
+def chrome_base_command(chrome: str, profile: Path) -> list[str]:
+    return [
+        chrome,
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--no-first-run",
+        "--no-default-browser-check",
+        f"--user-data-dir={profile}",
+    ]
 
 
 def capture_network(chrome: str, page_url: str) -> dict:
@@ -110,18 +134,7 @@ def capture_network(chrome: str, page_url: str) -> dict:
         root = Path(temp)
         netlog_path = root / "netlog.json"
         profile = root / "profile"
-        command = [
-            chrome,
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--disable-background-networking",
-            "--disable-component-update",
-            "--disable-default-apps",
-            "--no-first-run",
-            "--no-default-browser-check",
-            f"--user-data-dir={profile}",
+        command = chrome_base_command(chrome, profile) + [
             f"--log-net-log={netlog_path}",
             "--net-log-capture-mode=IncludeSensitive",
             "--virtual-time-budget=12000",
@@ -139,7 +152,7 @@ def capture_network(chrome: str, page_url: str) -> dict:
         item = {
             "page_url": page_url,
             "returncode": completed.returncode,
-            "stderr_tail": completed.stderr[-800:],
+            "stderr_tail": completed.stderr[-500:],
             "netlog_exists": netlog_path.exists(),
             "netlog_bytes": netlog_path.stat().st_size if netlog_path.exists() else 0,
         }
@@ -154,25 +167,92 @@ def capture_network(chrome: str, page_url: str) -> dict:
         return item
 
 
-def probe_detail_url(session: requests.Session, url: str) -> dict:
+def capture_dom_evidence(chrome: str, page_url: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="savant-dom-") as temp:
+        root = Path(temp)
+        profile = root / "profile"
+        dom_path = root / "dom.html"
+        command = chrome_base_command(chrome, profile) + [
+            "--virtual-time-budget=12000",
+            "--dump-dom",
+            page_url,
+        ]
+        with dom_path.open("w", encoding="utf-8") as output:
+            completed = subprocess.run(
+                command,
+                stdout=output,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        text = dom_path.read_text(encoding="utf-8", errors="replace") if dom_path.exists() else ""
+        lower = text.lower()
+        snippets = []
+        seen = set()
+        for term in DOM_TERMS:
+            start = 0
+            while len(snippets) < 24:
+                index = lower.find(term.lower(), start)
+                if index < 0:
+                    break
+                snippet = re.sub(r"\s+", " ", text[max(0, index - 260): index + 520]).strip()
+                snippet = snippet[:780]
+                if snippet not in seen:
+                    seen.add(snippet)
+                    snippets.append({"term": term, "snippet": snippet})
+                start = index + max(1, len(term))
+            if len(snippets) >= 24:
+                break
+        return {
+            "page_url": page_url,
+            "returncode": completed.returncode,
+            "dom_bytes": len(text.encode("utf-8")),
+            "term_counts": {term: lower.count(term.lower()) for term in DOM_TERMS},
+            "snippets": snippets,
+        }
+
+
+def json_shape(value, depth: int = 0):
+    if depth >= 3:
+        return type(value).__name__
+    if isinstance(value, dict):
+        keys = sorted(value)[:30]
+        return {key: json_shape(value[key], depth + 1) for key in keys}
+    if isinstance(value, list):
+        return {
+            "type": "list",
+            "length": len(value),
+            "sample": json_shape(value[0], depth + 1) if value else None,
+        }
+    return type(value).__name__
+
+
+def probe_json_url(session: requests.Session, url: str) -> dict:
     response = session.get(url, timeout=60)
     text = response.text
-    return {
+    item = {
         "url": url,
         "status": response.status_code,
         "content_type": response.headers.get("content-type"),
         "bytes": len(response.content),
         "field_counts": {field: text.count(field) for field in DETAIL_FIELDS},
-        "title": (re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.I | re.S).group(1).strip()
-                  if re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.I | re.S) else None),
     }
+    try:
+        payload = response.json()
+    except Exception as exc:
+        item["json_error"] = repr(exc)
+        item["text_prefix"] = re.sub(r"\s+", " ", text[:1200])
+        return item
+    item["json_shape"] = json_shape(payload)
+    return item
 
 
 def test_deep_spin_orientation_probe():
     chrome = chrome_executable()
     version = subprocess.run([chrome, "--version"], capture_output=True, text=True, check=False)
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/15.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; one-off-research/16.0)"})
     pid = first_video_pid(session)
 
     captures = [
@@ -180,20 +260,19 @@ def test_deep_spin_orientation_probe():
         capture_network(chrome, SPIN_URL),
         capture_network(chrome, f"{BASE}/sporty-videos?playId={pid}"),
     ]
-    discovered_detail_urls = sorted({
+    breakdown_urls = sorted({
         url
         for capture in captures
-        for url in capture.get("spin_axis_by_pitcher_urls", [])
+        for url in capture.get("statcast_pitches_breakdown_urls", [])
     })
-    fallback_detail = f"{BASE}{DETAIL_PATH}?pitcher={OHTANI}&pov=Pit&type=FF"
-    urls_to_probe = discovered_detail_urls[:5] or [fallback_detail]
 
     report = {
         "chrome": chrome,
         "chrome_version": version.stdout.strip() or version.stderr.strip(),
         "captures": captures,
-        "spin_axis_by_pitcher_probes": [probe_detail_url(session, url) for url in urls_to_probe],
+        "statcast_pitches_breakdown_probes": [probe_json_url(session, url) for url in breakdown_urls[:8]],
+        "spin_direction_rendered_dom": capture_dom_evidence(chrome, SPIN_URL),
     }
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    assert len(rendered) < 60_000, f"browser network report unexpectedly grew to {len(rendered)} bytes"
-    pytest.fail("\n===== REAL CHROME SAVANT NETWORK REPORT =====\n" + rendered)
+    assert len(rendered) < 80_000, f"browser research report unexpectedly grew to {len(rendered)} bytes"
+    pytest.fail("\n===== SAVANT BREAKDOWN + RENDERED DOM REPORT =====\n" + rendered)
