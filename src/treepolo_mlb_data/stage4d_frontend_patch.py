@@ -25,6 +25,7 @@ def install(webapp_module: Any) -> None:
         preset_state_reset = webapp_module.STATIC_DIR / "stage4d-preset-state-reset.js"
         font_minimum_compat = webapp_module.STATIC_DIR / "font-minimum-compat.js"
         layout_containment = webapp_module.STATIC_DIR / "stage4d-layout-containment.js"
+        save_lifecycle = webapp_module.STATIC_DIR / "stage4d-save-lifecycle.js"
         body = (
             primary.read_bytes()
             + b"\n"
@@ -35,6 +36,8 @@ def install(webapp_module: Any) -> None:
             + font_minimum_compat.read_bytes()
             + b"\n"
             + layout_containment.read_bytes()
+            + b"\n"
+            + save_lifecycle.read_bytes()
         )
         content_type = mimetypes.guess_type(primary.name)[0] or "text/javascript"
         self.send_response(200)
