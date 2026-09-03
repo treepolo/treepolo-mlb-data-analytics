@@ -8,7 +8,7 @@ def install(webapp_module: Any) -> None:
     """Append small renderer fixups to the Stage 4D browser bundle.
 
     Stage 4D is intentionally layered on the existing static UI. Serving the
-    fixup after the main bundle lets focused renderer/lifecycle corrections stay
+    fixups after the main bundle lets focused renderer/lifecycle corrections stay
     isolated without creating a second application entry point.
     """
 
@@ -22,7 +22,14 @@ def install(webapp_module: Any) -> None:
             return original_static(self, request_path)
         primary = webapp_module.STATIC_DIR / "stage4d-visualization.js"
         fixups = webapp_module.STATIC_DIR / "stage4d-visualization-fixes.js"
-        body = primary.read_bytes() + b"\n" + fixups.read_bytes()
+        preset_state_reset = webapp_module.STATIC_DIR / "stage4d-preset-state-reset.js"
+        body = (
+            primary.read_bytes()
+            + b"\n"
+            + fixups.read_bytes()
+            + b"\n"
+            + preset_state_reset.read_bytes()
+        )
         content_type = mimetypes.guess_type(primary.name)[0] or "text/javascript"
         self.send_response(200)
         self.send_header("Content-Type", content_type + "; charset=utf-8")
