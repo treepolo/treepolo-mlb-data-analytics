@@ -130,6 +130,20 @@ def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows
     assert "button.disabled = false" in lifecycle
 
 
+def test_stage4d_y_axis_title_keeps_clearance_from_tick_labels():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    axis_layout = read("src/treepolo_mlb_data/web_static/stage4d-axis-layout.js")
+    assert "stage4d-axis-layout.js" in patch
+    assert "MIN_VISUAL_GAP_PX" in axis_layout
+    assert "getBoundingClientRect" in axis_layout
+    assert "nearestTickLeft" in axis_layout
+    assert "currentGap" in axis_layout
+    assert "neededShift" in axis_layout
+    assert 'text.viz-label[transform^="rotate(-90"]' in axis_layout
+    assert 'text.viz-label[text-anchor="end"]' in axis_layout
+    assert "MutationObserver" in axis_layout
+
+
 def test_baseball_presets_do_not_add_an_external_asset_source():
     backend = read("src/treepolo_mlb_data/stage4d.py")
     manifest = read("research_assets/3d_baseball/upstream_manifest.json")
