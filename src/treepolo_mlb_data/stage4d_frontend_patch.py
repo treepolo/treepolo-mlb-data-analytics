@@ -24,12 +24,12 @@ def install(webapp_module: Any) -> None:
         static_dir = webapp_module.STATIC_DIR
         module_names = (
             "stage4d-visualization.js",
-            "stage4d-visualization-fixes.js",
+            "stage4d-visualization-fixes-v2.js",
             "stage4d-preset-state-reset.js",
             "font-minimum-compat.js",
             "stage4d-layout-containment.js",
             "stage4d-save-lifecycle.js",
-            "stage4d-saved-restore.js",
+            "stage4d-load-stability.js",
             "stage4d-axis-layout.js",
         )
         chunks = [(static_dir / name).read_bytes() for name in module_names]
