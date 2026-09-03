@@ -79,10 +79,8 @@ def test_section_or_preset_change_resets_stale_geometry_before_apply():
     assert 'target.matches("#viz-section")' in reset
     assert 'target.matches("#viz-preset")' in reset
     assert '$("#viz-equal-axes")' in reset
-    assert '$("#viz-ref-x")' in reset
-    assert '$("#viz-ref-y")' in reset
-    assert '$("#viz-x-min")' in reset
-    assert '$("#viz-y-min")' in reset
+    for selector in ("#viz-ref-x", "#viz-ref-y", "#viz-x-min", "#viz-x-max", "#viz-y-min", "#viz-y-max"):
+        assert f'"{selector}"' in reset
     assert '$("#viz-stacked")' in reset
     assert '$("#viz-bar-orientation")' in reset
     assert "}, true);" in reset
