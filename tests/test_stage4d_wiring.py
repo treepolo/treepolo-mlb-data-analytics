@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,8 +72,6 @@ def test_horizontal_stacked_bar_and_saved_section_fixups_are_loaded():
     assert "drawHorizontal" in fixups
     assert "drawVertical" in fixups
     assert "stacked" in fixups
-    assert "snapshot_hash" in patch
-    assert "legacy" not in patch.lower() or "snapshot_hash" in patch
     assert "pendingSavedVisualization.section_index" in fixups
 
 
@@ -134,15 +134,17 @@ def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows
     assert "button.disabled = false" in lifecycle
 
 
-def test_saved_visualization_spec_is_restored_after_data_load():
+def test_saved_visualization_spec_is_restored_after_data_and_saved_section_load():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
     restore = read("src/treepolo_mlb_data/web_static/stage4d-saved-restore.js")
     assert "stage4d-saved-restore.js" in patch
     assert "pendingSaved" in restore
+    assert "requestSavedSection" in restore
+    assert "snapshot_hash" in restore
+    assert "sectionSelect.value = String(wanted)" in restore
+    assert "loadButton.click()" in restore
     assert "setTimeout(() => restoreSpec(item), 0)" in restore
     assert 'setSelect("#viz-type"' in restore
-    for key in ("x", "y", "series", "label", "lower", "upper"):
-        assert f'`#viz-${{key}}`' in restore
     assert '$("#viz-render")' in restore
     assert "missing fields" in restore
     assert "Legacy Frozen visualization loaded" in restore
@@ -160,18 +162,58 @@ def test_frozen_snapshot_v2_is_content_addressed_and_multi_section():
     assert "legacy_frozen" in backend
 
 
-def test_stage4d_y_axis_spacing_uses_renderer_margin_not_text_shifting():
+def test_stage4d_y_axis_spacing_preserves_font_and_expands_viewport():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
     axis_layout = read("src/treepolo_mlb_data/web_static/stage4d-axis-layout.js")
     assert "stage4d-axis-layout.js" in patch
-    assert "treepoloStage4DLeftMargin" in axis_layout
-    assert "measureText" in axis_layout
-    assert "maxTickWidth" in axis_layout
-    assert "new_margin" in patch
-    assert "treepoloStage4DLeftMargin(yField,yValues,display)" in patch
-    assert "MutationObserver" not in axis_layout
-    assert "getBoundingClientRect" not in axis_layout
-    assert "neededShift" not in axis_layout
+    assert "MIN_GAP_PX" in axis_layout
+    assert "getBoundingClientRect" in axis_layout
+    assert "shiftUnits" in axis_layout
+    assert "OUTER_PADDING_PX" in axis_layout
+    assert 'svg.setAttribute(' in axis_layout and '"viewBox"' in axis_layout
+    assert "font-size" not in axis_layout
+    assert "MutationObserver" in axis_layout
+
+
+def test_frontend_patch_serves_complete_bundle_without_source_rewriting():
+    from treepolo_mlb_data import stage4d_frontend_patch
+
+    class FakeHandler:
+        def __init__(self):
+            self.status = None
+            self.headers = {}
+            self.wfile = io.BytesIO()
+
+        def _static(self, request_path: str) -> None:
+            raise AssertionError(f"unexpected fallback: {request_path}")
+
+        def send_response(self, status: int) -> None:
+            self.status = status
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers[key] = value
+
+        def end_headers(self) -> None:
+            pass
+
+    fake_webapp = SimpleNamespace(
+        STATIC_DIR=ROOT / "src" / "treepolo_mlb_data" / "web_static",
+        _Handler=FakeHandler,
+    )
+    stage4d_frontend_patch.install(fake_webapp)
+    handler = FakeHandler()
+    handler._static("/stage4d-visualization.js")
+    body = handler.wfile.getvalue().decode("utf-8")
+
+    assert handler.status == 200
+    assert handler.headers["Cache-Control"] == "no-store"
+    assert "輸出 Output" in body
+    assert "treepolo-minimum-font-compat" in body
+    assert "__treepoloStage4DSavedRestore" in body
+    assert "__treepoloStage4DAxisLayout" in body
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    assert ".replace(" not in patch
+    assert "RuntimeError" not in patch
 
 
 def test_baseball_presets_do_not_add_an_external_asset_source():
