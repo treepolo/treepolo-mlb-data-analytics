@@ -26,6 +26,7 @@ def install(webapp_module: Any) -> None:
         font_minimum_compat = webapp_module.STATIC_DIR / "font-minimum-compat.js"
         layout_containment = webapp_module.STATIC_DIR / "stage4d-layout-containment.js"
         save_lifecycle = webapp_module.STATIC_DIR / "stage4d-save-lifecycle.js"
+        axis_layout = webapp_module.STATIC_DIR / "stage4d-axis-layout.js"
         body = (
             primary.read_bytes()
             + b"\n"
@@ -38,6 +39,8 @@ def install(webapp_module: Any) -> None:
             + layout_containment.read_bytes()
             + b"\n"
             + save_lifecycle.read_bytes()
+            + b"\n"
+            + axis_layout.read_bytes()
         )
         content_type = mimetypes.guess_type(primary.name)[0] or "text/javascript"
         self.send_response(200)
