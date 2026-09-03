@@ -105,6 +105,18 @@ def test_large_browser_minimum_font_restores_original_density_and_type_scale():
     assert "window.addEventListener(\"resize\"" in compat
 
 
+def test_stage4d_two_column_controls_are_contained_in_their_grid_cells():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    containment = read("src/treepolo_mlb_data/web_static/stage4d-layout-containment.js")
+    assert "stage4d-layout-containment.js" in patch
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in containment
+    assert "min-width: 0" in containment
+    assert "width: 100%" in containment
+    assert "max-width: 100%" in containment
+    assert ".stage4d-map-grid > label > select" in containment
+    assert ".stage4d-display-grid > label > select" in containment
+
+
 def test_baseball_presets_do_not_add_an_external_asset_source():
     backend = read("src/treepolo_mlb_data/stage4d.py")
     manifest = read("research_assets/3d_baseball/upstream_manifest.json")
