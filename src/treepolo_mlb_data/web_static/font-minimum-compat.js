@@ -4,11 +4,17 @@
   if (window.__treepoloMinimumFontCompat) return;
   window.__treepoloMinimumFontCompat = true;
 
-  const BASE_FONT_PX = 12;
+  // The desktop UI intentionally uses a 10–16px typography scale. Chrome's
+  // minimum-font setting clamps every smaller declaration before page zoom is
+  // applied, so compensating from the 12px body size alone collapses the whole
+  // hierarchy. Base the compatibility zoom on the smallest designed size and
+  // pre-expand each intended font size before zooming back down.
+  const BODY_FONT_PX = 12;
+  const DESIGN_MIN_FONT_PX = 10;
   const ENABLE_THRESHOLD_PX = 14;
-  const MIN_SCALE = 0.45;
+  const MIN_SCALE = 0.40;
 
-  function measureEffectiveFontPx() {
+  function measureEffectiveMinimumFontPx() {
     const host = document.createElement("div");
     host.setAttribute("aria-hidden", "true");
     Object.assign(host.style, {
@@ -18,24 +24,26 @@
       visibility: "hidden",
       whiteSpace: "nowrap",
       pointerEvents: "none",
-      fontFamily: "Arial, sans-serif",
+      fontFamily: 'Tahoma, "Microsoft JhengHei", "Segoe UI", Arial, sans-serif',
       fontWeight: "400",
       fontStyle: "normal",
       letterSpacing: "0",
     });
-    const sample = "MMMMMMMMMMiiiiiiiiii0000000000";
+
+    // Mixed Latin/CJK content mirrors this application's bilingual labels.
+    const sample = "MMMMii000資料視覺化分析球種設定";
     const small = document.createElement("span");
     const large = document.createElement("span");
     small.textContent = sample;
     large.textContent = sample;
-    small.style.fontSize = `${BASE_FONT_PX}px`;
+    small.style.fontSize = `${DESIGN_MIN_FONT_PX}px`;
     large.style.fontSize = "120px";
     host.append(small, large);
     document.body.append(host);
     const smallWidth = small.getBoundingClientRect().width;
     const largeWidth = large.getBoundingClientRect().width;
     host.remove();
-    if (!(smallWidth > 0) || !(largeWidth > 0)) return BASE_FONT_PX;
+    if (!(smallWidth > 0) || !(largeWidth > 0)) return BODY_FONT_PX;
     return 120 * (smallWidth / largeWidth);
   }
 
@@ -47,7 +55,27 @@
       html.treepolo-minimum-font-compat .app-window {
         zoom: var(--treepolo-font-compat-scale);
         max-width: none;
+        font-size: var(--treepolo-cf-font-12);
       }
+
+      /* Restore the original 10/11/12/13/16px visual typography hierarchy.
+         Values are expanded before zoom so Chrome's minimum-font clamp no
+         longer changes them. */
+      html.treepolo-minimum-font-compat .title-icon { font-size: var(--treepolo-cf-font-16); }
+      html.treepolo-minimum-font-compat .title-text,
+      html.treepolo-minimum-font-compat .panel-heading { font-size: var(--treepolo-cf-font-13); }
+      html.treepolo-minimum-font-compat .status-key,
+      html.treepolo-minimum-font-compat .result-table,
+      html.treepolo-minimum-font-compat .viz-source-meta,
+      html.treepolo-minimum-font-compat .viz-sampling-note,
+      html.treepolo-minimum-font-compat .viz-library-table,
+      html.treepolo-minimum-font-compat .viz-mini { font-size: var(--treepolo-cf-font-11); }
+      html.treepolo-minimum-font-compat .stage4d-controls label { font-size: var(--treepolo-cf-font-12); }
+      html.treepolo-minimum-font-compat .viz-label { font-size: var(--treepolo-cf-font-11); }
+      html.treepolo-minimum-font-compat .viz-title { font-size: var(--treepolo-cf-font-16); }
+      html.treepolo-minimum-font-compat .viz-subtitle { font-size: var(--treepolo-cf-font-11); }
+      html.treepolo-minimum-font-compat .viz-legend { font-size: var(--treepolo-cf-font-10); }
+
       html.treepolo-minimum-font-compat .workspace {
         grid-template-columns: var(--treepolo-cf-nav-width) minmax(0, 1fr);
       }
@@ -83,10 +111,6 @@
         grid-template-columns: minmax(var(--treepolo-cf-viz-left-min), var(--treepolo-cf-viz-left-max)) minmax(var(--treepolo-cf-viz-canvas-min), 1fr);
       }
       html.treepolo-minimum-font-compat .stage4d-canvas-frame { min-height: var(--treepolo-cf-viz-frame-height); }
-      html.treepolo-minimum-font-compat .viz-label { font-size: var(--treepolo-cf-viz-label-font); }
-      html.treepolo-minimum-font-compat .viz-title { font-size: var(--treepolo-cf-viz-title-font); }
-      html.treepolo-minimum-font-compat .viz-subtitle { font-size: var(--treepolo-cf-viz-subtitle-font); }
-      html.treepolo-minimum-font-compat .viz-legend { font-size: var(--treepolo-cf-viz-legend-font); }
       @media (max-width: 799px) {
         html.treepolo-minimum-font-compat .stage4d-grid { grid-template-columns: 1fr; }
       }
@@ -104,6 +128,13 @@
     root.dataset.treepoloEffectiveMinimumFont = effectiveFontPx.toFixed(2);
     root.dataset.treepoloFontCompatScale = scale.toFixed(4);
     root.style.setProperty("--treepolo-font-compat-scale", scale.toFixed(5));
+
+    // Typography is geometry too: pre-expand intended sizes so after app zoom
+    // they land exactly on the original design sizes instead of the browser's
+    // clamped minimum.
+    for (const px of [10, 11, 12, 13, 16]) {
+      setLengthVariable(root, `--treepolo-cf-font-${px}`, px, scale);
+    }
 
     const dimensions = {
       "--treepolo-cf-nav-width": 228,
@@ -125,10 +156,6 @@
       "--treepolo-cf-viz-left-max": 310,
       "--treepolo-cf-viz-canvas-min": 420,
       "--treepolo-cf-viz-frame-height": 520,
-      "--treepolo-cf-viz-label-font": 11,
-      "--treepolo-cf-viz-title-font": 16,
-      "--treepolo-cf-viz-subtitle-font": 11,
-      "--treepolo-cf-viz-legend-font": 10,
     };
     Object.entries(dimensions).forEach(([name, value]) => setLengthVariable(root, name, value, scale));
 
@@ -146,9 +173,13 @@
 
   function boot() {
     injectStyles();
-    const effectiveFontPx = measureEffectiveFontPx();
+    const effectiveFontPx = measureEffectiveMinimumFontPx();
     if (!(effectiveFontPx > ENABLE_THRESHOLD_PX)) return;
-    const scale = Math.max(MIN_SCALE, Math.min(1, BASE_FONT_PX / effectiveFontPx));
+
+    // At Chrome minimum font 20px this resolves to 10/20 = 0.50. Because the
+    // designed fonts are pre-expanded by 1/scale, every intended size from
+    // 10px upward stays at or above the browser minimum before zoom.
+    const scale = Math.max(MIN_SCALE, Math.min(1, DESIGN_MIN_FONT_PX / effectiveFontPx));
     applyGeometry(scale, effectiveFontPx);
     window.addEventListener("resize", () => applyGeometry(scale, effectiveFontPx), {passive: true});
   }
