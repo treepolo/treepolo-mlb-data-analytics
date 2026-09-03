@@ -7,7 +7,8 @@
   const upstreamFetch = window.fetch.bind(window);
   let generation = 0;
   let pendingSaved = null;
-  let latestScheduledGeneration = 0;
+  let pendingFinalRestore = null;
+  let scheduled = false;
 
   const $ = selector => document.querySelector(selector);
 
@@ -36,8 +37,30 @@
     if (el && value != null) el.checked = Boolean(value);
   }
 
+  function savedLoadHasFinished(item) {
+    const sourceKind = $("#viz-source-kind")?.value;
+    const sourceItem = $("#viz-source-item")?.value;
+    const status = $("#viz-status")?.textContent || "";
+    if (sourceKind !== "visualization" || Number(sourceItem) !== Number(item?.id)) return false;
+    return status.includes("Saved visualization loaded") || status.includes("已載入儲存的視覺化");
+  }
+
+  function fieldsAreReady(item) {
+    const expected = savedSectionIndex(item);
+    const section = $("#viz-section");
+    if (section && ![...section.options].some(option => Number(option.value) === expected)) return false;
+    const mapping = item?.spec?.mapping || {};
+    for (const key of ["x", "y", "series", "label", "lower", "upper"]) {
+      const wanted = mapping[key];
+      if (!wanted) continue;
+      const select = $(`#viz-${key}`);
+      if (!select || ![...select.options].some(option => option.value === String(wanted))) return false;
+    }
+    return true;
+  }
+
   function restoreSavedSpec(item, prepared, token) {
-    if (token !== latestScheduledGeneration) return;
+    if (!pendingFinalRestore || token !== pendingFinalRestore.token) return;
     const spec = item?.spec;
     if (!spec || typeof spec !== "object") return;
 
@@ -85,8 +108,9 @@
     setValue("#viz-sample-size", sampling.size);
     setValue("#viz-sample-seed", sampling.seed);
 
-    const render = $("#viz-render");
-    if (render) render.click();
+    // The primary Saved Visualization loader has fully finished at this point.
+    // This render is deliberately the final presentation write for this load.
+    $("#viz-render")?.click();
 
     const status = $("#viz-status");
     const appStatus = $("#status-message");
@@ -115,27 +139,31 @@
       }
       if (appStatus) appStatus.textContent = mismatch;
     }
+    pendingFinalRestore = null;
   }
 
-  function scheduleRestore(item, prepared, token) {
-    latestScheduledGeneration = token;
-    let attempts = 0;
-    const tryRestore = () => {
-      if (token !== latestScheduledGeneration) return;
-      attempts += 1;
-      const expected = savedSectionIndex(item);
-      const section = $("#viz-section");
-      const wantedY = item?.spec?.mapping?.y;
-      const y = $("#viz-y");
-      const sectionReady = !section || [...section.options].some(option => Number(option.value) === expected);
-      const mappingReady = !wantedY || (y && [...y.options].some(option => option.value === String(wantedY)));
-      if ((sectionReady && mappingReady) || attempts >= 20) {
-        restoreSavedSpec(item, prepared, token);
-        return;
+  function scheduleFinalRestore() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      const pending = pendingFinalRestore;
+      if (!pending) return;
+      if (!savedLoadHasFinished(pending.item) || !fieldsAreReady(pending.item)) return;
+      restoreSavedSpec(pending.item, pending.prepared, pending.token);
+    });
+  }
+
+  function watchForLoadCompletion() {
+    const status = $("#viz-status");
+    if (!status) return;
+    const observer = new MutationObserver(scheduleFinalRestore);
+    observer.observe(status, {childList:true, subtree:true, characterData:true});
+    document.addEventListener("change", event => {
+      if (event.target?.matches?.("#viz-source-kind,#viz-source-item,#viz-section,#viz-type,#viz-x,#viz-y,#viz-series,#viz-label,#viz-lower,#viz-upper")) {
+        scheduleFinalRestore();
       }
-      requestAnimationFrame(tryRestore);
-    };
-    setTimeout(tryRestore, 0);
+    }, true);
   }
 
   async function maybeUpgradeToFullResult(input, requestInit, requestBody, response) {
@@ -164,7 +192,7 @@
           if (body?.item) {
             const token = ++generation;
             pendingSaved = {item: body.item, token};
-            latestScheduledGeneration = token;
+            pendingFinalRestore = null;
           }
         }
       } catch {}
@@ -200,18 +228,27 @@
       if (!prepared) {
         try { prepared = await response.clone().json(); } catch { prepared = null; }
       }
-      if (prepared?.result_available) scheduleRestore(activeSaved.item, prepared, activeSaved.token);
+      if (prepared?.result_available) {
+        pendingFinalRestore = {item: activeSaved.item, prepared, token: activeSaved.token};
+        scheduleFinalRestore();
+      }
     }
 
     return response;
   };
 
   function hideLegacyRerunButton() {
-    const button = $("#viz-rerun");
-    if (button) button.style.display = "none";
+    const style = document.createElement("style");
+    style.id = "stage4d-hide-rerun";
+    style.textContent = "#viz-rerun{display:none!important}";
+    document.head.append(style);
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", hideLegacyRerunButton, {once:true});
-  } else hideLegacyRerunButton();
+  function boot() {
+    hideLegacyRerunButton();
+    watchForLoadCompletion();
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, {once:true});
+  else boot();
 })();
