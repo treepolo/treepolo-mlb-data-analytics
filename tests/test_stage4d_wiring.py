@@ -71,6 +71,23 @@ def test_horizontal_stacked_bar_and_saved_section_fixups_are_loaded():
     assert "pendingSavedVisualization.section_index" in fixups
 
 
+def test_section_or_preset_change_resets_stale_geometry_before_apply():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    reset = read("src/treepolo_mlb_data/web_static/stage4d-preset-state-reset.js")
+    assert "stage4d-preset-state-reset.js" in patch
+    assert "resetPresetGeometry" in reset
+    assert 'target.matches("#viz-section")' in reset
+    assert 'target.matches("#viz-preset")' in reset
+    assert '$("#viz-equal-axes")' in reset
+    assert '$("#viz-ref-x")' in reset
+    assert '$("#viz-ref-y")' in reset
+    assert '$("#viz-x-min")' in reset
+    assert '$("#viz-y-min")' in reset
+    assert '$("#viz-stacked")' in reset
+    assert '$("#viz-bar-orientation")' in reset
+    assert "}, true);" in reset
+
+
 def test_baseball_presets_do_not_add_an_external_asset_source():
     backend = read("src/treepolo_mlb_data/stage4d.py")
     manifest = read("research_assets/3d_baseball/upstream_manifest.json")
