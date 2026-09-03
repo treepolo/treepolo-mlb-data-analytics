@@ -86,14 +86,18 @@ def test_section_or_preset_change_resets_stale_geometry_before_apply():
     assert "}, true);" in reset
 
 
-def test_large_browser_minimum_font_gets_density_compatibility_layer():
+def test_large_browser_minimum_font_restores_original_density_and_type_scale():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
     compat = read("src/treepolo_mlb_data/web_static/font-minimum-compat.js")
     assert "font-minimum-compat.js" in patch
-    assert "measureEffectiveFontPx" in compat
+    assert "measureEffectiveMinimumFontPx" in compat
+    assert "DESIGN_MIN_FONT_PX = 10" in compat
     assert "ENABLE_THRESHOLD_PX = 14" in compat
+    assert "DESIGN_MIN_FONT_PX / effectiveFontPx" in compat
     assert "treepolo-minimum-font-compat" in compat
     assert "--treepolo-font-compat-scale" in compat
+    for px in (10, 11, 12, 13, 16):
+        assert f"--treepolo-cf-font-{px}" in compat
     assert "--treepolo-cf-nav-width" in compat
     assert "--treepolo-cf-control-height" in compat
     assert "--treepolo-cf-viz-left-min" in compat
