@@ -6,6 +6,7 @@
 
   const upstreamFetch = window.fetch.bind(window);
   let generation = 0;
+  let latestScheduledGeneration = 0;
   let pendingSaved = null;
   let pendingFinalRestore = null;
   let scheduled = false;
@@ -60,6 +61,7 @@
   }
 
   function restoreSavedSpec(item, prepared, token) {
+    if (token !== latestScheduledGeneration) return;
     if (!pendingFinalRestore || token !== pendingFinalRestore.token) return;
     const spec = item?.spec;
     if (!spec || typeof spec !== "object") return;
@@ -108,8 +110,8 @@
     setValue("#viz-sample-size", sampling.size);
     setValue("#viz-sample-seed", sampling.seed);
 
-    // The primary Saved Visualization loader has fully finished at this point.
-    // This render is deliberately the final presentation write for this load.
+    // Primary loadSavedVisualization() has completed before this point. The
+    // saved spec therefore owns the final presentation write for this load.
     $("#viz-render")?.click();
 
     const status = $("#viz-status");
@@ -142,13 +144,13 @@
     pendingFinalRestore = null;
   }
 
-  function scheduleFinalRestore() {
+  function scheduleRestore() {
     if (scheduled) return;
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
       const pending = pendingFinalRestore;
-      if (!pending) return;
+      if (!pending || pending.token !== latestScheduledGeneration) return;
       if (!savedLoadHasFinished(pending.item) || !fieldsAreReady(pending.item)) return;
       restoreSavedSpec(pending.item, pending.prepared, pending.token);
     });
@@ -157,11 +159,11 @@
   function watchForLoadCompletion() {
     const status = $("#viz-status");
     if (!status) return;
-    const observer = new MutationObserver(scheduleFinalRestore);
+    const observer = new MutationObserver(scheduleRestore);
     observer.observe(status, {childList:true, subtree:true, characterData:true});
     document.addEventListener("change", event => {
       if (event.target?.matches?.("#viz-source-kind,#viz-source-item,#viz-section,#viz-type,#viz-x,#viz-y,#viz-series,#viz-label,#viz-lower,#viz-upper")) {
-        scheduleFinalRestore();
+        scheduleRestore();
       }
     }, true);
   }
@@ -191,6 +193,7 @@
           const body = await response.clone().json();
           if (body?.item) {
             const token = ++generation;
+            latestScheduledGeneration = token;
             pendingSaved = {item: body.item, token};
             pendingFinalRestore = null;
           }
@@ -223,14 +226,14 @@
     const upgraded = await maybeUpgradeToFullResult(input, requestInit, requestBody, response);
     response = upgraded.response;
 
-    if (activeSaved && response.ok) {
+    if (activeSaved && response.ok && activeSaved.token === latestScheduledGeneration) {
       let prepared = upgraded.prepared;
       if (!prepared) {
         try { prepared = await response.clone().json(); } catch { prepared = null; }
       }
       if (prepared?.result_available) {
         pendingFinalRestore = {item: activeSaved.item, prepared, token: activeSaved.token};
-        scheduleFinalRestore();
+        scheduleRestore();
       }
     }
 
@@ -242,6 +245,8 @@
     style.id = "stage4d-hide-rerun";
     style.textContent = "#viz-rerun{display:none!important}";
     document.head.append(style);
+    const button = $("#viz-rerun");
+    if (button) button.style.display = "none";
   }
 
   function boot() {
