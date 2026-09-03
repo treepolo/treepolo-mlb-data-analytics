@@ -6,6 +6,7 @@
 
   const upstreamFetch = window.fetch.bind(window);
   let pendingSaved = null;
+  let requestingSavedSection = false;
 
   const $ = (selector) => document.querySelector(selector);
 
@@ -98,6 +99,23 @@
     }
   }
 
+  function requestSavedSection(item, prepared) {
+    if (!item?.snapshot_hash || item.save_mode !== "frozen") return false;
+    const wanted = Number(item.section_index || 0);
+    const current = Number(prepared?.section_index || 0);
+    if (wanted === current) return false;
+    const sectionSelect = $("#viz-section");
+    const loadButton = $("#viz-load");
+    if (!sectionSelect || !loadButton) return false;
+    if (![...sectionSelect.options].some((option) => Number(option.value) === wanted)) return false;
+    requestingSavedSection = true;
+    setTimeout(() => {
+      sectionSelect.value = String(wanted);
+      loadButton.click();
+    }, 0);
+    return true;
+  }
+
   window.fetch = async function treepoloStage4DSavedRestoreFetch(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
     const method = String(init?.method || "GET").toUpperCase();
@@ -106,12 +124,18 @@
     try {
       if (method === "GET" && /\/api\/visualizations\/\d+/.test(url) && response.ok) {
         const body = await response.clone().json();
-        if (body?.item) pendingSaved = body.item;
+        if (body?.item) {
+          pendingSaved = body.item;
+          requestingSavedSection = false;
+        }
       } else if (method === "POST" && url.includes("/api/visualization/data") && response.ok && pendingSaved) {
         const request = typeof init.body === "string" ? JSON.parse(init.body) : null;
         if (request?.source?.kind === "visualization" && Number(request.source.id) === Number(pendingSaved.id)) {
+          const prepared = await response.clone().json();
+          if (!requestingSavedSection && requestSavedSection(pendingSaved, prepared)) return response;
           const item = pendingSaved;
           pendingSaved = null;
+          requestingSavedSection = false;
           setTimeout(() => restoreSpec(item), 0);
         }
       }
