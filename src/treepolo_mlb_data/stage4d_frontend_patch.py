@@ -5,7 +5,7 @@ from typing import Any
 
 
 def install(webapp_module: Any) -> None:
-    """Append small renderer fixups to the Stage 4D browser bundle.
+    """Append small renderer/UI compatibility fixups to the Stage 4D browser bundle.
 
     Stage 4D is intentionally layered on the existing static UI. Serving the
     fixups after the main bundle lets focused renderer/lifecycle corrections stay
@@ -23,12 +23,15 @@ def install(webapp_module: Any) -> None:
         primary = webapp_module.STATIC_DIR / "stage4d-visualization.js"
         fixups = webapp_module.STATIC_DIR / "stage4d-visualization-fixes.js"
         preset_state_reset = webapp_module.STATIC_DIR / "stage4d-preset-state-reset.js"
+        font_minimum_compat = webapp_module.STATIC_DIR / "font-minimum-compat.js"
         body = (
             primary.read_bytes()
             + b"\n"
             + fixups.read_bytes()
             + b"\n"
             + preset_state_reset.read_bytes()
+            + b"\n"
+            + font_minimum_compat.read_bytes()
         )
         content_type = mimetypes.guess_type(primary.name)[0] or "text/javascript"
         self.send_response(200)
