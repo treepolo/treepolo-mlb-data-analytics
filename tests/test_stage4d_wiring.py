@@ -86,6 +86,21 @@ def test_section_or_preset_change_resets_stale_geometry_before_apply():
     assert "}, true);" in reset
 
 
+def test_large_browser_minimum_font_gets_density_compatibility_layer():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    compat = read("src/treepolo_mlb_data/web_static/font-minimum-compat.js")
+    assert "font-minimum-compat.js" in patch
+    assert "measureEffectiveFontPx" in compat
+    assert "ENABLE_THRESHOLD_PX = 14" in compat
+    assert "treepolo-minimum-font-compat" in compat
+    assert "--treepolo-font-compat-scale" in compat
+    assert "--treepolo-cf-nav-width" in compat
+    assert "--treepolo-cf-control-height" in compat
+    assert "--treepolo-cf-viz-left-min" in compat
+    assert "stage4d-grid" in compat
+    assert "window.addEventListener(\"resize\"" in compat
+
+
 def test_baseball_presets_do_not_add_an_external_asset_source():
     backend = read("src/treepolo_mlb_data/stage4d.py")
     manifest = read("research_assets/3d_baseball/upstream_manifest.json")
