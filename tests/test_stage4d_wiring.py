@@ -13,9 +13,12 @@ def read(relative: str) -> str:
 def test_cli_installs_stage4d_before_serving_ui():
     cli = read("src/treepolo_mlb_data/cli.py")
     assert "from .stage4d import install as install_stage4d" in cli
+    assert "from .stage4d_saved_v2 import install as install_stage4d_saved_v2" in cli
     assert "from .stage4d_frontend_patch import install as install_stage4d_frontend_patch" in cli
     assert "install_stage4d(webapp)" in cli
+    assert "install_stage4d_saved_v2()" in cli
     assert "install_stage4d_frontend_patch(webapp)" in cli
+    assert cli.index("install_stage4d(webapp)") < cli.index("install_stage4d_saved_v2()") < cli.index("install_stage4d_frontend_patch(webapp)")
 
 
 def test_visualization_workspace_wiring_and_output_navigation():
@@ -67,7 +70,8 @@ def test_horizontal_stacked_bar_and_saved_section_fixups_are_loaded():
     assert "drawHorizontal" in fixups
     assert "drawVertical" in fixups
     assert "stacked" in fixups
-    assert 'pendingSavedVisualization.save_mode==="live"' in fixups
+    assert "snapshot_hash" in patch
+    assert "legacy" not in patch.lower() or "snapshot_hash" in patch
     assert "pendingSavedVisualization.section_index" in fixups
 
 
@@ -130,18 +134,44 @@ def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows
     assert "button.disabled = false" in lifecycle
 
 
-def test_stage4d_y_axis_title_keeps_clearance_from_tick_labels():
+def test_saved_visualization_spec_is_restored_after_data_load():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    restore = read("src/treepolo_mlb_data/web_static/stage4d-saved-restore.js")
+    assert "stage4d-saved-restore.js" in patch
+    assert "pendingSaved" in restore
+    assert "setTimeout(() => restoreSpec(item), 0)" in restore
+    assert 'setSelect("#viz-type"' in restore
+    for key in ("x", "y", "series", "label", "lower", "upper"):
+        assert f'`#viz-${{key}}`' in restore
+    assert '$("#viz-render")' in restore
+    assert "missing fields" in restore
+    assert "Legacy Frozen visualization loaded" in restore
+
+
+def test_frozen_snapshot_v2_is_content_addressed_and_multi_section():
+    backend = read("src/treepolo_mlb_data/stage4d_saved_v2.py")
+    assert 'SNAPSHOT_VERSION = "stage4d-frozen-result-v2"' in backend
+    assert "hashlib.sha256" in backend
+    assert "visualization_snapshots" in backend
+    assert "snapshot_hash TEXT" in backend
+    assert 'body = {"version": SNAPSHOT_VERSION, "result": frozen_data["result"]}' in backend
+    assert "release_snapshot" in backend
+    assert 'return None, frozen["result"]' in backend
+    assert "legacy_frozen" in backend
+
+
+def test_stage4d_y_axis_spacing_uses_renderer_margin_not_text_shifting():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
     axis_layout = read("src/treepolo_mlb_data/web_static/stage4d-axis-layout.js")
     assert "stage4d-axis-layout.js" in patch
-    assert "MIN_VISUAL_GAP_PX" in axis_layout
-    assert "getBoundingClientRect" in axis_layout
-    assert "nearestTickLeft" in axis_layout
-    assert "currentGap" in axis_layout
-    assert "neededShift" in axis_layout
-    assert 'text.viz-label[transform^="rotate(-90"]' in axis_layout
-    assert 'text.viz-label[text-anchor="end"]' in axis_layout
-    assert "MutationObserver" in axis_layout
+    assert "treepoloStage4DLeftMargin" in axis_layout
+    assert "measureText" in axis_layout
+    assert "maxTickWidth" in axis_layout
+    assert "new_margin" in patch
+    assert "treepoloStage4DLeftMargin(yField,yValues,display)" in patch
+    assert "MutationObserver" not in axis_layout
+    assert "getBoundingClientRect" not in axis_layout
+    assert "neededShift" not in axis_layout
 
 
 def test_baseball_presets_do_not_add_an_external_asset_source():
