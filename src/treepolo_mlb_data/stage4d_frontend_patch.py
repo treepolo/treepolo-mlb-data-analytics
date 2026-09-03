@@ -5,12 +5,7 @@ from typing import Any
 
 
 def install(webapp_module: Any) -> None:
-    """Append small renderer/UI compatibility fixups to the Stage 4D browser bundle.
-
-    Stage 4D is intentionally layered on the existing static UI. Serving the
-    fixups after the main bundle lets focused renderer/lifecycle corrections stay
-    isolated without creating a second application entry point.
-    """
+    """Append focused Stage 4D compatibility layers to the browser bundle."""
 
     if getattr(webapp_module, "_stage4d_frontend_patch_installed", False):
         return
@@ -26,11 +21,33 @@ def install(webapp_module: Any) -> None:
         font_minimum_compat = webapp_module.STATIC_DIR / "font-minimum-compat.js"
         layout_containment = webapp_module.STATIC_DIR / "stage4d-layout-containment.js"
         save_lifecycle = webapp_module.STATIC_DIR / "stage4d-save-lifecycle.js"
+        saved_restore = webapp_module.STATIC_DIR / "stage4d-saved-restore.js"
         axis_layout = webapp_module.STATIC_DIR / "stage4d-axis-layout.js"
+
+        primary_body = primary.read_bytes()
+        old_margin = b'const margin={left:75,right:display.legend?150:30,top:70,bottom:62};'
+        new_margin = b'const margin={left:(window.treepoloStage4DLeftMargin?window.treepoloStage4DLeftMargin(yField,yValues,display):75),right:display.legend?150:30,top:70,bottom:62};'
+        if old_margin not in primary_body:
+            raise RuntimeError("Stage 4D primary renderer margin hook no longer matches")
+        primary_body = primary_body.replace(old_margin, new_margin, 1)
+
+        fixups_body = fixups.read_bytes()
+        old_frozen_section = (
+            b'if(pendingSavedVisualization.save_mode==="live")request.section=Number(pendingSavedVisualization.section_index||0);\n'
+            b'          else request.section=0;'
+        )
+        new_frozen_section = (
+            b'if(pendingSavedVisualization.save_mode==="frozen"&&!pendingSavedVisualization.snapshot_hash)request.section=0;\n'
+            b'          else request.section=Number(pendingSavedVisualization.section_index||0);'
+        )
+        if old_frozen_section not in fixups_body:
+            raise RuntimeError("Stage 4D saved-section compatibility hook no longer matches")
+        fixups_body = fixups_body.replace(old_frozen_section, new_frozen_section, 1)
+
         body = (
-            primary.read_bytes()
+            primary_body
             + b"\n"
-            + fixups.read_bytes()
+            + fixups_body
             + b"\n"
             + preset_state_reset.read_bytes()
             + b"\n"
@@ -39,6 +56,8 @@ def install(webapp_module: Any) -> None:
             + layout_containment.read_bytes()
             + b"\n"
             + save_lifecycle.read_bytes()
+            + b"\n"
+            + saved_restore.read_bytes()
             + b"\n"
             + axis_layout.read_bytes()
         )
