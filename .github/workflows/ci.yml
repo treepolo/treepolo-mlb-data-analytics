@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,11 +20,12 @@ jobs:
       - run: node --check src/treepolo_mlb_data/web_static/font-minimum-compat.js
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-layout-containment.js
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-save-lifecycle.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-saved-restore.js
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-axis-layout.js
       - run: pytest -q -m 'not integration'
 
   live-savant-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
