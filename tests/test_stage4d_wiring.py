@@ -39,7 +39,7 @@ def test_visualization_workspace_wiring_and_output_navigation():
 
 
 def test_stage4d_navigation_keeps_data_first_and_output_last():
-    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes.js")
+    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes-v2.js")
     assert "function restoreNavigationOrder()" in fixups
     assert 'textContent.includes("資料 Data")' in fixups
     assert '$("#stage4d-output-nav",nav)' in fixups
@@ -65,14 +65,15 @@ def test_sampling_and_export_choices_are_visible_in_ui():
     assert "Sampled:" in script
 
 
-def test_horizontal_stacked_bar_and_saved_section_fixups_are_loaded():
+def test_horizontal_stacked_bar_fixups_do_not_mutate_saved_sections():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
-    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes.js")
-    assert "stage4d-visualization-fixes.js" in patch
+    fixups = read("src/treepolo_mlb_data/web_static/stage4d-visualization-fixes-v2.js")
+    assert "stage4d-visualization-fixes-v2.js" in patch
     assert "drawHorizontal" in fixups
     assert "drawVertical" in fixups
     assert "stacked" in fixups
-    assert "pendingSavedVisualization.section_index" in fixups
+    assert "pendingSavedVisualization" not in fixups
+    assert "section_index" not in fixups
 
 
 def test_section_or_preset_change_resets_stale_geometry_before_apply():
@@ -134,20 +135,33 @@ def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows
     assert "button.disabled = false" in lifecycle
 
 
-def test_saved_visualization_spec_is_restored_after_data_and_saved_section_load():
+def test_saved_visualization_load_is_generation_guarded_and_restored_once():
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
-    restore = read("src/treepolo_mlb_data/web_static/stage4d-saved-restore.js")
-    assert "stage4d-saved-restore.js" in patch
-    assert "pendingSaved" in restore
-    assert "requestSavedSection" in restore
-    assert "snapshot_hash" in restore
-    assert "sectionSelect.value = String(wanted)" in restore
-    assert "loadButton.click()" in restore
-    assert "setTimeout(() => restoreSpec(item), 0)" in restore
-    assert 'setSelect("#viz-type"' in restore
-    assert '$("#viz-render")' in restore
-    assert "missing fields" in restore
-    assert "Legacy Frozen visualization loaded" in restore
+    stable = read("src/treepolo_mlb_data/web_static/stage4d-load-stability.js")
+    assert "stage4d-load-stability.js" in patch
+    assert "stage4d-saved-restore.js" not in patch
+    assert "pendingSaved" in stable
+    assert "generation" in stable
+    assert "latestScheduledGeneration" in stable
+    assert "savedSectionIndex" in stable
+    assert "snapshot_hash" in stable
+    assert "requestBody.section = savedSectionIndex(activeSaved.item)" in stable
+    assert "token !== latestScheduledGeneration" in stable
+    assert "scheduleRestore" in stable
+    assert 'setSelect("#viz-type"' in stable
+    assert '$("#viz-render")' in stable
+    assert "missing fields" in stable
+    assert "Legacy Frozen visualization loaded" in stable
+
+
+def test_visualization_data_automatically_upgrades_preview_to_full_result():
+    stable = read("src/treepolo_mlb_data/web_static/stage4d-load-stability.js")
+    assert "maybeUpgradeToFullResult" in stable
+    assert "prepared?.requires_rerun" in stable
+    assert "allow_rerun: true" in stable
+    assert "Re-run Full Result" not in stable
+    assert "hideLegacyRerunButton" in stable
+    assert 'button.style.display = "none"' in stable
 
 
 def test_frozen_snapshot_v2_is_content_addressed_and_multi_section():
@@ -209,7 +223,9 @@ def test_frontend_patch_serves_complete_bundle_without_source_rewriting():
     assert handler.headers["Cache-Control"] == "no-store"
     assert "輸出 Output" in body
     assert "treepolo-minimum-font-compat" in body
-    assert "__treepoloStage4DSavedRestore" in body
+    assert "__treepoloStage4DLoadStability" in body
+    assert "__treepoloStage4DFixupsV2" in body
+    assert "__treepoloStage4DSavedRestore" not in body
     assert "__treepoloStage4DAxisLayout" in body
     patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
     assert ".replace(" not in patch
