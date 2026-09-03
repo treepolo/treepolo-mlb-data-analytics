@@ -22,6 +22,7 @@ jobs:
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-save-lifecycle.js
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-load-stability.js
       - run: node --check src/treepolo_mlb_data/web_static/stage4d-axis-layout.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-export-fidelity.js
       - run: pytest -q -m 'not integration'
 
   live-savant-smoke:
