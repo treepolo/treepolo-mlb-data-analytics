@@ -122,8 +122,9 @@ def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows
     lifecycle = read("src/treepolo_mlb_data/web_static/stage4d-save-lifecycle.js")
     assert "stage4d-save-lifecycle.js" in patch
     assert 'document.querySelector("#viz-source-kind")?.value === "visualization"' in lifecycle
-    assert "/api/visualizations/\\d+" in lifecycle
-    assert "collectionUrl(url)" in lifecycle
+    assert "isVisualizationSave" in lifecycle
+    assert "!isExplicitSavedVisualizationEdit()" in lifecycle
+    assert "const nextUrl = collectionUrl(url)" in lifecycle
     assert "儲存中 Saving…" in lifecycle
     assert "button.disabled = true" in lifecycle
     assert "button.disabled = false" in lifecycle
