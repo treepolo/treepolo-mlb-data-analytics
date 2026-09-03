@@ -4,62 +4,103 @@
   if (window.__treepoloStage4DAxisLayout) return;
   window.__treepoloStage4DAxisLayout = true;
 
-  let canvas = null;
+  const MIN_GAP_PX = 12;
+  const OUTER_PADDING_PX = 8;
+  const processedTitles = new WeakSet();
+  let scheduled = false;
+  let mutating = false;
 
-  function labelFontPx() {
-    const root = document.documentElement;
-    const compat = getComputedStyle(root).getPropertyValue("--treepolo-cf-font-11").trim();
-    const parsed = Number.parseFloat(compat);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 11;
+  function yAxisTitle(svg) {
+    return svg.querySelector('text.viz-label[transform^="rotate(-90"]');
   }
 
-  function formatter(value) {
-    if (!Number.isFinite(value)) return "—";
-    if (Number.isInteger(value)) return value.toLocaleString("en-US");
-    return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  function yTickLabels(svg, title) {
+    return Array.from(svg.querySelectorAll('text.viz-label[text-anchor="end"]'))
+      .filter((node) => node !== title);
   }
 
-  function textWidth(value) {
-    canvas ||= document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    if (!context) return String(value).length * labelFontPx() * 0.6;
-    const px = labelFontPx();
-    context.font = `${px}px Arial, "Microsoft JhengHei", sans-serif`;
-    return context.measureText(String(value)).width;
+  function parseRotationCenterY(transform) {
+    const match = String(transform || "").match(/rotate\(\s*-90(?:\.0+)?\s+[-+]?\d*\.?\d+\s+([-+]?\d*\.?\d+)\s*\)/i);
+    return match ? Number(match[1]) : null;
   }
 
-  window.treepoloStage4DLeftMargin = function treepoloStage4DLeftMargin(yField, yValues, display = {}) {
-    const values = Array.isArray(yValues) ? yValues.filter(Number.isFinite) : [];
-    let min = display.y_min != null ? Number(display.y_min) : Math.min(...values);
-    let max = display.y_max != null ? Number(display.y_max) : Math.max(...values);
-    if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      min = 0;
-      max = 1;
-    }
-    if (min === max) {
-      const pad = Math.abs(min || 1) * 0.08;
-      min -= pad;
-      max += pad;
-    } else {
-      const pad = (max - min) * 0.06;
-      if (display.y_min == null) min -= pad;
-      if (display.y_max == null) max += pad;
-    }
+  function svgUnitsPerCssPixel(svg) {
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox?.baseVal;
+    if (!(rect.width > 0) || !viewBox || !(viewBox.width > 0)) return 1;
+    return viewBox.width / rect.width;
+  }
 
-    const tickWidths = [];
-    for (let index = 0; index <= 5; index += 1) {
-      tickWidths.push(textWidth(formatter(min + (index / 5) * (max - min))));
-    }
-    const maxTickWidth = Math.max(0, ...tickWidths);
-    const fontPx = labelFontPx();
-    const titleThickness = fontPx * 1.35;
-    const titleLeft = 18;
-    const titleToTickGap = Math.max(10, fontPx * 0.8);
-    const tickToAxisGap = 8;
-    const required = titleLeft + titleThickness + titleToTickGap + maxTickWidth + tickToAxisGap;
+  function ensureYAxisClearance() {
+    const svg = document.querySelector("#viz-canvas");
+    if (!svg || mutating) return;
+    const title = yAxisTitle(svg);
+    if (!title || processedTitles.has(title)) return;
 
-    // The Y-axis title is rotated, so its string length affects vertical extent,
-    // not horizontal margin. Clamp only pathological numeric tick widths.
-    return Math.max(75, Math.min(210, Math.ceil(required)));
-  };
+    const ticks = yTickLabels(svg, title);
+    const titleRect = title.getBoundingClientRect();
+    const tickRects = ticks
+      .map((node) => node.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!tickRects.length || !(titleRect.width > 0) || !(titleRect.height > 0)) return;
+
+    const tickLeft = Math.min(...tickRects.map((rect) => rect.left));
+    const currentGap = tickLeft - titleRect.right;
+    processedTitles.add(title);
+    if (currentGap >= MIN_GAP_PX) return;
+
+    const shiftCss = MIN_GAP_PX - currentGap;
+    const unitsPerPx = svgUnitsPerCssPixel(svg);
+    const shiftUnits = shiftCss * unitsPerPx;
+    const outerUnits = (shiftCss + OUTER_PADDING_PX) * unitsPerPx;
+    const oldX = Number(title.getAttribute("x") || 18);
+    const newX = oldX - shiftUnits;
+    const centerY = parseRotationCenterY(title.getAttribute("transform"));
+
+    const width = Number(svg.getAttribute("width") || 1000);
+    const height = Number(svg.getAttribute("height") || 620);
+    const baseViewBox = svg.viewBox?.baseVal;
+    const baseMinX = baseViewBox?.x || 0;
+    const baseMinY = baseViewBox?.y || 0;
+    const baseWidth = baseViewBox?.width || width;
+    const baseHeight = baseViewBox?.height || height;
+
+    mutating = true;
+    title.setAttribute("x", String(newX));
+    if (Number.isFinite(centerY)) {
+      title.setAttribute("transform", `rotate(-90 ${newX} ${centerY})`);
+    }
+    // Expand the SVG viewport to the left so the title keeps its normal font size
+    // and remains fully visible instead of being pushed outside and clipped.
+    svg.setAttribute(
+      "viewBox",
+      `${baseMinX - outerUnits} ${baseMinY} ${baseWidth + outerUnits} ${baseHeight}`,
+    );
+    requestAnimationFrame(() => { mutating = false; });
+  }
+
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      ensureYAxisClearance();
+    });
+  }
+
+  function boot() {
+    const svg = document.querySelector("#viz-canvas");
+    if (!svg) return;
+    const observer = new MutationObserver(schedule);
+    observer.observe(svg, {childList: true, subtree: true});
+    document.querySelector("#visualization-panel")?.addEventListener("click", (event) => {
+      if (event.target?.closest?.("#viz-render")) schedule();
+    });
+    document.querySelector("#visualization-panel")?.addEventListener("change", schedule);
+    window.addEventListener("resize", schedule, {passive: true});
+    schedule();
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, {once: true});
+  else boot();
 })();
