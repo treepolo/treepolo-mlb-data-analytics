@@ -117,6 +117,18 @@ def test_stage4d_two_column_controls_are_contained_in_their_grid_cells():
     assert ".stage4d-display-grid > label > select" in containment
 
 
+def test_stage4d_repeated_save_from_analysis_creates_new_visualization_and_shows_progress():
+    patch = read("src/treepolo_mlb_data/stage4d_frontend_patch.py")
+    lifecycle = read("src/treepolo_mlb_data/web_static/stage4d-save-lifecycle.js")
+    assert "stage4d-save-lifecycle.js" in patch
+    assert 'document.querySelector("#viz-source-kind")?.value === "visualization"' in lifecycle
+    assert "/api/visualizations/\\d+" in lifecycle
+    assert "collectionUrl(url)" in lifecycle
+    assert "儲存中 Saving…" in lifecycle
+    assert "button.disabled = true" in lifecycle
+    assert "button.disabled = false" in lifecycle
+
+
 def test_baseball_presets_do_not_add_an_external_asset_source():
     backend = read("src/treepolo_mlb_data/stage4d.py")
     manifest = read("research_assets/3d_baseball/upstream_manifest.json")
