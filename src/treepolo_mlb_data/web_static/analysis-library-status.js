@@ -21,6 +21,7 @@
     style.textContent = `
       .analysis-stale-badge { display:inline-block; margin-left:6px; padding:1px 5px; border:1px solid #a66a20; background:#fff3dc; font-size:11px; font-weight:600; white-space:nowrap; }
       .analysis-stale-warning { display:inline-block; margin-left:8px; padding:2px 7px; border:1px solid #a66a20; background:#fff3dc; font-size:11px; font-weight:600; }
+      #analysis-history-list .analysis-history-id { width:48px; white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
     `;
     document.head.append(style);
   }
@@ -60,9 +61,41 @@
     });
   }
 
+  function decorateHistoryIds() {
+    const host = document.getElementById("analysis-history-list");
+    if (!host) return;
+    const table = host.querySelector("table");
+    if (!table) return;
+
+    const headerRow = table.querySelector("thead tr");
+    if (headerRow && !headerRow.querySelector(".analysis-history-id")) {
+      const th = document.createElement("th");
+      th.className = "analysis-history-id";
+      th.textContent = "#";
+      th.title = "分析紀錄編號 Analysis History ID";
+      headerRow.prepend(th);
+    }
+
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    rows.forEach((row, index) => {
+      const item = historyItems[index];
+      let cell = row.querySelector(":scope > .analysis-history-id");
+      if (!cell) {
+        cell = document.createElement("td");
+        cell.className = "analysis-history-id";
+        row.prepend(cell);
+      }
+      cell.textContent = item?.id != null ? `#${item.id}` : "—";
+      if (item?.id != null) cell.title = `Analysis History #${item.id}`;
+      else cell.removeAttribute("title");
+    });
+  }
+
   function decorate() {
+    decorateHistoryIds();
     decorateRows("saved-analysis-list", savedItems, 2);
-    decorateRows("analysis-history-list", historyItems, 4);
+    // History receives the ID column at index 0, so Status shifts from 4 to 5.
+    decorateRows("analysis-history-list", historyItems, 5);
   }
 
   function selectedItemFromClick(target) {
@@ -100,7 +133,7 @@
       historyItems = history.history || [];
       decorate();
     } catch {
-      // Staleness badges are supplemental. Analysis Library remains usable if status refresh fails.
+      // Staleness badges and history IDs are supplemental. Analysis Library remains usable if status refresh fails.
     }
   }
 
@@ -117,7 +150,7 @@
     const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])];
     return nodes.some(node => {
       if (node.nodeType !== 1) return false;
-      if (node.classList?.contains("analysis-stale-badge")) return false;
+      if (node.classList?.contains("analysis-stale-badge") || node.classList?.contains("analysis-history-id")) return false;
       return node.matches?.("table,tbody,tr") || Boolean(node.querySelector?.("table,tbody,tr"));
     });
   }
