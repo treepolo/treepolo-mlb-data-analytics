@@ -48,6 +48,60 @@
     signal.addEventListener("abort", () => controller.abort(signal.reason), {once:true});
   }
 
+  function resetResultSectionForNewSource() {
+    if (typeof document === "undefined") return;
+    const section = document.querySelector("#viz-section");
+    if (!section) return;
+    section.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = "載入資料後顯示 Result sections load with data";
+    option.dataset.sourcePending = "true";
+    section.append(option);
+    section.value = "0";
+    section.disabled = true;
+    section.dataset.sourcePending = "true";
+  }
+
+  function bindSourceSectionLifecycle() {
+    if (typeof document === "undefined") return;
+
+    // A Result Section index belongs to one analysis result only. Never carry
+    // section 2 from a three-section result into a source that may only expose
+    // section 0 or 1. Programmatic Saved Visualization restore does not emit a
+    // change event, so its explicitly saved section remains untouched.
+    document.addEventListener("change", event => {
+      if (!event.target?.matches?.("#viz-source-kind,#viz-source-item")) return;
+      resetResultSectionForNewSource();
+    }, true);
+
+    document.addEventListener("click", event => {
+      if (!event.target?.closest?.("#viz-load")) return;
+      const section = document.querySelector("#viz-section");
+      if (section?.dataset.sourcePending === "true") section.value = "0";
+    }, true);
+
+    const attachObserver = () => {
+      const section = document.querySelector("#viz-section");
+      if (!section || section.dataset.sourceLifecycleObserved === "true") return;
+      section.dataset.sourceLifecycleObserved = "true";
+      const observer = new MutationObserver(() => {
+        if (section.dataset.sourcePending !== "true") return;
+        const stillPending = section.querySelector('option[data-source-pending="true"]');
+        if (stillPending) return;
+        section.disabled = false;
+        delete section.dataset.sourcePending;
+      });
+      observer.observe(section, {childList:true});
+    };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", attachObserver, {once:true});
+    } else {
+      attachObserver();
+    }
+  }
+
   window.fetch = async function treepoloStage4DLatestRequestFetch(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
     const method = String(init?.method || (typeof input !== "string" ? input?.method : "GET") || "GET").toUpperCase();
@@ -83,4 +137,6 @@
       throw error;
     }
   };
+
+  bindSourceSectionLifecycle();
 })();
