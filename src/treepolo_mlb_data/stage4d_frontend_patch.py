@@ -30,6 +30,7 @@ def install(webapp_module: Any) -> None:
             "stage4d-layout-containment.js",
             "stage4d-save-lifecycle.js",
             "stage4d-load-stability.js",
+            "stage4d-latest-request.js",
             "stage4d-axis-layout.js",
             "stage4d-export-fidelity.js",
         )
