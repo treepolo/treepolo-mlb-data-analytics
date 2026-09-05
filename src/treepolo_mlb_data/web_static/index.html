@@ -89,7 +89,7 @@
               <fieldset>
                 <legend>分組與指標 Grouping & Metrics</legend>
                 <div class="form-grid">
-                  <label>分組欄位 Group By<select id="basic-group" multiple size="6" data-field-select></select></label>
+                  <label>分組欄位 Group By<input id="basic-group" type="text" data-multi-field placeholder="例如 pitcher,game_pk"></label>
                   <div>
                     <div class="subheading">統計指標 Metrics</div>
                     <div id="basic-metrics" class="repeat-list"></div>
@@ -145,7 +145,7 @@
               <fieldset>
                 <legend>武器庫定義 Arsenal Definition</legend>
                 <div class="form-grid">
-                  <label>分析個體 Entity Fields<select id="arsenal-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析個體 Entity Fields<input id="arsenal-entities" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>納入武器庫最低使用率 Minimum Usage<input id="arsenal-min-usage" type="number" min="0" max="1" step="0.01" value="0.05"></label>
                   <label>並列處理 Tie Handling<select id="arsenal-tie"><option value="dense_rank">保留並列 Keep Ties</option><option value="row_number">固定選出唯一順位 Pick One Deterministically</option></select></label>
                 </div>
@@ -161,7 +161,7 @@
               <fieldset>
                 <legend>相對角色選擇 Relative Role Selection</legend>
                 <div class="form-grid">
-                  <label>分析個體 Entity Fields<select id="role-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析個體 Entity Fields<input id="role-entities" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>排名依據 Ranking Basis<select id="role-metric-kind"><option value="usage_rate">球種使用率 Pitch Usage Rate</option><option value="field_metric">指定資料指標 Selected Data Metric</option></select></label>
                   <label>資料欄位 Data Field<select id="role-value-field" data-field-select data-preselect="release_speed"></select></label>
                   <label>統計方式 Aggregation<select id="role-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
@@ -182,7 +182,7 @@
               <fieldset>
                 <legend>前後期比較 Previous / Next Comparison</legend>
                 <div class="form-grid">
-                  <label>分析個體 Entity Fields<select id="temporal-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析個體 Entity Fields<input id="temporal-entities" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>時間單位欄位 Period Field<select id="temporal-period" data-field-select data-preselect="game_pk"></select></label>
                   <label>資料欄位 Data Field<select id="temporal-value" data-field-select data-preselect="release_speed"></select></label>
                   <label>統計方式 Aggregation<select id="temporal-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
@@ -201,7 +201,7 @@
               <fieldset>
                 <legend>每個個體自己的門檻 Per-Entity Threshold</legend>
                 <div class="form-grid">
-                  <label>分析個體 Entity Fields<select id="percentile-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析個體 Entity Fields<input id="percentile-entities" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>資料欄位 Data Field<select id="percentile-value" data-field-select data-preselect="release_speed"></select></label>
                   <label>百分位門檻 Percentile Threshold<input id="percentile-threshold" type="number" min="0" max="100" step="1" value="80"></label>
                   <label>保留方向 Keep Side<select id="percentile-side"><option value="high">高於或等於門檻 At or Above</option><option value="low">低於或等於門檻 At or Below</option></select></label>
@@ -218,8 +218,8 @@
               <fieldset>
                 <legend>分析單位對基準 Unit vs Baseline</legend>
                 <div class="form-grid">
-                  <label>分析單位欄位 Unit Fields<select id="cross-unit" multiple size="6" data-field-select data-preselect="pitcher,game_pk"></select></label>
-                  <label>基準欄位 Baseline Fields<select id="cross-baseline" multiple size="6" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析單位欄位 Unit Fields<input id="cross-unit" type="text" data-multi-field value="pitcher,game_pk" placeholder="例如 pitcher,game_pk"></label>
+                  <label>基準欄位 Baseline Fields<input id="cross-baseline" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>資料欄位 Data Field<select id="cross-value" data-field-select data-preselect="release_speed"></select></label>
                   <label>統計方式 Aggregation<select id="cross-function"><option value="avg">平均 Average</option><option value="max">最大 Maximum</option><option value="min">最小 Minimum</option><option value="sum">總和 Sum</option><option value="count">筆數 Count</option></select></label>
                 </div>
@@ -236,7 +236,7 @@
               <fieldset>
                 <legend>期間比較 Period Comparison</legend>
                 <div class="form-grid">
-                  <label>分析個體 Entity Fields<select id="change-entities" multiple size="5" data-field-select data-preselect="pitcher"></select></label>
+                  <label>分析個體 Entity Fields<input id="change-entities" type="text" data-multi-field value="pitcher" placeholder="例如 pitcher"></label>
                   <label>最低使用率 Minimum Usage<input id="change-min-usage" type="number" min="0" max="1" step="0.01" value="0.05"></label>
                   <label>期間 A 開始 Period A Start<input id="change-a-start" type="date"></label>
                   <label>期間 A 結束 Period A End<input id="change-a-end" type="date"></label>
@@ -294,6 +294,8 @@
     </div>
   </template>
 
+  <script src="/multi-field-model.js"></script>
+  <script src="/panel-activation.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

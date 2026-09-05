@@ -1,4 +1,5 @@
 name: CI
+# Keep final branch validation available on push, pull request, and manual dispatch.
 on:
   push:
   pull_request:
@@ -13,6 +14,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[dev]'
+      - run: node --check src/treepolo_mlb_data/web_static/analysis-save-ui.js
+      - run: node --check src/treepolo_mlb_data/web_static/analysis-library-status.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-visualization.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-visualization-fixes-v2.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-preset-state-reset.js
+      - run: node --check src/treepolo_mlb_data/web_static/font-minimum-compat.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-layout-containment.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-save-lifecycle.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-load-stability.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-latest-request.js
+      - run: node tests/stage4d-latest-request.test.cjs
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-axis-layout.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-export-fidelity.js
+      - run: node --check src/treepolo_mlb_data/web_static/stage4d-export-progress.js
       - run: pytest -q -m 'not integration'
 
   live-savant-smoke:

@@ -64,6 +64,7 @@
       fragment.append(tr);
     });
     tbody.append(fragment);
+    window.treepoloPlayerNames?.enhanceTable?.(table);
   }
 
   function installPagerFor(table, section) {
@@ -111,7 +112,11 @@
     if (!host || !full) return;
     const sections = Array.isArray(full.sections) ? full.sections : [full];
     const tables = $$("table.result-table", host);
-    sections.forEach((section, index) => installPagerFor(tables[index], section));
+    sections.forEach((section, index) => {
+      const table = tables[index];
+      window.treepoloPlayerNames?.enhanceTable?.(table);
+      installPagerFor(table, section);
+    });
   }
 
   function initialPage(result) {

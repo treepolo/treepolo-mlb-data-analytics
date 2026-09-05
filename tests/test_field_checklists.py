@@ -3,7 +3,7 @@ import re
 from treepolo_mlb_data.webapp import STATIC_DIR
 
 
-EXPECTED_MULTIPLE_FIELD_SELECTS = {
+EXPECTED_STATIC_MULTI_FIELDS = {
     "basic-group",
     "arsenal-entities",
     "role-entities",
@@ -15,34 +15,45 @@ EXPECTED_MULTIPLE_FIELD_SELECTS = {
 }
 
 
-def _multiple_field_select_ids(html: str) -> set[str]:
+def _csv_multi_field_ids(html: str) -> set[str]:
     ids: set[str] = set()
-    for attrs in re.findall(r"<select\s+([^>]*\bmultiple\b[^>]*)>", html):
-        if "data-field-select" not in attrs:
-            continue
+    for attrs in re.findall(r"<input\s+([^>]*\bdata-multi-field\b[^>]*)>", html):
         match = re.search(r'id="([^"]+)"', attrs)
-        assert match is not None
-        ids.add(match.group(1))
+        if match:
+            ids.add(match.group(1))
     return ids
 
 
-def test_all_static_field_multiselects_are_accounted_for():
+def test_all_static_unordered_multifields_use_editable_csv_canonical_inputs():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    assert _multiple_field_select_ids(html) == EXPECTED_MULTIPLE_FIELD_SELECTS
+    assert _csv_multi_field_ids(html) == EXPECTED_STATIC_MULTI_FIELDS
+    assert "<select multiple" not in html
 
 
-def test_static_and_dynamic_field_multiselects_use_one_generic_checklist_renderer():
-    enhancer = (STATIC_DIR / "field-checklists.js").read_text(encoding="utf-8")
+def test_static_and_dynamic_multifields_use_one_generic_checklist_renderer():
+    checklist = (STATIC_DIR / "field-checklists.js").read_text(encoding="utf-8")
+    model = (STATIC_DIR / "multi-field-model.js").read_text(encoding="utf-8")
     app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     webapp = (STATIC_DIR.parent / "webapp.py").read_text(encoding="utf-8")
 
-    assert "select[multiple][data-field-select]" in enhancer
-    assert '".s4-groups"' in enhancer
-    assert '".ta-entity-fields"' in enhancer
-    assert '"#cc-features"' in enhancer
-    assert '".s4-order"' not in enhancer
-    assert 'checkbox.type = "checkbox"' in enhancer
-    assert 'host.className = "field-checklist"' in enhancer
-    assert 'control.value = values.join(",")' in enhancer
+    assert "input[data-multi-field]" in checklist
+    assert '".s4-groups"' in checklist
+    assert '".ta-entity-fields"' in checklist
+    assert '"#cc-features"' in checklist
+    assert '".s4-order"' not in checklist
+    assert 'checkbox.type = "checkbox"' in checklist
+    assert 'host.className = "field-checklist"' in checklist
+    assert "treepoloMultiField" in checklist
+    assert "control.value = next" in model
     assert "renderBasicGroupChecklist" not in app
     assert "/field-checklists.js" in webapp
+
+
+def test_checklist_does_not_duplicate_canonical_input_with_a_second_search_box():
+    checklist = (STATIC_DIR / "field-checklists.js").read_text(encoding="utf-8")
+
+    assert "field-checklist-search" not in checklist
+    assert "locateOnlySearch" not in checklist
+    assert 'search.type = "search"' not in checklist
+    assert "field-checklist-summary" in checklist
+    assert "field-checklist-items" in checklist
