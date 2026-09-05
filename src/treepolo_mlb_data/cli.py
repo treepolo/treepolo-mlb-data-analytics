@@ -16,7 +16,7 @@ DEFAULT_CONFIG = Path("config.json")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="treepolo-mlb", description="Baseball Savant local pitch-data mirror")
+    p = argparse.ArgumentParser(prog="treepolo-mlb", description="Local Baseball Savant pitch-data mirror")
     p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
@@ -72,10 +72,12 @@ def main(argv: list[str] | None = None) -> int:
         from .stage4d import install as install_stage4d
         from .stage4d_saved_v2 import install as install_stage4d_saved_v2
         from .stage4d_report_v2 import install as install_stage4d_report_v2
+        from .stage4d_export_v2 import install as install_stage4d_export_v2
         from .stage4d_frontend_patch import install as install_stage4d_frontend_patch
         install_stage4d(webapp)
         install_stage4d_saved_v2()
         install_stage4d_report_v2()
+        install_stage4d_export_v2()
         install_stage4d_frontend_patch(webapp)
         webapp.serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
         return 0
