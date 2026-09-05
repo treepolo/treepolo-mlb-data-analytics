@@ -28,7 +28,8 @@ def test_save_dialog_is_single_purpose_and_does_not_decorate_workspace_dom():
     assert "window.treepoloLastAnalysis" not in save_ui
     assert "removeLegacySavePanel" not in save_ui
     assert 'document.addEventListener("treepolo:analysis-save-request"' in save_ui
-    assert "window.treepoloAnalysisSaveUiApi = { open: openSaveDialog }" in save_ui
+    assert 'document.addEventListener("treepolo:analysis-edit-request"' in save_ui
+    assert "window.treepoloAnalysisSaveUiApi = { open: openSaveDialog, edit: openEditDialog }" in save_ui
 
 
 def test_workspace_owns_result_save_toolbar_and_history_save_as_actions():
@@ -76,3 +77,19 @@ def test_save_as_uses_xp_dialog_with_deferred_name_and_notes_inputs():
     assert "另存分析 Save Analysis As" in save_ui
     assert "取消 Cancel" in save_ui
     assert "儲存 Save" in save_ui
+
+
+def test_saved_analysis_edit_reuses_dialog_prefills_name_and_notes_and_updates_metadata_only():
+    save_ui = source("analysis-save-ui.js")
+
+    assert "function openEditDialog(item)" in save_ui
+    assert "編輯已存分析 Edit Saved Analysis" in save_ui
+    assert 'name: String(item.name || "")' in save_ui
+    assert 'notes: String(item.notes || "")' in save_ui
+    assert "儲存變更 Save Changes" in save_ui
+    assert "async function updateSavedItem(item, name, notes)" in save_ui
+    assert "`/api/analysis/saved/${item.id}`" in save_ui
+    assert 'body: JSON.stringify({ name, notes })' in save_ui
+    assert "analysis_payload" not in save_ui.split("async function updateSavedItem", 1)[1].split("async function commitSave", 1)[0]
+    assert "已更新分析 Updated analysis" in save_ui
+    assert "treepolo:analysis-library-refresh-request" in save_ui
