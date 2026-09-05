@@ -33,6 +33,7 @@ def install(webapp_module: Any) -> None:
             "stage4d-latest-request.js",
             "stage4d-axis-layout.js",
             "stage4d-export-fidelity.js",
+            "stage4d-export-progress.js",
         )
         chunks = [(static_dir / name).read_bytes() for name in module_names]
         body = b"\n".join(chunks)
