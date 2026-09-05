@@ -22,6 +22,7 @@
       .analysis-stale-badge { display:inline-block; margin-left:6px; padding:1px 5px; border:1px solid #a66a20; background:#fff3dc; font-size:11px; font-weight:600; white-space:nowrap; }
       .analysis-stale-warning { display:inline-block; margin-left:8px; padding:2px 7px; border:1px solid #a66a20; background:#fff3dc; font-size:11px; font-weight:600; }
       #analysis-history-list .analysis-history-id { width:48px; white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
+      #saved-analysis-list .analysis-library-edit { margin-left:4px; margin-right:4px; }
     `;
     document.head.append(style);
   }
@@ -91,8 +92,35 @@
     });
   }
 
+  function decorateSavedEditButtons() {
+    const host = document.getElementById("saved-analysis-list");
+    if (!host) return;
+    const rows = Array.from(host.querySelectorAll("tbody tr"));
+    rows.forEach((row, index) => {
+      const item = savedItems[index];
+      const actionCell = row.lastElementChild;
+      if (!actionCell) return;
+      let button = actionCell.querySelector(".analysis-library-edit");
+      if (!item?.id) {
+        button?.remove();
+        return;
+      }
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.className = "analysis-library-edit";
+        button.textContent = "編輯 Edit";
+        const deleteButton = Array.from(actionCell.querySelectorAll("button")).find(candidate => candidate.textContent.includes("刪除"));
+        if (deleteButton) actionCell.insertBefore(button, deleteButton);
+        else actionCell.append(button);
+      }
+      button.title = `編輯名稱與備註 Edit name and notes · ${item.name || `#${item.id}`}`;
+    });
+  }
+
   function decorate() {
     decorateHistoryIds();
+    decorateSavedEditButtons();
     decorateRows("saved-analysis-list", savedItems, 2);
     // History receives the ID column at index 0, so Status shifts from 4 to 5.
     decorateRows("analysis-history-list", historyItems, 5);
@@ -133,7 +161,7 @@
       historyItems = history.history || [];
       decorate();
     } catch {
-      // Staleness badges and history IDs are supplemental. Analysis Library remains usable if status refresh fails.
+      // Staleness badges, edit actions, and history IDs are supplemental. Analysis Library remains usable if status refresh fails.
     }
   }
 
@@ -150,7 +178,7 @@
     const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])];
     return nodes.some(node => {
       if (node.nodeType !== 1) return false;
-      if (node.classList?.contains("analysis-stale-badge") || node.classList?.contains("analysis-history-id")) return false;
+      if (node.classList?.contains("analysis-stale-badge") || node.classList?.contains("analysis-history-id") || node.classList?.contains("analysis-library-edit")) return false;
       return node.matches?.("table,tbody,tr") || Boolean(node.querySelector?.("table,tbody,tr"));
     });
   }
@@ -164,7 +192,17 @@
     });
     observer.observe(library, { childList: true, subtree: true });
 
+    document.addEventListener("treepolo:analysis-library-refresh-request", scheduleRefresh);
     document.addEventListener("click", event => {
+      const editButton = event.target.closest?.("#saved-analysis-list .analysis-library-edit");
+      if (editButton) {
+        event.preventDefault();
+        const item = selectedItemFromClick(editButton);
+        if (!item) return;
+        document.dispatchEvent(new CustomEvent("treepolo:analysis-edit-request", { detail: { item } }));
+        return;
+      }
+
       const button = event.target.closest?.("#saved-analysis-list button,#analysis-history-list button");
       if (!button || !button.textContent.includes("載入")) return;
       const item = selectedItemFromClick(button);
