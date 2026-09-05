@@ -5,6 +5,7 @@
   window.treepoloAnalysisSaveUi = true;
 
   let activeSource = null;
+  let activeSavedItem = null;
 
   const MODE_LABELS = {
     basic: "基本分析 Basic",
@@ -117,25 +118,63 @@
     return `來源 Source: 目前分析結果 Current Result · ${mode}`;
   }
 
+  function editDescription(item) {
+    return `已存分析 Saved Analysis · ${modeLabel(item?.payload?.mode)}`;
+  }
+
+  function configureDialog({ title, source, name, notes, confirmText }) {
+    const layer = ensureDialog();
+    layer.querySelector(".xp-save-dialog-title-text").textContent = title;
+    layer.querySelector(".xp-save-source").textContent = source;
+    layer.querySelector(".xp-save-name").value = name;
+    layer.querySelector(".xp-save-notes").value = notes;
+    layer.querySelector(".xp-save-confirm").textContent = confirmText;
+    layer.querySelector(".xp-save-dialog-error").textContent = "";
+    layer.hidden = false;
+    requestAnimationFrame(() => {
+      const input = layer.querySelector(".xp-save-name");
+      input?.focus();
+      input?.select();
+    });
+  }
+
   function openSaveDialog(source) {
     if (!source?.payload || typeof source.payload !== "object") {
       setStatus("目前沒有可儲存的分析。 No analysis is available to save.");
       return;
     }
     activeSource = source;
-    const layer = ensureDialog();
-    layer.querySelector(".xp-save-source").textContent = sourceDescription(source);
-    layer.querySelector(".xp-save-name").value = "";
-    layer.querySelector(".xp-save-notes").value = "";
-    layer.querySelector(".xp-save-dialog-error").textContent = "";
-    layer.hidden = false;
-    requestAnimationFrame(() => layer.querySelector(".xp-save-name")?.focus());
+    activeSavedItem = null;
+    configureDialog({
+      title: "另存分析 Save Analysis As",
+      source: sourceDescription(source),
+      name: "",
+      notes: "",
+      confirmText: "儲存 Save",
+    });
+  }
+
+  function openEditDialog(item) {
+    if (!item?.id || !item?.payload || typeof item.payload !== "object") {
+      setStatus("找不到可編輯的已存分析。 Saved analysis is unavailable for editing.");
+      return;
+    }
+    activeSource = null;
+    activeSavedItem = item;
+    configureDialog({
+      title: "編輯已存分析 Edit Saved Analysis",
+      source: editDescription(item),
+      name: String(item.name || ""),
+      notes: String(item.notes || ""),
+      confirmText: "儲存變更 Save Changes",
+    });
   }
 
   function closeSaveDialog() {
     const layer = document.querySelector("#analysis-save-dialog-layer");
     if (layer) layer.hidden = true;
     activeSource = null;
+    activeSavedItem = null;
   }
 
   async function resolveSource(source) {
@@ -167,8 +206,15 @@
     });
   }
 
+  async function updateSavedItem(item, name, notes) {
+    return api(`/api/analysis/saved/${item.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name, notes }),
+    });
+  }
+
   async function commitSave() {
-    if (!activeSource) throw new Error("沒有可儲存的分析來源。 No analysis source is selected.");
+    if (!activeSource && !activeSavedItem) throw new Error("沒有可儲存的分析來源。 No analysis source is selected.");
     const layer = ensureDialog();
     const name = layer.querySelector(".xp-save-name")?.value.trim() || "";
     const notes = layer.querySelector(".xp-save-notes")?.value || "";
@@ -176,9 +222,15 @@
     const confirm = layer.querySelector(".xp-save-confirm");
     confirm.disabled = true;
     try {
-      await saveSource(activeSource, name, notes);
-      closeSaveDialog();
-      setStatus(`已儲存分析 Saved analysis: ${name}`);
+      if (activeSavedItem) {
+        await updateSavedItem(activeSavedItem, name, notes);
+        closeSaveDialog();
+        setStatus(`已更新分析 Updated analysis: ${name}`);
+      } else {
+        await saveSource(activeSource, name, notes);
+        closeSaveDialog();
+        setStatus(`已儲存分析 Saved analysis: ${name}`);
+      }
       document.dispatchEvent(new CustomEvent("treepolo:analysis-library-refresh-request"));
     } finally {
       confirm.disabled = false;
@@ -189,9 +241,10 @@
     injectStyles();
     ensureDialog();
     document.addEventListener("treepolo:analysis-save-request", event => openSaveDialog(event.detail?.source || null));
+    document.addEventListener("treepolo:analysis-edit-request", event => openEditDialog(event.detail?.item || null));
   }
 
-  window.treepoloAnalysisSaveUiApi = { open: openSaveDialog };
+  window.treepoloAnalysisSaveUiApi = { open: openSaveDialog, edit: openEditDialog };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once:true });
   else init();
