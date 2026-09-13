@@ -1,120 +1,111 @@
 # Stage 4D — Output / Visualization 正式規格
 
-Date: **2026-09-01**  
-Branch: `refactor/unify-multifield-and-panel-lifecycle`
+Updated: **2026-09-13**  
+Branch: `refactor/unify-multifield-and-panel-lifecycle`  
+Final status: **PASS / FORMALLY CLOSED**
 
-本文件是 Stage 4D 的正式產品與工程規格。Stage 4D 的目標，是把 Stage 4A–4C 已經能正確產生的 analysis result，轉成可選取、可視覺化、可比較、可保存、可重用、可匯出的結果工作環境；Stage 4D 不新增新的分析語意，也不建立第二套統計邏輯。
+本文件是 Stage 4D 的正式產品與工程契約，並已依最終實作／人工驗收結果校正。Stage 4D 把 Stage 4A–4C 產生的 formal analysis result 轉成可選取、可視覺化、可保存、可重用、可匯出、可產生報告的結果工作環境；它不新增新的分析語意，也不建立第二套統計邏輯。
 
-**AI → AST 已明確移出 Stage 4D scope。**
+**AI → AST 已明確移出 Stage 4D scope。** 目前也沒有 Stage 4E 或其他已定義的下一階段。
 
 ---
 
 ## 1. 核心原則
 
-1. Visualization 只消費正式 analysis result / typed result contract，不自己重算 Average、Group By、Regression、Bootstrap、Clustering、Percentile、Rolling、Derived Metric 等分析運算。
-2. Presentation 設定與 Analysis Payload 分離；改圖型、軸、圖例、尺寸、標題等不得迫使分析器重算。
-3. 所有圖、comparison view、report、export 都必須保留來源 analysis、result section、grain、data revision、sample size 與其他可用 provenance。
-4. 大型資料不得 silent truncate；任何 sampling 必須明確標示方法、筆數與 seed（若有）。
-5. 各分析頁結果區維持 table-first，不塞完整圖表編輯 UI。
-6. 第一版 Visualization 採 **單圖模式**，以取得最大畫布與最低操作複雜度；但資料模型、API 與保存 schema 不得設計成「永遠只能有一張圖」。未來可以增加 multi-chart / dashboard / report composition，而不需破壞既有單圖 `VisualizationSpec`。
-7. 應用 UI 維持目前雙語與 XP / Windows 7 方向；輸出的 publication chart / report 可以採獨立、乾淨的輸出樣式。
+1. Visualization 只消費 formal analysis result / typed result contract，不自己重算 Average、Group By、Regression、Bootstrap、Clustering、Percentile、Rolling、Derived Metric 等分析運算。
+2. Presentation 設定與 Analysis Payload 分離；單純改圖型、軸、圖例、尺寸、標題等不應迫使分析器重算。
+3. 圖、comparison view、report、export 應保留可取得的 source、result section、grain、data revision、row count、sampling 與 provenance。
+4. 大型資料不得 silent truncate；任何 presentation sampling 必須明確揭露方法、筆數與 seed（若有）。
+5. 各分析頁結果區維持 table-first；完整圖表編輯集中在 Visualization 主頁。
+6. **第一版 Visualization 採 **單圖模式****，以取得最大畫布與最低操作複雜度；但資料模型與保存格式**不得設計成「永遠只能有一張圖」**。如果未來真的需要，可以增加 **multi-chart / dashboard** composition layer，而不破壞既有 `VisualizationSpec`。
+7. UI 維持中英並列與 XP / Windows 7 方向；publication chart / report 可使用獨立乾淨的輸出樣式。
+8. Presentation sampling 不改變 underlying formal result，也不得改變 full-result export population。
 
 ---
 
 ## 2. 導覽與入口
 
-左側導覽改成明確群組：
+最終 accepted navigation order：
 
 ```text
+Data
+  Data Management
+
 Analysis
   Basic Analysis
-  ...
-  Bootstrap
+  Sequence Pattern
+  Follow-up Event
+  Pitch Arsenal
+  Pitch Role
+  Temporal Comparison
+  Individual Threshold
+  Level Comparison
+  Arsenal Change
+  Research Workflow
+  Clustering
+  Regression
+  Bootstrap / Confidence Interval
   Multi-stage Cluster Comparison
 
 Output
   Visualization
   Analysis Library
   Analysis History
-
-Data
-  Data Management
 ```
 
-### 2.1 各分析頁結果區
+`Data` 必須在最上方，`Output` 必須在最下方。
 
-每個 `Analysis Result` 區保留現有結果表格，新增輕量動作：
+### 2.1 Analysis Result
+
+結果頁維持 table-first，提供輕量動作：
 
 ```text
 [匯出 Export]
 [送至視覺化 Open in Visualization]
 ```
 
-`Open in Visualization` 只負責把目前 analysis/result section 帶入 Visualization；完整圖表設定仍在 Visualization 主頁。
+`Open in Visualization` 將目前 analysis/result section 帶入獨立 Visualization 工作頁。
 
 ### 2.2 Visualization 主頁
 
-Visualization 是獨立一級工作頁，第一版一次處理一張圖。基本流程：
+基本流程：
 
 ```text
 Data Source
-→ Analysis Result
 → Result Section
-→ Presentation Type / Preset
+→ Presentation / Preset
 → Field Mapping
-→ Display Controls
+→ Data Handling
+→ Display
 → Preview
-→ Save / Export
+→ Save / Export / Report
 ```
 
-頁面主要區域：
-
-- Data Source selector
-- Result Section selector
-- Visualization / Comparison type selector
-- 大型單圖畫布
-- Field Mapping
-- Presentation Controls
-- Sampling / Data Handling
-- Source / Provenance panel
-- Save Visualization / Save Preset / Export actions
+第一版一次編輯一張圖。
 
 ---
 
-## 3. Visualization 可使用的資料來源
+## 3. Visualization Sources
 
-Visualization 不直接查 Statcast 主表作為自由繪圖資料庫；它從正式分析結果取得資料。
+Visualization 不把 Statcast 主表當自由繪圖資料庫；source 必須可以回溯到正式分析結果／定義。
 
-### 3.1 Recent Results
+支援：
 
-目前應用 session 中最近成功執行的分析結果。
+- Current Result / analysis payload；
+- recent session result；
+- Analysis History；
+- Saved Analysis；
+- Saved Visualization（Live / Frozen）。
 
-### 3.2 Analysis History
+History / Saved Analysis 如果 cached result 不完整或不可用，backend visualization-data path 可以在使用者實際載入／輸出操作中，依 formal Analysis Payload 取得完整結果。這條 path 必須移除 UI-only `result_limit`，不能把 browser retained rows 冒充完整結果。
 
-從既有 Analysis History 選擇。
-
-- 若完整 result 仍可恢復：直接使用。
-- 若只剩 analysis payload / metadata：顯示 result unavailable，提供 `重新執行 Re-run`。
-- 不因使用者只是打開 Visualization 而偷偷重跑。
-
-### 3.3 Saved Analyses
-
-從 Analysis Library 選已保存分析。
-
-- result 可用時直接載入。
-- result 不可用時可由使用者明確選擇重新執行。
-
-### 3.4 Open in Visualization
-
-從任一 Analysis Result 點擊後，直接建立目前 analysis/result section 的 source selection；使用者仍可在 Visualization 頁更換 section 或資料來源。
+Rapid source switching 採 **latest request wins**；舊 request 即使晚回也不能覆蓋最後選取的 source。使用者改變 source 時必須先 reset 舊 Result Section，避免上一個 multi-section source 的 section index 洩漏到新 source。
 
 ---
 
-## 4. 多 Section Result
+## 4. Multi-section Result
 
-如果 analysis result 含多個 section，Visualization 必須先選 section，再決定可用 presentation。
-
-例如 Clustering：
+多 section 結果先選 section，再決定 compatible presentation。例如 Clustering：
 
 ```text
 Cluster Summary
@@ -122,298 +113,178 @@ Auto Cluster Diagnostics
 Cluster Assignments
 ```
 
-每個 section 的 column metadata 與 row grain 不同，因此合法圖型也不同。
+不同 section 可有不同 columns、field metadata、grain 與 row count。
+
+Saved Visualization 必須保存 section selection；restore 時要等 source/section/preset 初始化穩定後再套回保存的 spec，且要有 generation guard 防止舊 restore 覆蓋新操作。
 
 ---
 
 ## 5. Presentation Metadata Contract
 
-Stage 4D 在現有 `columns + rows + grain` 之上增加 presentation metadata。它描述結果，不重新分析資料。
+在 `columns + rows + grain` 上提供 presentation metadata，描述結果而不新增分析。
 
-每個 output field 至少可描述：
+可描述：
 
 - `name`
-- display label
+- bilingual display label
 - data type
 - unit
 - semantic role
-- identifier / dimension / measure
-- categorical / continuous
-- temporal
-- percentage / rate
-- sample-size field
-- estimate field
-- interval lower / upper pairing
-- standard error pairing（若 analysis result 已提供）
-- probability field
-- cluster identifier
-- default display precision
+- identifier / category / numeric / temporal
+- sample-size role
+- estimate / lower / upper / SE pairing（如果 result 已提供）
+- probability / cluster identifier
+- display precision
 
-用途：
+用途：合法 mapping、合理預選欄位、避免 identifier 當 measure、正確顯示單位、支援 preset compatibility check。
 
-- 判斷圖表是否合法；
-- 自動帶入合理欄位；
-- 避免把 pitcher ID 等 identifier 當普通量測值；
-- 正確顯示單位／百分比；
-- 把 `estimate + ci_low + ci_high` 識別成 interval；
-- 產生 chart/preset compatibility check。
-
-這一層不得推導 analysis result 中不存在的統計量。
+未知欄位在 report 等 presentation 中使用明確 fallback label，例如 `資料欄位 Data Field · raw_name`，不得假裝知道其語意。
 
 ---
 
-## 6. 第一版通用 Presentation Types
+## 6. First-version Presentation Types
 
-### 6.1 Line Chart
+正式支援的 `VisualizationSpec.type`：
 
-適合 ordered / temporal X 軸，例如 season、date、period、candidate K。
+- `line`
+- `bar`
+- `scatter`
+- `range`
+- `dumbbell`
+- `difference`
 
-支援：
+### Line
 
-- X
-- Y
-- Series
-- point on/off
-- reference line
-- axis ranges
-- labels
+Ordered / temporal X，例如 season、date、period、candidate K。
 
-### 6.2 Bar Chart
+### Bar
 
-支援：
+Vertical / Horizontal；支援 grouped/stacked behavior when compatible series exists。
 
-- ordinary bar
-- grouped bar
-- stacked bar
-- horizontal bar
+### Scatter
 
-### 6.3 Scatter Plot
+X / Y / Series / Label / Point Size / Opacity / reference lines。
 
-支援：
+### Range
 
-- X
-- Y
-- Color / Series
-- Label
-- Point size
-- Opacity
-- reference lines
+`estimate + lower + upper`，只在 analysis result 已提供 interval 時使用。
 
-### 6.4 Point / Range Plot
+### Dumbbell
 
-正式支援：
+同一 entity 的兩個可比較值，例如 unit vs baseline、period A vs B。
 
-```text
-estimate + lower bound + upper bound
-```
+### Difference
 
-用於 confidence interval、Bootstrap、Regression coefficient 與其他 analysis result 已提供的 uncertainty。
-
-### 6.5 Dumbbell / Paired Comparison
-
-用於同一 entity 的兩個可比較值，例如 unit vs baseline、selected vs reference、period A vs B。
-
-### 6.6 Difference Plot
-
-呈現 entity × difference，支援依差值排序與 0 reference line。
+entity × difference，支援 0 reference line 與依差值排序。
 
 ---
 
-## 7. 棒球專用 Presets / Presentation
+## 7. Built-in Presets — shipped set
 
-這些 preset 只固定 presentation mapping 與棒球視覺元素，不新增分析。
+目前 backend `BUILTIN_PRESETS` 正式包含：
+
+- Pitch Movement
+- Pitch Location
+- Release Point
+- Pitch Usage Trend
+- Cluster Map
+- Auto-K Diagnostics
+- Regression Coefficients
+- Confidence Interval
+- Cross-Level Comparison
+- Difference Ranking
+- Generic Time Trend
+- Category Comparison
 
 ### 7.1 Pitch Movement
 
-需要 `pfx_x`、`pfx_z`。
+需要 `pfx_x` / `pfx_z`，可用 pitch_type / cluster / compatible category 作 series，支援 equal axes。
 
-支援：
+### 7.2 Pitch Location
 
-- Color = pitch_type / cluster / compatible category
-- every-pitch points
-- group / cluster center
-- equal aspect ratio
+需要 `plate_x` / `plate_z`；strike zone / plate 由本地 vector primitives 畫出，不依賴外抓圖片。
 
-### 7.2 Release Point
+### 7.3 Release Point
 
-需要 `release_pos_x`、`release_pos_z`。
-
-可依 pitch_type、cluster、game、period 或其他合法 category 著色。
-
-### 7.3 Pitch Location
-
-需要 `plate_x`、`plate_z`。
-
-程式內以 vector / canvas primitives 畫 strike zone、plate 等幾何元素，不需要外抓圖片；可依 pitch_type、description、events、cluster 等著色。
+需要 `release_pos_x` / `release_pos_z`。
 
 ### 7.4 Pitch Usage Trend
 
-結果已有 period × pitch_type × usage_rate 時，可提供 Line / Stacked Area preset。
+目前使用正式 `line` presentation。Stacked Area 並非目前 first-version `VisualizationSpec.type`，因此不列為已實作功能。
 
-### 7.5 Arsenal Comparison
+### 7.5 Arsenal / category results
 
-已有 pitch_type × metric 結果時，可提供 grouped bar / dot comparison。
+Arsenal / Arsenal Change 若欄位 compatible，可使用 generic Category Comparison / Difference / Bar 等正式 presentation；目前沒有另外宣稱未實作的 dedicated `Arsenal Comparison` 或 `Added/Removed/Retained` renderer。
 
-### 7.6 Arsenal Change
+### 7.6 Baseball graphical asset policy
 
-結果已有 Added / Removed / Retained 等正式欄位時，提供專用分類呈現。
-
-### 7.7 棒球球體／縫線圖形資源政策
-
-任何 Stage 4D 需要真正棒球球體、表面或縫線紋理的視覺元素，**只使用專案既有的 `research_assets/3d_baseball/` 資源與其固定上游載點，不另外搜尋或抓取其他棒球素材。**
-
-既有機制：
+任何需要真正棒球球體、表面或縫線素材的功能只使用 repo 既有：
 
 ```text
 research_assets/3d_baseball/upstream_manifest.json
 research_assets/3d_baseball/fetch_upstream.py
 ```
 
-需要本地資產時由既有 helper 下載固定版本並驗證 byte size / Git blob SHA。
-
-上游目前未確認明確 root license，因此：
-
-- 本地開發／研究可依現有 helper 取得；
-- 正式 redistributable package 若要直接內嵌第三方 texture / scene，必須先通過 license / redistribution gate；
-- 不因 4D 開發另外換一套網路素材來源。
+不另外搜尋／抓取替代素材。上游 root license 尚未確認，因此 redistributable package 要內嵌第三方 texture / scene 前仍需 license gate。
 
 ---
 
 ## 8. Numerical / Statistical Presentation
 
-### 8.1 Clustering
+### Clustering
 
-#### Cluster Scatter
+- Cluster Map；
+- Auto-K Diagnostics：candidate K / criterion / score / valid / selected / rejection reason；
+- cluster-size/category presentations when source section supports them。
 
-- 任選兩個 compatible numerical features 作 X/Y。
-- Color = cluster。
-- 可顯示 cluster center。
+### Regression
 
-#### Auto-K Diagnostics
+- OLS coefficient + CI → range/point presentation；
+- Logistic 若 result 沒有 inferential SE/CI，不得假造 interval；
+- Observed vs Predicted 只有 source result 提供相關 rows 時才合法。
 
-直接消費：
+### Bootstrap / Confidence Interval
 
-- candidate_k
-- criterion / score
-- valid
-- selected
-- rejection reason
+- estimate + lower + upper interval；
+- A-B difference when provided；
+- sample size / resampling unit / confidence metadata 只顯示 result 已存在的資訊。
 
-顯示：
-
-- X = K
-- Y = selector score / BIC
-- Selected K 特別標示
-- Rejected K 可檢視 rejection reason
-
-#### Cluster Size
-
-Cluster × sample size bar chart。
-
-### 8.2 Regression
-
-#### Coefficient Plot
-
-Linear OLS 已有 coefficient + CI 時呈現 point/range。
-
-Logistic 若沒有 inferential SE / CI，就不得假造 interval。
-
-#### Observed vs Predicted
-
-只有 result 本身提供 observed/predicted rows 時才合法。
-
-#### Regression Summary
-
-可呈現現有 result 的 R²、RMSE、df、sample size 等 summary metadata。
-
-### 8.3 Bootstrap / Confidence Interval
-
-#### Interval Plot
-
-Estimate + CI low + CI high。
-
-#### A-B Difference
-
-差值中心點 + CI。
-
-必須能顯示 result 已提供的：
-
-- resampling unit
-- number of resamples
-- confidence level
-- sample size
+若 result 無 uncertainty，UI 顯示 unavailable，不自行計算。
 
 ---
 
-## 9. Sample Size / Uncertainty Presentation
+## 9. Display Controls
 
-所有有 sample size 的 result 可啟用：
+First-version UI 可保存／還原的主要 presentation controls 包含：
+
+- X / Y / Series / Label / lower / upper mapping；
+- title / subtitle；
+- width / height；
+- point size / opacity；
+- X/Y min/max；
+- X/Y reference lines；
+- bar orientation；
+- stacked toggle；
+- legend；
+- data labels；
+- Show N；
+- equal axes。
+
+Visualization 內禁止新增 Average、Group By、Regression、Bootstrap、Cluster、Percentile、Rolling、Derived Metric 等分析運算。
+
+---
+
+## 10. Large-data / Sampling Contract
+
+Current constants：
 
 ```text
-☑ 顯示樣本數 Show N
+AUTO_SAMPLE_ROWS = 5,000
+MAX_MANUAL_SAMPLE_ROWS = 50,000
+MAX_FULL_VISUALIZATION_ROWS = 100,000
+MAX_EXPORT_ROWS = 500,000
+REPORT_TABLE_ROWS = 80
 ```
-
-所有 result 已有 CI / interval 時可啟用：
-
-```text
-☑ 顯示信賴區間 Show Interval
-```
-
-若 result 無 CI、SE、p-value、distribution 等資料，UI 必須明確顯示 unavailable，不自行計算或推測。
-
----
-
-## 10. Comparison Presentation
-
-Comparison View 與普通 chart 並列為 presentation type。
-
-正式支援：
-
-- Period A vs Period B
-- Unit vs Baseline
-- Selected vs Reference
-- Cohort A vs Cohort B
-- Cluster / reference comparison
-
-可使用：
-
-- grouped bar
-- dumbbell
-- difference ranking
-- interval comparison
-
-條件是 analysis result 已經明確提供可比較值與 grain。
-
----
-
-## 11. Presentation Controls
-
-第一版允許以下純顯示操作：
-
-- result row / series display sorting
-- show/hide series
-- legend position
-- axis range
-- axis start at zero on/off
-- title / subtitle
-- data labels
-- decimal precision
-- percentage formatting
-- reference line
-- point opacity
-- point size
-- line width
-- chart dimensions
-- background
-- publication aspect presets（例如 16:9、4:5、1:1）
-
-禁止在 Visualization 內新增分析運算，例如 Average、Group By、Regression、Bootstrap、Cluster、Percentile、Rolling 或 Derived Metric。
-
----
-
-## 12. Large-data Visualization / Sampling
-
-Stage 4D 同時提供 **Automatic Sampling** 與 **Manual Sampling**；任何 sampling 都必須顯示。
 
 Data Handling：
 
@@ -423,501 +294,295 @@ Data Handling：
 ○ Manual Sampling
 ```
 
-### 12.1 Full Data
-
-資料量在安全門檻內時可直接完整載入。
-
-### 12.2 Automatic Sampling
-
-系統依圖型與資料量選擇安全顯示筆數；畫面與輸出圖必須永久帶有，例如：
-
-```text
-Sampled: 5,000 of 47,728 rows
-```
-
-### 12.3 Manual Sampling
-
-第一版支援：
+Manual methods：
 
 - Random
-- Every Nth row
-- reproducible random sampling with explicit seed
+- Every Nth Row
+- explicit reproducible seed
 
-可設定 sample row count。
+畫面必須顯示 source rows / returned rows / sampled state。Frontend paging（200-row page）或 retained-row limit 不得當成完整 visualization/export dataset。
 
-### 12.4 Sampling state
-
-Saved Visualization 必須保存：
-
-- sampling mode
-- method
-- requested sample size
-- effective sample size
-- seed（若適用）
-- total source rows
-
-### 12.5 禁止 silent truncation
-
-目前 UI 的 result paging / retained row limit 不得被當成完整 visualization dataset。
-
-如果完整 result 比前端 retained rows 大，Visualization 必須明確知道：
-
-```text
-Total source rows
-Loaded rows
-Sampled rows
-```
-
-需要完整資料時走 backend visualization-data path，不依賴 DOM 或目前 200-row page。
+同 seed 的 Random sampling 必須 reproducible。
 
 ---
 
-## 13. Visualization Presets
+## 11. User Presets
 
-### 13.1 Built-in Presets
+User Preset 保存 presentation 規則，不保存 source data：
 
-第一版內建至少：
+- presentation type；
+- field mapping；
+- display controls；
+- dimensions；
+- sampling defaults（如有）。
 
-- Pitch Movement
-- Pitch Location
-- Release Point
-- Pitch Usage Trend
-- Generic Time Trend
-- Category Comparison
-- Cluster Map
-- Auto-K Diagnostics
-- Regression Coefficients
-- Confidence Interval
-- Cross-Level Comparison
-
-### 13.2 User Presets
-
-使用者可 `Save as Preset`。
-
-Preset 保存 presentation 規則，不保存資料：
-
-- presentation type
-- field mapping rules
-- series mapping
-- display controls
-- axis / legend
-- theme
-- dimensions
-- sampling defaults（若使用者明確保存）
-
-套用 preset 前必須做 compatibility check；缺少必要欄位時不得硬套。
+套用前要做 compatibility check；缺欄位不可硬套。
 
 ---
 
-## 14. Saved Visualization
+## 12. Saved Visualization
 
-Saved Visualization 保存一張完整、可重開的 visualization。
+每筆 Saved Visualization 保存：
 
-保存：
+- name / notes；
+- source reference / analysis definition；
+- result section；
+- `VisualizationSpec`；
+- save mode；
+- timestamps / provenance。
 
-- name
-- source analysis reference / definition
-- source mode
-- result section
-- `VisualizationSpec`
-- presentation metadata version
-- sampling state
-- created / updated timestamps
+### 12.1 Live
 
-第一版採單圖模式，因此一筆 Saved Visualization 對應一個 `VisualizationSpec`。
+保存 source + spec；重新載入時依 source/result state 準備資料。Presentation restore 必須在 source data 穩定後完成。
 
-**這不是永久單圖限制。** 未來若做 multi-chart / dashboard，可以新增 `VisualizationCollection` / dashboard entity，把多個既有 `VisualizationSpec` 組在一起；不得把第一版 schema 寫死成全系統只能存在一張圖。
+### 12.2 Frozen v2
 
----
+保存完整 result snapshot + spec，之後不隨 Statcast DB 更新改變。
 
-## 15. Live / Frozen Saved Visualization
+Final implementation：
 
-儲存時由使用者選：
-
-```text
-○ Live — 連結分析
-○ Frozen — 凍結這次結果
-```
-
-### 15.1 Live
-
-保存 analysis definition/reference + presentation spec，不把 result 當永久 immutable snapshot。
-
-重新開啟時：
-
-- 若目前 data revision 的 compatible result 已存在，可載入；
-- 若來源 data revision 已改變，明確顯示 stale / refresh available；
-- 由使用者按 Refresh / Re-run 後才以新資料更新；
-- 不 silent recompute。
-
-### 15.2 Frozen
-
-保存當次 result snapshot + presentation spec，之後不隨資料庫更新改變。
-
-為避免大型 snapshot 膨脹 `analysis_state.sqlite3`：
-
-- DB 保存 metadata / hash / path / source information；
-- frozen result payload 優先採壓縮檔案 snapshot 保存於 presentation snapshot directory；
-- snapshot 必須有 hash / version / row count / columns / grain metadata；
-- 刪除 Frozen Visualization 時依 reference policy 清理不再被引用的 snapshot。
+- snapshot version = `stage4d-frozen-result-v2`；
+- full multi-section result 進 content-addressed gzip JSON；
+- SHA-256 作 snapshot identity；
+- `analysis_state.sqlite3` 只保存 snapshot hash / path / metadata / reference；
+- identical snapshot dedup；
+- metadata 含 section count / rows / columns / grain / revision / backend；
+- delete 依 reference-aware policy 清理 unreferenced snapshot；
+- legacy Frozen snapshot 仍可讀取。
 
 ---
 
-## 16. Visualization Library
+## 13. Analysis Library / Analysis History
 
-Visualization 主頁內建 Library 區：
+Analysis Library 管 saved analysis definition，不是 Visualization Library。
 
-- Saved Visualizations
-- User Presets
-- Built-in Presets
+最終功能：
 
-Analysis Library 仍管理分析設定與結果關聯；Visualization Library 管理 presentation。
+- Save
+- Load
+- Delete
+- `編輯 Edit`：以同一 XP-style dialog 修改 Name + Notes；欄位自動帶入；更新同一 saved item，不建立副本。
 
-不另外新增新的左側 `Visualization Library` 頁。
+Analysis History 顯示 persistent `#ID`；該 ID 與 Visualization 的 History source selector 使用同一 history record id。
+
+Historical Data / Historical Result 提示不得破壞原本 Load 行為。
 
 ---
 
-## 17. Export
+## 14. Data / Figure Export
 
-### 17.1 各分析頁 Result Export
-
-正式支援：
+### Data formats
 
 - CSV
 - JSON
 - XLSX
 - Parquet
 
-### 17.2 Visualization Export
+`/api/export` 是 synchronous backend export endpoint：request resolve source → 取得 selected full result section → serialize → 直接回傳 attachment bytes。Current implementation 沒有 async export-job/status API，因此不得在文件中宣稱已有 export job system。
 
-正式支援：
+Full export：
 
-- PNG
-- SVG
-- Copy Image（瀏覽器／平台支援時）
-
-### 17.3 Export 必須走 backend full-result path
-
-不能把 DOM table、200-row page、5000 retained rows 當完整 export。
-
-完整資料 export 以 analysis definition / result reference 建立 backend export job，直接寫檔／stream，不需要把全部 rows 先塞回瀏覽器。
-
-若分析 result 實際太大而超過 export safety policy：
-
-- 明確拒絕或要求使用者縮小分析；
+- 不使用 DOM table；
+- 不使用目前 sampled rows；
+- backend 必要時以 formal Analysis Payload 取得 full result；
+- 超過 `MAX_EXPORT_ROWS = 500,000` 明確拒絕；
 - 不 silent truncate。
 
-### 17.4 Export Metadata
+Current format metadata behavior：
 
-JSON / Parquet / XLSX metadata layer 或 sidecar 至少可保留：
+- JSON：包含 `metadata` + `section`；
+- XLSX：Result sheet + Metadata sheet；
+- CSV：純 tabular data + header，目前沒有 sidecar metadata；
+- Parquet：typed tabular data，目前沒有 sidecar metadata。
 
-- analysis name / mode
-- analysis payload
-- source result section
-- grain
-- data revision
-- backend
-- row count
-- export timestamp
+Parquet final implementation 使用 temporary CSV → DuckDB bulk ingest → `COPY ... FORMAT PARQUET`，避免 row-by-row `executemany()`；UI 匯出期間顯示 `匯出中 Exporting…`。
 
-CSV 若無法自然內嵌 metadata，使用明確 sidecar metadata file 或 export bundle；不能污染資料列本身。
+### Figure formats
 
----
-
-## 18. HTML / PDF Report
-
-Stage 4D 第一版同時支援：
-
-- HTML Report
-- PDF Report
-
-Report 採固定正式結構，不做自由拖拉排版器。
-
-內容可包含：
-
-- analysis name
-- analysis settings / filters
-- source / data revision / backend
-- grain
-- sample size
-- result table（依 report safety / pagination policy）
-- chosen Saved Visualization(s)
-- statistical metadata
-- sampling disclosure
-- report generation timestamp
-
-第一版 Visualization 本身是單圖，但 report 資料模型可選擇多筆 Saved Visualization 放進同一 report；這不等於 Visualization 編輯頁已提供 dashboard。
-
----
-
-## 19. Presentation State Storage
-
-Presentation state 與 Statcast source of truth 分離。
-
-優先延伸 `analysis_state.sqlite3` 保存 presentation metadata / JSON spec，例如：
-
-- `visualizations`
-- `visualization_presets`
-- `report_definitions`（若需要保存 report 設定）
-
-Frozen result payload 不應把超大型 JSON 全塞進 DB；使用獨立壓縮 snapshot 檔案並由 DB reference。
-
-所有 presentation state 使用 schema / format version，未來可以 migration。
-
----
-
-## 20. API / Service Contract
-
-Stage 4D 建立獨立 presentation / export service boundary。具體 URL 可以在實作時依現有 routing conventions 微調，但 contract 至少包含：
-
-- list visualization sources
-- fetch one source/result section
-- fetch full visualization dataset
-- create/update/delete Saved Visualization
-- create/update/delete user preset
-- resolve Live visualization state
-- create backend export job
-- read export job status / artifact
-- create HTML/PDF report
-
-Visualization frontend 不直接查 SQLite / DuckDB。
-
----
-
-## 21. Rendering Engine
-
-產品 contract 不綁死特定第三方 chart library；實作引擎必須滿足：
-
-- local/offline 可運作，不依賴 CDN；
-- line / bar / scatter / range / area / annotation 能力；
-- 足夠的大量 scatter 效能；
-- PNG / SVG export 可驗證；
-- data zoom / tooltip / legend / axis controls 可實作；
-- 不迫使整個 plain HTML/CSS/JS frontend 重寫成其他 framework。
-
-Rendering engine 是可替換 implementation detail；`VisualizationSpec` 才是產品契約。
-
----
-
-## 22. 第一版 Single-chart 與未來 Multi-chart 相容性
-
-Stage 4D 第一版：
-
-- Visualization 頁一次只編輯一張圖；
-- 一筆 Saved Visualization 一張圖；
-- 畫布與設定面板為單圖最佳化。
-
-未來允許：
-
-- multi-chart workspace
-- dashboard
-- linked brushing / coordinated views
-- report composer
-- dashboard-level filter controls
-
-為保留這條路，第一版必須：
-
-1. 把 `VisualizationSpec` 設計成可獨立序列化 entity；
-2. source binding 不使用單一全域 singleton；
-3. backend API 用 visualization ID / source ID，不假設全系統永遠只有 current chart；
-4. CSS / DOM identifier 不把唯一圖表寫死成無法複用的資料模型；
-5. report 可以引用多個 Saved Visualization，而不需要複製 chart logic。
-
----
-
-## 23. Stage 4D 第一版功能範圍
-
-Stage 4D 正式分成五個產品子系統：
-
-### 4D-1 Visualization Workspace
-
-- Output 導覽群組
-- Visualization 獨立主頁
-- Recent / History / Saved Analysis source selection
-- Result Section selection
-- Presentation Metadata
-- 通用圖型
-- 棒球 presets
-- single-chart editor
-- source provenance
-- large-data data handling
-
-### 4D-2 Statistical & Comparison Presentation
-
-- sample size
-- CI / interval
-- Bootstrap
-- Regression coefficient
-- Auto-K diagnostics
-- Cluster views
-- A/B
-- Unit vs Baseline
-- Selected vs Reference
-- Cohort comparison
-
-### 4D-3 Presets & Visualization Library
-
-- Built-in Presets
-- User Presets
-- Saved Visualizations
-- Live / Frozen
-- compatibility validation
-
-### 4D-4 Data / Figure Export
-
-- CSV
-- JSON
-- XLSX
-- Parquet
-- PNG
 - SVG
-- Copy Image where supported
+- PNG
+- Copy Image where browser supports it
 
-### 4D-5 Report Output
+Standalone SVG 必須 self-contained 地帶入 gridline / axis / reference / label / title / subtitle / legend styling；PNG / Copy Image 共用同一可獨立渲染的 SVG path。
+
+---
+
+## 15. HTML / PDF Report
+
+`/api/report` 目前是 synchronous backend endpoint，支援：
 
 - HTML
 - PDF
-- fixed formal report contract
+
+Current first-version report 以**一個 selected source/result section + 一張 current Visualization**為單位，採固定正式版面；目前沒有 multi-Saved-Visualization report composer，也沒有 free-form drag/drop designer。
+
+Report 包含可取得的：
+
+- bilingual report headings / fixed labels；
+- analysis mode / section；
+- source / revision / backend / grain / row count；
+- sampling disclosure；
+- visualization；
+- result table（最多 80 rows）；
+- provenance；
+- presentation spec；
+- generation timestamp。
+
+HTML：sanitized/self-contained chart SVG、responsive fixed-layout result table、long-cell wrapping。
+
+PDF：wide result（例如 >7 columns）使用 landscape A4；cell text wrapping；chart 包含 gridlines、axis ticks、legend、reference lines 等 first-version presentation elements。
+
+Report table 80-row限制只限制 report 版面；完整資料應使用 CSV / JSON / XLSX / Parquet export。
 
 ---
 
-## 24. 明確 Out of Scope
+## 16. Presentation State Storage
 
-Stage 4D 第一版不包含：
+Presentation state 與 Statcast source of truth 分離。
+
+`analysis_state.sqlite3` 延伸保存：
+
+- visualizations；
+- visualization presets；
+- frozen snapshot reference metadata。
+
+Frozen v2 payload 使用獨立壓縮 snapshot，不把大型 JSON 全塞入 DB。
+
+---
+
+## 17. API / Service Contract — implemented
+
+Current Stage 4D service surface包含：
+
+```text
+GET  /api/visualization/sources
+POST /api/visualization/data
+POST /api/visualization/describe
+GET  /api/visualizations
+GET  /api/visualizations/{id}
+POST /api/visualizations
+POST /api/visualizations/{id}
+DELETE /api/visualizations/{id}
+GET  /api/visualization-presets
+POST /api/visualization-presets
+DELETE /api/visualization-presets/{id}
+GET  /api/visualization/baseball-asset
+POST /api/export
+POST /api/report
+```
+
+Export/report 回傳同步 attachment bytes；frontend 不直接查 SQLite / DuckDB。
+
+---
+
+## 18. Rendering / Lifecycle Contract
+
+Renderer 必須 local/offline 運作，不依賴 CDN，也不要求把 plain HTML/CSS/JS frontend 重寫成其他 framework。
+
+Final browser bundle採 declarative module concatenation，active compatibility modules包含：
+
+- `stage4d-visualization-fixes-v2.js`
+- `stage4d-preset-state-reset.js`
+- `font-minimum-compat.js`
+- `stage4d-layout-containment.js`
+- `stage4d-save-lifecycle.js`
+- `stage4d-load-stability.js`
+- `stage4d-latest-request.js`
+- `stage4d-axis-layout.js`
+- `stage4d-export-fidelity.js`
+- `stage4d-export-progress.js`
+
+舊 `stage4d-saved-restore.js` / old fix module 可以存在於 repo，但不是 active bundle contract。
+
+---
+
+## 19. Single-chart now / future compatibility
+
+Current product：
+
+- Visualization 頁一次只編輯一張圖；
+- 一筆 Saved Visualization 一個 `VisualizationSpec`；
+- current report 一次使用一張 current Visualization。
+
+Future-compatible architecture：
+
+- `VisualizationSpec` 可獨立序列化；
+- source binding 以 explicit source/id 表達；
+- Saved Visualization 是獨立 entity；
+- 未來若需求成立，可在其上建立 collection/dashboard/composer。
+
+這是相容性保留，不代表目前有下一階段開發承諾。
+
+---
+
+## 20. Out of Scope / Not Implemented as first-version claims
 
 - AI → AST
 - 新增分析統計邏輯
-- 自由 SQL chart builder
-- hidden aggregation
-- hidden uncertainty calculation
+- free SQL chart builder
+- hidden aggregation / hidden uncertainty calculation
 - silent sampling / silent truncation
-- free-form dashboard editor
-- multi-chart Visualization editor 第一版
-- 自由拖拉 report designer
+- current multi-chart editor
+- dashboard editor
+- multi-visualization report composer
+- free-form report designer
+- async export job/status service
+- CSV/Parquet metadata sidecar bundle
+- Area chart as a first-version `VisualizationSpec.type`
 
-其中 multi-chart / dashboard **只是第一版不做，不是永久禁止。**
-
----
-
-## 25. Acceptance Matrix
-
-Stage 4D 完成前至少驗證：
-
-### Source / Navigation
-
-- Visualization 出現在左側 Output group。
-- Analysis Library / History 移入 Output group 後原功能不退化。
-- 任一分析結果可 `Open in Visualization`。
-- Recent Result 可用。
-- History 有 result 時可用。
-- History 無 result 時不 silent rerun，能明確 Re-run。
-- Saved Analysis 同理。
-- Multi-section result 可正確選 section。
-
-### Generic Visualization
-
-- grouped analysis → Line。
-- grouped analysis → Bar。
-- numerical X/Y → Scatter。
-- estimate + lower + upper → Point/Range。
-- paired values → Dumbbell。
-- difference values → Difference Plot。
-- incompatible field mapping 被阻擋並說明原因。
-
-### Baseball Presets
-
-- pitch rows → Pitch Movement。
-- pitch rows → Pitch Location。
-- pitch rows → Release Point。
-- temporal usage result → Usage Trend。
-- Arsenal result → Arsenal Comparison。
-- Arsenal Change result → Added/Removed/Retained presentation。
-- 若需要球體／縫線素材，只走 `research_assets/3d_baseball/` 既有 manifest/fetch helper，不另抓素材。
-
-### Numerical / Statistical
-
-- Clustering → Cluster Map。
-- CAP-04 → Auto-K Diagnostics，selected K 正確標示。
-- Regression OLS → Coefficient Plot + existing CI。
-- Logistic 無 inferential CI 時不顯示假 CI。
-- Bootstrap → interval plot。
-- Sample N 可顯示。
-- analysis result 無 uncertainty 時顯示 unavailable。
-
-### Sampling / Large Data
-
-- Full Data 在安全範圍內可完整顯示。
-- Automatic Sampling 明確標示 sampled/total rows。
-- Manual Random sampling 可設定 sample size。
-- Every Nth row 可用。
-- reproducible random sampling 同 seed 產生同結果。
-- Saved Visualization reload 後 sampling state 不變。
-- 不會把 200-row page 或 5000 retained rows 冒充完整資料。
-
-### Save / Library
-
-- Save Preset → compatible result 可重用。
-- incompatible preset 套用被阻擋。
-- Saved Visualization → reload 完整恢復 presentation。
-- Live source revision changed → 顯示 stale/refresh，不 silent recompute。
-- Frozen → DB 更新後圖表仍維持原 snapshot。
-- Frozen snapshot hash / row count 可驗證。
-
-### Export
-
-- Full CSV export 不受 UI paging 影響。
-- Full JSON export 不受 UI paging 影響。
-- XLSX export 正確。
-- Parquet export 正確。
-- PNG export 正確。
-- SVG export 正確。
-- sampling visualization export 保留 sampling disclosure。
-- 大型 export 不 silent truncate。
-
-### Reports
-
-- HTML Report 包含 analysis metadata、result、visualization、sample info。
-- PDF Report 與 HTML 的核心數值一致。
-- Report 可以引用多筆 Saved Visualization，即使 Visualization editor 第一版仍是單圖模式。
-
-### Architectural Regression
-
-- Visualization 不新增分析計算路徑。
-- chart/presentation 改設定不造成不必要 analysis rerun。
-- Statcast source-of-truth DB 不被 presentation state 污染。
-- Stage 4A–4C 全部既有 tests 維持 PASS。
-- live Savant smoke 維持 PASS。
+這些項目若未來真的要做，需另行定義需求；不得從舊 pre-implementation spec wording 推定已實作。
 
 ---
 
-## 26. 建議實作順序
+## 21. Final Acceptance Matrix — completed
 
-1. Presentation Metadata + `VisualizationSpec` contract。
-2. Output 導覽與 Visualization source selector。
-3. single-chart generic renderer + field mapping + provenance。
-4. backend full visualization dataset + sampling。
-5. baseball presets + statistical / comparison presentation。
-6. Saved Visualization / Presets / Live-Frozen state。
-7. CSV / JSON / XLSX / Parquet export。
-8. PNG / SVG export。
-9. HTML / PDF report。
-10. 完整 acceptance matrix + large-result regression。
+原始人工驗收 **1–15** 全數完成：
+
+1. Output navigation — PASS。
+2. Clustering run/source — PASS。
+3. Open in Visualization — PASS。
+4. Multi-section switching — PASS。
+5. Auto-K Diagnostics — PASS。
+6. Generic Scatter — PASS。
+7. Pitch Movement — PASS；Pitch Location / Release Point 的 required-field unavailable 情境為 non-blocking data coverage gap。
+8. Vertical / Horizontal Bar — PASS；Stacked 在單一 series 測試資料下為 non-blocking coverage gap。
+9. Full / Automatic / Manual sampling + seed — PASS。
+10. Saved Visualization Live / Frozen — PASS。
+11. User Preset — PASS。
+12. CSV / JSON / XLSX / Parquet — PASS；18,887-row source 在畫面 sample 50 時仍完整輸出 18,887 rows。
+13. SVG / PNG — PASS；standalone style fidelity 已修復並人工比對。
+14. HTML / PDF Report — PASS；bilingual、chart fidelity、wide-table layout 人工確認。
+15. Analysis Library / Analysis History — PASS。
+
+另外人工驗證：
+
+- rapid source switching latest-request-wins — PASS；
+- cross-source Result Section reset — fixed / regression-covered；
+- Analysis Library Name/Notes `編輯 Edit` — PASS。
+
+Automated accepted implementation head before documentation refresh：
+
+```text
+226 passed, 2 deselected
+live-savant-smoke: PASS
+```
 
 ---
 
-## 27. 已定案決策摘要
+## 22. 已定案決策摘要
 
-- Visualization：左側獨立主頁。
-- 導覽：Output group = Visualization + Analysis Library + Analysis History。
-- 各分析結果區：保留表格；新增 Export 與 Open in Visualization，不直接塞完整圖表 UI。
-- 第一版工作模式：Single-chart。
-- 未來：保留 multi-chart / dashboard 擴充能力，不設永久單圖限制。
-- Saved Visualization：Live + Frozen 都支援。
-- Large data：Automatic Sampling + Manual Sampling 都提供；不得 silent sampling。
-- Data export：CSV + JSON + XLSX + Parquet。
-- Figure export：PNG + SVG。
-- Report：HTML + PDF。
-- Baseball graphical assets：需要球體／縫線時只使用 repo 已保存的 `research_assets/3d_baseball/` manifest / fetch path，不另外抓素材。
-- AI → AST：移出 Stage 4D。
+- Navigation：Data first；Output last。
+- Output group：Visualization + Analysis Library + Analysis History。
+- Analysis Result：table-first + Export + Open in Visualization。
+- 第一版：single-chart。
+- Saved Visualization：Live + Frozen v2。
+- Large data：Full + Automatic + Manual；不得 silent sampling。
+- Data export：CSV + JSON + XLSX + Parquet；full-result backend path。
+- Figure export：SVG + PNG + Copy Image where supported。
+- Report：single-source/single-current-visualization HTML + PDF fixed report。
+- Baseball graphical assets：只使用 repo `research_assets/3d_baseball/` manifest/fetch path。
+- AI → AST：不屬 Stage 4D。
+- Stage 4D：**PASS / CLOSED**。
+- 目前沒有 Stage 4E。
 
-這些決策在後續實作中若要改變，必須先更新本文件；不得讓實作細節悄悄改寫產品契約。
+後續若要改變上述產品契約，先更新本文件；不得讓實作細節或舊 pre-implementation wording 悄悄改寫正式狀態。
