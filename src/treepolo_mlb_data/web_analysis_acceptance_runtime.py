@@ -8,6 +8,7 @@ from .analysis import (
     Literal, Metric, NamedExpr, Project, Window, WindowField, pitch_usage,
     rank_pitch_roles,
 )
+from .analysis.feature_semantics import complete_partition_counts
 from .analysis.numerical import ClusteringSpec, NumericalExecutor, NumericalTable
 from .analysis.workflow import WorkflowPlanner, WorkflowState
 from .web_analysis_common import RequestError, _PROGRESS
@@ -346,10 +347,53 @@ class AcceptanceRuntimeFixesMixin:
         candidate_table = NumericalTable(candidate_columns, tuple(candidate_rows), candidate_grain)
         input_backend = "+".join(sorted(input_backends)) if input_backends else self.analysis_backend
 
+        candidate_table, model_features, encodings = self._encode_model_features(
+            candidate_table,
+            features,
+            label="Cluster comparison features",
+        )
+        requested_clusters = int(payload.get("clusters", 3))
+        if not 2 <= requested_clusters <= 50:
+            raise RequestError("Cluster comparison cluster count must be between 2 and 50")
+
+        complete_counts = complete_partition_counts(
+            candidate_table,
+            features=model_features,
+            partition_fields=entities,
+        )
+        eligible_entity_keys = {
+            key for key, count in complete_counts.items() if count >= requested_clusters
+        }
+        skipped_rows: list[dict[str, Any]] = []
+        for entity_key, count in complete_counts.items():
+            if count >= requested_clusters:
+                continue
+            skipped = {field: value for field, value in zip(entities, entity_key)}
+            skipped.update({
+                "complete_rows": count,
+                "requested_clusters": requested_clusters,
+                "reason": "complete rows below requested cluster count",
+            })
+            skipped_rows.append(skipped)
+
+        if not eligible_entity_keys:
+            raise RequestError(
+                "No entity has enough complete feature rows for the requested cluster count. "
+                "Reduce Clusters per Entity, use fewer/more complete features, or add data."
+            )
+        candidate_table = NumericalTable(
+            candidate_table.columns,
+            tuple(
+                row for row in candidate_table.rows
+                if tuple(row.get(field) for field in entities) in eligible_entity_keys
+            ),
+            candidate_table.grain,
+        )
+
         cluster_spec = ClusteringSpec(
-            features=features,
+            features=model_features,
             method=str(payload.get("method", "kmeans")),
-            clusters=int(payload.get("clusters", 3)),
+            clusters=requested_clusters,
             standardize=bool(payload.get("standardize", True)),
             seed=int(payload.get("seed", 42)),
             id_fields=(arsenal_alias, "pitch_type", evaluation_field),
@@ -364,6 +408,8 @@ class AcceptanceRuntimeFixesMixin:
             details = []
             for signature, selected_types in selected_by_arsenal.items():
                 for entity_key in entities_by_arsenal[signature]:
+                    if entity_key not in eligible_entity_keys:
+                        continue
                     label = ", ".join(f"{field}={value!r}" for field, value in zip(entities, entity_key))
                     details.append(f"{label}: {'|'.join(selected_types)}")
                     if len(details) >= 10:
@@ -441,28 +487,45 @@ class AcceptanceRuntimeFixesMixin:
             "reference_value", "difference",
         )
         comparison_rows.sort(key=lambda row: tuple(str(row.get(field)) for field in entities))
+        skipped_rows.sort(key=lambda row: tuple(str(row.get(field)) for field in entities))
+
+        sections = [
+            {
+                "title": "最佳分群與參考球種比較 Best Cluster vs Reference Pitch",
+                "columns": list(columns),
+                "rows": comparison_rows,
+                "grain": {"keys": list(entities), "label": "entity_cluster_comparison"},
+                "row_count": len(comparison_rows),
+                "backend": "numerical",
+            },
+            clustered.summary.to_dict(),
+        ]
+        if skipped_rows:
+            skipped_columns = entities + ("complete_rows", "requested_clusters", "reason")
+            sections.append({
+                "title": "略過的分析個體 Skipped Entities",
+                "columns": list(skipped_columns),
+                "rows": skipped_rows,
+                "grain": {"keys": list(entities), "label": "skipped_cluster_entities"},
+                "row_count": len(skipped_rows),
+                "backend": "numerical",
+            })
+
         return {
-            "sections": [
-                {
-                    "title": "最佳分群與參考球種比較 Best Cluster vs Reference Pitch",
-                    "columns": list(columns),
-                    "rows": comparison_rows,
-                    "grain": {"keys": list(entities), "label": "entity_cluster_comparison"},
-                    "row_count": len(comparison_rows),
-                    "backend": "numerical",
-                },
-                clustered.summary.to_dict(),
-            ],
+            "sections": sections,
             "backend": "numerical",
             "input_backend": input_backend,
             "numerical": {
                 "method": "cluster_compare",
-                "features": list(features),
+                "requested_features": list(features),
+                "features": list(model_features),
+                "feature_encodings": {key: list(value) for key, value in encodings.items()},
                 "partition_fields": list(entities),
                 "selection_field": selection_field,
                 "selection_direction": selection_direction,
                 "evaluation_field": evaluation_field,
                 "evaluation_direction": evaluation_direction,
                 "reference_pitch_type": reference_pitch,
+                "skipped_entities": len(skipped_rows),
             },
         }

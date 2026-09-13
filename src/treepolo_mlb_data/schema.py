@@ -16,6 +16,17 @@ INTEGER_COLUMNS = {
     "pitcher_days_until_next_game", "batter_days_until_next_game",
 }
 
+# These columns are identifiers even when SQLite stores them as INTEGER. Treating
+# their numeric codes as continuous model features creates meaningless distances
+# and coefficients (for example pitcher 800260 is not "larger" than pitcher
+# 670912 in a statistical sense).
+IDENTIFIER_COLUMNS = {
+    "pitch_uid", "game_pk", "pitcher", "batter",
+    "on_1b", "on_2b", "on_3b",
+    "fielder_2", "fielder_3", "fielder_4", "fielder_5", "fielder_6",
+    "fielder_7", "fielder_8", "fielder_9",
+}
+
 REAL_COLUMNS = {
     "release_speed", "release_pos_x", "release_pos_z", "pfx_x", "pfx_z",
     "plate_x", "plate_z", "sz_top", "sz_bot", "hc_x", "hc_y",
@@ -80,7 +91,10 @@ def field_capabilities(column: str, sql_type: str | None = None) -> tuple[str, .
     """
     resolved = (sql_type or sqlite_type(column) or "TEXT").upper()
     capabilities = {"reference", "filter", "group", "order", "id"}
-    if any(token in resolved for token in ("INT", "REAL", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC")):
+    is_numeric = any(token in resolved for token in ("INT", "REAL", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC"))
+    if column in IDENTIFIER_COLUMNS:
+        capabilities.add("identifier")
+    elif is_numeric:
         capabilities.update({"numeric", "trend_orderable"})
     if "DATE" in resolved or column.endswith("_date"):
         capabilities.update({"temporal", "trend_orderable"})

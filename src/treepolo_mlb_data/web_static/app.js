@@ -47,6 +47,11 @@
   function fieldLabel(name) { return FIELD_LABELS[name] || `資料欄位 Data Field · ${name}`; }
   function setStatus(message) { $("#status-message").textContent = message; }
 
+  window.treepoloFieldCatalog = {
+    label: fieldLabel,
+    fields: () => Array.isArray(state.meta?.fields) ? state.meta.fields.slice() : [],
+  };
+
   function setBusy(busy, message = "處理中 Working…") {
     state.busy = busy;
     document.body.classList.toggle("busy", busy);
@@ -63,13 +68,15 @@
     return body;
   }
 
-  function selectedValues(select) {
-    return select ? Array.from(select.selectedOptions).map(option => option.value).filter(Boolean) : [];
+  function multiValues(control) {
+    if (!control) return [];
+    if (window.treepoloMultiField?.isControl?.(control)) return window.treepoloMultiField.values(control);
+    return String(control.value || "").split(",").map(item => item.trim()).filter(Boolean);
   }
 
   function fillFieldSelect(select) {
-    if (!state.meta) return;
-    const previous = new Set(selectedValues(select));
+    if (!state.meta || !select) return;
+    const previous = select.value || "";
     const preselect = (select.dataset.preselect || "").split(",").map(x => x.trim()).filter(Boolean);
     const allowEmpty = select.hasAttribute("data-allow-empty");
     select.innerHTML = "";
@@ -83,13 +90,15 @@
       const option = document.createElement("option");
       option.value = field.name;
       option.textContent = `${fieldLabel(field.name)} (${field.name})`;
-      if (previous.has(field.name) || (!previous.size && preselect.includes(field.name))) option.selected = true;
       select.append(option);
     }
+    const candidates = Array.from(select.options).map(option => option.value);
+    if (candidates.includes(previous)) select.value = previous;
+    else if (preselect.length && candidates.includes(preselect[0])) select.value = preselect[0];
   }
 
   function fillAllFieldSelects() {
-    $$('[data-field-select]').forEach(fillFieldSelect);
+    $$('select[data-field-select]').forEach(fillFieldSelect);
     document.dispatchEvent(new CustomEvent("treepolo:fields-updated"));
   }
 
@@ -181,19 +190,16 @@
   }
 
   function setupNavigation() {
-    $$(".nav-item").forEach(button => {
+    $$("button.nav-item[data-panel]").forEach(button => {
       button.addEventListener("click", () => {
-        $$(".nav-item").forEach(item => item.classList.remove("active"));
-        button.classList.add("active");
-        $$(".panel").forEach(panel => panel.classList.remove("active-panel"));
-        $("#" + button.dataset.panel).classList.add("active-panel");
+        window.treepoloPanels?.activate(button.dataset.panel, { updateUrl:true, source:"navigation" });
       });
     });
   }
 
   function buildModePayload(mode) {
     if (mode === "basic") return {
-      mode, filters: filtersFor("basic"), group_by: selectedValues($("#basic-group")),
+      mode, filters: filtersFor("basic"), group_by: multiValues($("#basic-group")),
       metrics: $$(".metric-row", $("#basic-metrics")).map(metricData), limit: Number($("#basic-limit").value || 200),
     };
     if (mode === "sequence_pattern") return {
@@ -208,30 +214,30 @@
       between: [conditionData($(".condition-row", $("#follow-between")))], max_gap: Number($("#follow-gap").value || 3),
     };
     if (mode === "arsenal") return {
-      mode, filters: filtersFor("arsenal"), entity_fields: selectedValues($("#arsenal-entities")),
+      mode, filters: filtersFor("arsenal"), entity_fields: multiValues($("#arsenal-entities")),
       min_usage: Number($("#arsenal-min-usage").value || 0.05), tie_method: $("#arsenal-tie").value,
     };
     if (mode === "pitch_role") return {
-      mode, filters: filtersFor("role"), entity_fields: selectedValues($("#role-entities")), metric_kind: $("#role-metric-kind").value,
+      mode, filters: filtersFor("role"), entity_fields: multiValues($("#role-entities")), metric_kind: $("#role-metric-kind").value,
       value_field: $("#role-value-field").value, function: $("#role-function").value,
       rank: Number($("#role-rank").value || 1), descending: $("#role-direction").value === "desc",
       exclude_pitch_types: $("#role-exclude").value.split(",").map(x => x.trim()).filter(Boolean), tie_method: $("#role-tie").value,
     };
     if (mode === "temporal") return {
-      mode, filters: filtersFor("temporal"), entity_fields: selectedValues($("#temporal-entities")), period_field: $("#temporal-period").value,
+      mode, filters: filtersFor("temporal"), entity_fields: multiValues($("#temporal-entities")), period_field: $("#temporal-period").value,
       value_field: $("#temporal-value").value, function: $("#temporal-function").value,
       direction: $("#temporal-direction").value, offset: Number($("#temporal-offset").value || 1),
     };
     if (mode === "percentile") return {
-      mode, filters: filtersFor("percentile"), entity_fields: selectedValues($("#percentile-entities")), value_field: $("#percentile-value").value,
+      mode, filters: filtersFor("percentile"), entity_fields: multiValues($("#percentile-entities")), value_field: $("#percentile-value").value,
       threshold: Number($("#percentile-threshold").value || 80) / 100, side: $("#percentile-side").value,
     };
     if (mode === "cross_level") return {
-      mode, filters: filtersFor("cross"), unit_fields: selectedValues($("#cross-unit")), baseline_fields: selectedValues($("#cross-baseline")),
+      mode, filters: filtersFor("cross"), unit_fields: multiValues($("#cross-unit")), baseline_fields: multiValues($("#cross-baseline")),
       value_field: $("#cross-value").value, function: $("#cross-function").value,
     };
     if (mode === "arsenal_change") return {
-      mode, filters: filtersFor("arsenal-change"), entity_fields: selectedValues($("#change-entities")),
+      mode, filters: filtersFor("arsenal-change"), entity_fields: multiValues($("#change-entities")),
       min_usage: Number($("#change-min-usage").value || 0.05),
       period_a: { start: $("#change-a-start").value, end: $("#change-a-end").value },
       period_b: { start: $("#change-b-start").value, end: $("#change-b-end").value },

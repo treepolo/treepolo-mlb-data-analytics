@@ -8,7 +8,6 @@ from ._lazy_scientific import (
     GaussianMixture,
     KMeans,
     LogisticRegression,
-    StandardScaler,
     accuracy_score,
     log_loss,
     np,
@@ -137,6 +136,48 @@ def _numeric_rows(table: NumericalTable, fields: tuple[str, ...]) -> tuple[list[
     return rows, np.asarray(matrix, dtype=float)
 
 
+def _circular_feature_groups(fields: tuple[str, ...]) -> tuple[tuple[int, int], ...]:
+    """Locate sin/cos pairs produced by circular feature encoding."""
+    positions = {field: index for index, field in enumerate(fields)}
+    groups: list[tuple[int, int]] = []
+    for field, sin_index in positions.items():
+        if not field.endswith("_sin"):
+            continue
+        cos_field = f"{field[:-4]}_cos"
+        cos_index = positions.get(cos_field)
+        if cos_index is not None:
+            groups.append((sin_index, cos_index))
+    return tuple(groups)
+
+
+def _standardize_feature_matrix(
+    matrix: np.ndarray,
+    fields: tuple[str, ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Standardize features without distorting circular sin/cos geometry.
+
+    Ordinary scalar features receive their own population standard deviation,
+    matching normal z-score scaling. A circular sin/cos pair instead receives
+    one shared isotropic scale. Centering each coordinate is harmless to
+    Euclidean distances; using one common multiplier preserves the circle's
+    geometry, so directions near 0/360 degrees remain correctly adjacent.
+    """
+    if matrix.ndim != 2 or matrix.shape[1] != len(fields):
+        raise ValueError("feature matrix shape does not match feature fields")
+    offsets = np.mean(matrix, axis=0)
+    variances = np.var(matrix, axis=0, ddof=0)
+    scales = np.sqrt(np.maximum(variances, 0.0))
+    scales = np.where(np.isfinite(scales) & (scales > 0), scales, 1.0)
+
+    for sin_index, cos_index in _circular_feature_groups(fields):
+        common_variance = float((variances[sin_index] + variances[cos_index]) / 2.0)
+        common_scale = sqrt(common_variance) if np.isfinite(common_variance) and common_variance > 0 else 1.0
+        scales[sin_index] = common_scale
+        scales[cos_index] = common_scale
+
+    return (matrix - offsets) / scales, offsets, scales
+
+
 def _statistic(values: np.ndarray, kind: str, success_value: Any) -> float:
     if values.size == 0:
         return float("nan")
@@ -209,8 +250,12 @@ class NumericalExecutor:
                     f"cluster count {spec.clusters} exceeds complete rows {len(indices)} in partition {label}"
                 )
             subset = raw[np.asarray(indices, dtype=int)]
-            scaler = StandardScaler() if spec.standardize else None
-            matrix = scaler.fit_transform(subset) if scaler is not None else subset
+            if spec.standardize:
+                matrix, offsets, scales = _standardize_feature_matrix(subset, spec.features)
+            else:
+                matrix = subset
+                offsets = np.zeros(subset.shape[1], dtype=float)
+                scales = np.ones(subset.shape[1], dtype=float)
             _notify(
                 progress,
                 20.0 + 55.0 * (group_index - 1) / max(1, group_count),
@@ -228,8 +273,8 @@ class NumericalExecutor:
                 local_probabilities = np.max(model.predict_proba(matrix), axis=1)
             else:
                 raise ValueError(f"unsupported clustering method: {spec.method}")
-            if scaler is not None:
-                centers = scaler.inverse_transform(centers)
+            if spec.standardize:
+                centers = centers * scales + offsets
 
             for local_index, global_index in enumerate(indices):
                 cluster_labels[global_index] = int(local_labels[local_index])
@@ -300,6 +345,10 @@ class NumericalExecutor:
                 "features": list(spec.features),
                 "partition_fields": list(spec.partition_fields),
                 "standardized": spec.standardize,
+                "isotropic_feature_groups": [
+                    [spec.features[left], spec.features[right]]
+                    for left, right in _circular_feature_groups(spec.features)
+                ],
                 "seed": spec.seed,
                 "input_rows": len(table.rows),
                 "complete_rows": len(output.assignments.rows),
@@ -327,8 +376,10 @@ class NumericalExecutor:
         y = matrix[:, -1]
         if len(rows) <= len(spec.independent) + 1:
             raise ValueError("regression requires more complete rows than fitted parameters")
-        scaler = StandardScaler() if spec.standardize_predictors else None
-        x_fit = scaler.fit_transform(x) if scaler is not None else x
+        if spec.standardize_predictors:
+            x_fit, _, _ = _standardize_feature_matrix(x, spec.independent)
+        else:
+            x_fit = x
         _notify(progress, 30.0, f"Fitting {spec.model} regression on {len(rows)} complete rows")
 
         coefficient_rows: list[dict[str, Any]] = []
@@ -439,6 +490,10 @@ class NumericalExecutor:
                 "independent": list(spec.independent),
                 "complete_rows": len(rows),
                 "confidence": spec.confidence,
+                "isotropic_feature_groups": [
+                    [spec.independent[left], spec.independent[right]]
+                    for left, right in _circular_feature_groups(spec.independent)
+                ],
             },
         }
 

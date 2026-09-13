@@ -4,8 +4,8 @@ from typing import Any
 
 from .analysis import (
     Aggregate, Binary, Boolean, Column, EventPattern, Filter, Grain, InList, Join,
-    Literal, Metric, NamedExpr, OrderKey, Project, SetOperation,
-    empirical_percentile, pitch_usage, rank_pitch_roles,
+    Literal, Metric, NamedExpr, OrderKey, Project, SetOperation, Window, WindowField,
+    pitch_usage, rank_pitch_roles,
 )
 from .analysis.workflow import WorkflowPlanner, WorkflowState
 from .web_analysis_common import RequestError
@@ -173,13 +173,39 @@ class AcceptanceFixesMixin:
             for partition in raw_partitions
             if partition
         )
-        planner.state = WorkflowState(
-            empirical_percentile(
-                state.node,
-                value_field=field,
-                alias=alias,
-                partition_fields=partitions,
+
+        # Mid-distribution percentile: P(X < x) + 0.5 * P(X = x).
+        # This keeps tied observations symmetric. In particular, if every value
+        # in a partition is identical they all receive 0.5 instead of cume_dist
+        # assigning 1.0 and falsely placing the entire partition in a high cohort.
+        part_exprs = tuple(Column(partition) for partition in partitions)
+        order = (OrderKey(Column(field)),)
+        rank_alias = "__ta_percentile_rank"
+        cume_alias = "__ta_percentile_cume"
+        count_alias = "__ta_percentile_count"
+        ranked = Window(
+            state.node,
+            (
+                WindowField(rank_alias, "rank", (), part_exprs, order),
+                WindowField(cume_alias, "cume_dist", (), part_exprs, order),
+                WindowField(count_alias, "count", (), part_exprs),
             ),
+        )
+        numerator = Binary(
+            Binary(Column(rank_alias), "-", Literal(1.0)),
+            "+",
+            Binary(Column(cume_alias), "*", Column(count_alias)),
+        )
+        midpoint = Binary(
+            numerator,
+            "/",
+            Binary(Literal(2.0), "*", Column(count_alias)),
+        )
+        output_fields = tuple(NamedExpr(name, Column(name)) for name in state.fields) + (
+            NamedExpr(alias, midpoint),
+        )
+        planner.state = WorkflowState(
+            Project(ranked, output_fields, state.grain),
             state.fields + (alias,),
             state.grain,
         )

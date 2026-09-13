@@ -57,19 +57,19 @@
     "pitcher", "batter", "pitch_type", "release_speed", "description", "zone",
   ];
 
-  function selectedValues(selector) {
-    const select = document.querySelector(selector);
-    return select ? Array.from(select.selectedOptions).map(o => o.value).filter(Boolean) : [];
+  function multiValues(selector) {
+    const control = document.querySelector(selector);
+    if (!control) return [];
+    if (window.treepoloMultiField?.isControl?.(control)) return window.treepoloMultiField.values(control);
+    return String(control.value || "").split(",").map(item => item.trim()).filter(Boolean);
   }
 
   function optionLabel(field) {
-    if (LABELS[field]) return LABELS[field];
-    const source = document.querySelector(`[data-field-select] option[value="${CSS.escape(field)}"]`);
-    return source ? source.textContent.replace(/\s*\([^()]*(?:\([^)]*\)[^()]*)*\)\s*$/, "") : field;
+    return window.treepoloFieldCatalog?.label?.(field) || LABELS[field] || field;
   }
 
   function basicMetricOutputs() {
-    const used = new Set(selectedValues("#basic-group"));
+    const used = new Set(multiValues("#basic-group"));
     const outputs = [];
     document.querySelectorAll("#basic-metrics .metric-row").forEach(row => {
       const fn = row.querySelector(".metric-function")?.value || "count";
@@ -87,13 +87,12 @@
   }
 
   function allSchemaFields() {
-    const select = document.querySelector("#basic-group");
-    return select ? Array.from(select.options).map(o => o.value).filter(Boolean) : [];
+    return (window.treepoloFieldCatalog?.fields?.() || []).map(field => field.name).filter(Boolean);
   }
 
   function outputFields(mode) {
     if (mode === "basic") {
-      const groups = selectedValues("#basic-group");
+      const groups = multiValues("#basic-group");
       const metrics = basicMetricOutputs();
       if (!groups.length && !metrics.length) return allSchemaFields().map(field => [field, optionLabel(field)]);
       return [...groups.map(field => [field, optionLabel(field)]), ...metrics];
@@ -101,10 +100,10 @@
     if (mode === "sequence_pattern") return DEFAULT_PITCH_FIELDS.map(f => [f, optionLabel(f)]);
     if (mode === "follow_event") return [...DEFAULT_PITCH_FIELDS, "between_1"].map(f => [f, optionLabel(f)]);
     if (mode === "arsenal") {
-      return [...selectedValues("#arsenal-entities"), "pitch_type", "pitch_count", "total_pitch_count", "usage_rate", "role_rank", "arsenal"].map(f => [f, optionLabel(f)]);
+      return [...multiValues("#arsenal-entities"), "pitch_type", "pitch_count", "total_pitch_count", "usage_rate", "role_rank", "arsenal"].map(f => [f, optionLabel(f)]);
     }
     if (mode === "pitch_role") {
-      const fields = [...selectedValues("#role-entities"), "pitch_type"];
+      const fields = [...multiValues("#role-entities"), "pitch_type"];
       if (document.querySelector("#role-metric-kind")?.value === "usage_rate") {
         fields.push("pitch_count", "total_pitch_count", "usage_rate", "role_rank");
       } else {
@@ -114,14 +113,14 @@
     }
     if (mode === "temporal") {
       const period = document.querySelector("#temporal-period")?.value;
-      const fields = [...selectedValues("#temporal-entities")];
+      const fields = [...multiValues("#temporal-entities")];
       if (period && !fields.includes(period)) fields.push(period);
       fields.push("current_value", "reference_value", "difference");
       return fields.map(f => [f, optionLabel(f)]);
     }
     if (mode === "percentile") return [...DEFAULT_PITCH_FIELDS, "percentile"].map(f => [f, optionLabel(f)]);
-    if (mode === "cross_level") return [...selectedValues("#cross-unit"), "unit_value", "baseline_value", "difference"].map(f => [f, optionLabel(f)]);
-    if (mode === "arsenal_change") return [...selectedValues("#change-entities"), "pitch_type"].map(f => [f, optionLabel(f)]);
+    if (mode === "cross_level") return [...multiValues("#cross-unit"), "unit_value", "baseline_value", "difference"].map(f => [f, optionLabel(f)]);
+    if (mode === "arsenal_change") return [...multiValues("#change-entities"), "pitch_type"].map(f => [f, optionLabel(f)]);
     return [];
   }
 
@@ -194,7 +193,6 @@
   function init() {
     Object.entries(MODES).forEach(([mode, panelId]) => inject(mode, panelId));
 
-    // Remove the pre-shared Basic-only sorting UI; all pages now use the same component.
     ["basic-sort", "basic-sort-direction"].forEach(id => {
       const control = document.getElementById(id);
       const label = control?.closest("label");
@@ -202,7 +200,7 @@
     });
 
     document.body.addEventListener("change", event => {
-      if (event.target.matches("[data-field-select], .metric-function, .metric-field, #role-metric-kind")) refreshAll();
+      if (event.target.matches("[data-multi-field], [data-field-select], .metric-function, .metric-field, #role-metric-kind")) refreshAll();
     });
     document.addEventListener("treepolo:fields-updated", refreshAll);
     document.addEventListener("treepolo:analysis-options-changed", refreshAll);

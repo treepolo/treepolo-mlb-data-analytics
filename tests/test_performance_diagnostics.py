@@ -22,19 +22,17 @@ def test_performance_diagnostics_is_opt_in_and_reports_callback_sources():
     assert "long_tasks" in diagnostics
 
 
-def test_diagnostics_loads_before_dynamic_ui_enhancement_observers():
+def test_diagnostics_loads_before_observer_heavy_enhancements_but_after_foundational_legality():
     bootstrap = source("fast-status.js")
+    legality_at = bootstrap.index('loadScriptOnce("/field-option-legality-v3.js"')
     diagnostics_at = bootstrap.index('loadScriptOnce("/performance-diagnostics.js"')
     acceptance_at = bootstrap.index('loadScriptOnce("/acceptance-fixes.js"')
-    legality_at = bootstrap.index('loadScriptOnce("/field-option-legality-v3.js"')
     unified_at = bootstrap.index('loadScriptOnce("/field-controls-unified.js"')
-    save_ui_at = bootstrap.index('loadScriptOnce("/analysis-save-ui.js"')
-    metadata_at = bootstrap.index('loadScriptOnce("/analysis-load-metadata.js"')
-    assert diagnostics_at < acceptance_at
-    assert diagnostics_at < legality_at
+
+    assert legality_at < diagnostics_at < acceptance_at
     assert diagnostics_at < unified_at
-    assert diagnostics_at < save_ui_at
-    assert diagnostics_at < metadata_at
+    assert '/analysis-save-ui.js' not in bootstrap
+    assert '/analysis-load-metadata.js' not in bootstrap
 
 
 def test_diagnostics_has_user_visible_copy_reset_and_stop_controls():

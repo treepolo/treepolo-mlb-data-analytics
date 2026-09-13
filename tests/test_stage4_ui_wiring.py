@@ -12,15 +12,13 @@ def test_stage4_ui_loads_cluster_comparison_and_partition_controls():
     assert "cluster_compare" in controls
     assert "s4-cluster-partitions" in controls
     assert "多階段分群比較 Multi-stage Cluster Comparison" in compare
-    assert 'mode: MODE' in compare and 'const MODE = "cluster_compare"' in compare
+    assert 'const MODE = "cluster_compare"' in compare
+    assert "return{mode:MODE" in compare
     assert "每個個體獨立建模" in compare
 
 
 def test_metric_validation_observer_cannot_self_trigger_on_option_label_changes():
     controls = (STATIC_DIR / "stage4-controls.js").read_text(encoding="utf-8")
-    # The observer only needs to notice metric rows being added or removed. Watching
-    # the entire subtree lets syncMetricRow() mutate an option label and recursively
-    # schedule itself forever, freezing the browser main thread at startup.
     assert 'observe(host,{childList:true});' in controls
     assert 'observe(host,{childList:true,subtree:true});' not in controls
     assert 'empty.textContent!==emptyLabel' in controls

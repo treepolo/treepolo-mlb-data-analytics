@@ -13,10 +13,13 @@ from .numerical import (
     NumericalSection, NumericalTable, RegressionSpec,
 )
 from .semantics import SemanticRegistry, default_registry
+from .auto_cluster import install_auto_cluster
 from .workflow import (
     AggregateStage, DerivedStage, FilterStage, NthStage, OffsetStage, ProjectStage,
     RankStage, RollingStage, SortStage, TrendStage, WorkflowPlanner, WorkflowState,
 )
+
+install_auto_cluster()
 
 __all__ = [
     "Aggregate", "AggregateStage", "AnalysisEngine", "AnalysisResult", "Binary", "Boolean",

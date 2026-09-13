@@ -34,28 +34,65 @@
     });
   }
 
-  async function loadUiEnhancements() {
-    // Diagnostics stays dormant during normal use. When explicitly enabled it
-    // must load before the enhancement layer so observer/timer/event callbacks
-    // can be attributed to their source files.
-    await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
+  function fieldCatalogReady() {
+    return Boolean((window.treepoloFieldCatalog?.fields?.() || []).length);
+  }
 
-    // field-checklists.js is injected by webapp before this bootstrap. Dynamic
-    // pages are created first; one shared paging layer then owns result paging
-    // for both fresh analysis responses and restored cached results.
+  function waitForFieldCatalog() {
+    if (fieldCatalogReady()) return Promise.resolve();
+    return new Promise(resolve => {
+      const onFieldsUpdated = () => {
+        if (!fieldCatalogReady()) return;
+        document.removeEventListener("treepolo:fields-updated", onFieldsUpdated);
+        resolve();
+      };
+      document.addEventListener("treepolo:fields-updated", onFieldsUpdated);
+    });
+  }
+
+  function commitFieldLegality() {
+    const provider = window.treepoloLegalFieldOptions;
+    if (!provider) {
+      console.error("Field legality provider failed to initialize");
+      return;
+    }
+    provider.refresh?.();
+    window.treepoloFieldChecklistsApi?.refreshRoot?.(document);
+    window.treepoloUnifiedFieldControlsApi?.scan?.(document);
+    window.treepoloUnifiedFieldControlsApi?.sync?.();
+    document.dispatchEvent(new CustomEvent("treepolo:field-legality-ready", {
+      detail: {
+        source:"field-catalog",
+        fieldCount:(window.treepoloFieldCatalog?.fields?.() || []).length,
+      },
+    }));
+  }
+
+  async function loadUiEnhancements() {
+    // Stage 4 also knows how to request this page at DOMContentLoaded. Claim the
+    // shared loader marker now, while this parser-time bootstrap is still running,
+    // so both paths refer to one script instead of racing two independent loaders.
+    const clusterComparisonReady = loadScriptOnce("/cluster-comparison-page.js", "clusterCompareLoader");
+
+    // Field legality is a foundational dependency of both checklist and
+    // single-field controls. Load it before the rest of the enhancement layer.
+    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
+
+    await loadScriptOnce("/performance-diagnostics.js", "performanceDiagnostics");
+    await loadScriptOnce("/result-player-names.js", "resultPlayerNames");
     await loadScriptOnce("/result-paging.js", "resultPaging");
     await loadScriptOnce("/acceptance-fixes.js", "acceptanceFixes");
-    await loadScriptOnce("/cluster-comparison-page.js", "clusterComparisonPage");
-    await loadScriptOnce("/field-option-legality-v3.js", "fieldOptionLegality");
+    await clusterComparisonReady;
     await loadScriptOnce("/field-controls-unified.js", "unifiedFieldControls");
     await loadStyleOnce("/field-controls-native-arrow.css", "nativeFieldArrow");
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
-    await loadScriptOnce("/analysis-save-ui.js", "analysisSaveUi");
-    await loadScriptOnce("/analysis-load-metadata.js", "analysisLoadMetadata");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
-    await loadScriptOnce("/field-checklist-panel-activation.js", "fieldChecklistPanelActivation");
-    document.dispatchEvent(new Event("treepolo:field-legality-ready"));
+    await loadScriptOnce("/supplemental-data.js", "supplementalData");
+    await loadScriptOnce("/cap04-auto-cluster.js", "cap04AutoCluster");
+
+    await waitForFieldCatalog();
+    commitFieldLegality();
   }
   loadUiEnhancements();
 

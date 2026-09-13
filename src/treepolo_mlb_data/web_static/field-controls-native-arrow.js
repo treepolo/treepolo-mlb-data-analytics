@@ -23,28 +23,40 @@
     return donor;
   }
 
-  function sync(root = document) {
-    root.querySelectorAll?.(".xp-field-shell,.xp-field-input-shell").forEach(ensureDonor);
-    root.querySelectorAll?.(".xp-semantic-shell").forEach(shell => {
+  function syncShell(shell) {
+    if (!shell?.matches?.(".xp-field-shell,.xp-field-input-shell,.xp-semantic-shell")) return;
+    if (shell.classList.contains("xp-semantic-shell")) {
       const donor = shell.querySelector(":scope > .xp-native-select-arrow");
       if (shell.classList.contains("xp-has-domain")) ensureDonor(shell);
       else donor?.remove();
-    });
+      return;
+    }
+    ensureDonor(shell);
+  }
+
+  function sync(root = document) {
+    if (root?.matches?.(".xp-field-shell,.xp-field-input-shell,.xp-semantic-shell")) syncShell(root);
+    root?.querySelectorAll?.(".xp-field-shell,.xp-field-input-shell,.xp-semantic-shell").forEach(syncShell);
+  }
+
+  function syncRelated(target) {
+    const shell = target?.closest?.(".xp-field-shell,.xp-field-input-shell,.xp-semantic-shell");
+    if (shell) queueMicrotask(() => syncShell(shell));
   }
 
   function init() {
     sync(document);
-    document.addEventListener("treepolo:fields-updated", () => setTimeout(() => sync(document), 0));
-    document.addEventListener("treepolo:analysis-options-changed", () => setTimeout(() => sync(document), 0));
+    document.addEventListener("treepolo:fields-updated", () => queueMicrotask(() => sync(document)));
+    document.addEventListener("treepolo:analysis-options-changed", () => queueMicrotask(() => sync(document)));
+    document.addEventListener("change", event => syncRelated(event.target));
+    document.addEventListener("input", event => syncRelated(event.target));
 
-    let queued = false;
     new MutationObserver(mutations => {
-      if (queued || !mutations.some(mutation => mutation.addedNodes.length || mutation.removedNodes.length)) return;
-      queued = true;
-      setTimeout(() => {
-        queued = false;
-        sync(document);
-      }, 0);
+      mutations.forEach(mutation => {
+        Array.from(mutation.addedNodes || []).forEach(node => {
+          if (node.nodeType === 1) sync(node);
+        });
+      });
     }).observe(document.body, { childList:true, subtree:true });
   }
 

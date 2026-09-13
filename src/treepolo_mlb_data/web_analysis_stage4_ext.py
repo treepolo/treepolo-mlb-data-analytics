@@ -179,13 +179,14 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
         if progress is not None:
             progress("numerical_prepare", 5.0, "Preparing relational input for clustering")
         table, input_backend = self._numerical_input(payload, required)
+        table, model_features, encodings = self._encode_model_features(table, features, label="Clustering features")
         method = str(payload.get("method", "kmeans"))
         if method not in {"kmeans", "gmm"}:
             raise RequestError("Clustering method must be kmeans or gmm")
         result = NumericalExecutor().clustering(
             table,
             ClusteringSpec(
-                features=features, method=method, clusters=int(payload.get("clusters", 3)),
+                features=model_features, method=method, clusters=int(payload.get("clusters", 3)),
                 standardize=bool(payload.get("standardize", True)), seed=int(payload.get("seed", 42)),
                 id_fields=id_fields, partition_fields=partition_fields,
                 assignment_limit=max(0, min(int(payload.get("assignment_limit", 5000)), 50_000)),
@@ -193,6 +194,8 @@ class Stage4ExtendedModesMixin(Stage4ModesMixin):
             progress,
         )
         result["input_backend"] = input_backend
+        result.setdefault("numerical", {})["requested_features"] = list(features)
+        result["numerical"]["feature_encodings"] = {key: list(value) for key, value in encodings.items()}
         return result
 
     def _cluster_compare(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -33,12 +33,8 @@
     <option value="project">保留欄位 Keep Fields</option>
     <option value="sort">中間結果排序 Sort</option>`;
 
-  function csv(value) {
-    return String(value || "").split(",").map(item => item.trim()).filter(Boolean);
-  }
-  function numberValue(value, fallback) {
-    const n = Number(value); return Number.isFinite(n) ? n : fallback;
-  }
+  const csv = value => window.treepoloMultiField?.parse?.(value) || String(value || "").split(",").map(item => item.trim()).filter(Boolean);
+  function numberValue(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
   function typedValue(value) {
     const text = String(value ?? "").trim();
     if (text === "") return "";
@@ -48,11 +44,13 @@
   }
   function orderSpec(value) {
     return csv(value).map(token => {
-      if (token.startsWith("-")) return { field: token.slice(1), descending: true };
-      if (token.startsWith("+")) return { field: token.slice(1), descending: false };
-      return { field: token, descending: false };
+      if (token.startsWith("-")) return { field: token.slice(1), descending:true };
+      if (token.startsWith("+")) return { field: token.slice(1), descending:false };
+      return { field:token, descending:false };
     }).filter(item => item.field);
   }
+  function escapeHtml(value) { const div=document.createElement("div"); div.textContent=String(value ?? ""); return div.innerHTML; }
+  function escapeAttr(value) { return escapeHtml(value).replace(/"/g, "&quot;"); }
 
   function injectStyles() {
     if (document.getElementById("stage4-analysis-page-styles")) return;
@@ -80,20 +78,20 @@
   }
 
   function fieldOptionsHtml(includeEmpty = true) {
-    const source = document.querySelector("#basic-group");
-    const options = source ? Array.from(source.options) : [];
-    return (includeEmpty ? '<option value="">不指定 None</option>' : "") + options.map(option =>
-      `<option value="${escapeAttr(option.value)}">${escapeHtml(option.textContent)}</option>`
-    ).join("");
+    const fields = window.treepoloFieldCatalog?.fields?.() || [];
+    const options = fields.map(field => {
+      const name = field.name;
+      const label = window.treepoloFieldCatalog?.label?.(name) || name;
+      return `<option value="${escapeAttr(name)}">${escapeHtml(label)} (${escapeHtml(name)})</option>`;
+    }).join("");
+    return (includeEmpty ? '<option value="">不指定 None</option>' : "") + options;
   }
-  function escapeHtml(value) {
-    const div = document.createElement("div"); div.textContent = String(value ?? ""); return div.innerHTML;
-  }
-  function escapeAttr(value) { return escapeHtml(value).replace(/"/g, "&quot;"); }
+
   function refreshFieldSelects() {
     const html = fieldOptionsHtml(true);
     document.querySelectorAll(".s4-field-select").forEach(select => {
-      const old = select.value; select.innerHTML = html;
+      const old = select.value;
+      select.innerHTML = html;
       if (Array.from(select.options).some(option => option.value === old)) select.value = old;
     });
   }
@@ -118,7 +116,7 @@
       const op = row.querySelector(".s4-filter-op").value;
       let value = row.querySelector(".s4-filter-value").value;
       if (["in", "not_in"].includes(op)) value = csv(value);
-      return { field: row.querySelector(".s4-filter-field").value, op, value };
+      return { field:row.querySelector(".s4-filter-field").value, op, value };
     }).filter(item => item.field);
   }
 
@@ -152,59 +150,6 @@
     row.querySelector(".remove-row").addEventListener("click", () => row.remove());
   }
 
-  function stageBody(stage, kind, preset = {}) {
-    const body = stage.querySelector(".s4-stage-body"); body.innerHTML = "";
-    if (kind === "aggregate") {
-      body.innerHTML = `<label>分組欄位 Group By<input class="s4-groups" type="text" placeholder="pitcher,game_pk"></label>
-        <div style="grid-column:1/-1"><div class="subheading">統計指標 Metrics</div><div class="s4-metric-list"></div><button type="button" class="s4-add-metric">＋ 新增指標 Add Metric</button></div>`;
-      body.querySelector(".s4-groups").value = (preset.group_by || []).join(",");
-      body.querySelector(".s4-add-metric").addEventListener("click", () => addMetric(stage));
-      (preset.metrics?.length ? preset.metrics : [{ function: "count", alias: "row_count" }]).forEach(metric => addMetric(stage, metric));
-    } else if (kind === "derive") {
-      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text" placeholder="usage_rate"></label>
-        <label>左側欄位 Left Field<input class="s4-left" type="text" placeholder="target_count"></label>
-        <label>運算 Operator<select class="s4-operator"><option>/</option><option>*</option><option>+</option><option>-</option><option>%</option></select></label>
-        <label>右側欄位 Right Field<input class="s4-right-field" type="text" placeholder="total_count"></label>
-        <label>或固定值 Or Constant<input class="s4-right-value" type="text" placeholder="留空時使用右側欄位"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "filter") {
-      body.innerHTML = `<label>目前欄位 Field<input class="s4-field" type="text"></label><label>條件 Comparison<select class="s4-op">${COMPARE_OPTIONS}</select></label>
-        <label>固定值 Value<input class="s4-value" type="text"></label><label>或另一欄位 Or Compare Field<input class="s4-value-field" type="text"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "rolling") {
-      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text" placeholder="rolling_avg"></label><label>統計 Aggregate<select class="s4-function"><option value="avg">Average</option><option value="sum">Sum</option><option value="count">Count</option><option value="min">Min</option><option value="max">Max</option></select></label>
-        <label>資料欄位 Field<input class="s4-field" type="text"></label><label>各自計算 Partition By<input class="s4-partition" type="text" placeholder="pitcher"></label>
-        <label>時間／順序 Order By<input class="s4-order" type="text" placeholder="game_pk"></label><label>視窗筆數 Window Size<input class="s4-window" type="number" min="1" value="3"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "offset") {
-      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text"></label><label>資料欄位 Field<input class="s4-field" type="text"></label>
-        <label>方向 Direction<select class="s4-direction"><option value="lag">前一期 Lag</option><option value="lead">後一期 Lead</option></select></label>
-        <label>間隔 Offset<input class="s4-offset" type="number" min="1" value="1"></label><label>各自計算 Partition By<input class="s4-partition" type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "trend") {
-      body.innerHTML = `<label>結果欄位 Alias<input class="s4-alias" type="text" placeholder="usage_rising"></label><label>資料欄位 Field<input class="s4-field" type="text"></label>
-        <label>方向 Direction<select class="s4-direction"><option value="up">連續上升 Rising</option><option value="down">連續下降 Falling</option></select></label>
-        <label>連續期數 Consecutive Values<input class="s4-periods" type="number" min="2" value="3"></label><label>各自計算 Partition By<input class="s4-partition" type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>
-        <label class="checkbox-line"><input class="s4-strict" type="checkbox" checked> 必須嚴格上升／下降 Strict</label>`;
-      setStageValues(body, preset);
-    } else if (kind === "nth") {
-      body.innerHTML = `<label>各自選取 Partition By<input class="s4-partition" type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>
-        <label>第 N 筆 N<input class="s4-n" type="number" min="1" value="1"></label><label class="checkbox-line"><input class="s4-from-end" type="checkbox"> 從尾端倒數 Count From End</label>`;
-      setStageValues(body, preset);
-    } else if (kind === "rank") {
-      body.innerHTML = `<label>順位欄位 Alias<input class="s4-alias" type="text" value="rank"></label><label>各自排名 Partition By<input class="s4-partition" type="text"></label>
-        <label>排名依據 Order By<input class="s4-order" type="text"></label><label>並列方法 Method<select class="s4-method"><option value="row_number">固定唯一順位 Row Number</option><option value="dense_rank">保留並列 Dense Rank</option><option value="rank">保留跳號 Rank</option></select></label>
-        <label>只保留順位（選填） Keep Rank<input class="s4-keep-rank" type="number" min="1"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "project") {
-      body.innerHTML = `<label style="grid-column:1/-1">保留欄位 Keep Fields<input class="s4-fields" type="text" placeholder="pitcher,game_pk,usage_rate"></label>`;
-      setStageValues(body, preset);
-    } else if (kind === "sort") {
-      body.innerHTML = `<label style="grid-column:1/-1">排序欄位 Order By<input class="s4-order" type="text" placeholder="pitcher,-usage_rate"></label>`;
-      setStageValues(body, preset);
-    }
-  }
-
   function setStageValues(body, preset) {
     const mapping = {
       ".s4-alias":"alias", ".s4-left":"left", ".s4-operator":"operator", ".s4-right-field":"right_field", ".s4-right-value":"right_value",
@@ -222,63 +167,97 @@
     if (body.querySelector(".s4-from-end")) body.querySelector(".s4-from-end").checked = Boolean(preset.from_end);
   }
 
-  function addStage(list, preset = {}) {
-    const stage = document.createElement("div"); stage.className = "s4-stage";
-    stage.innerHTML = `<div class="s4-stage-head"><select class="s4-stage-kind">${STAGE_OPTIONS}</select><button type="button">× 移除 Remove</button></div><div class="s4-stage-body"></div>`;
+  function stageBody(stage, kind, preset = {}) {
+    const body = stage.querySelector(".s4-stage-body"); body.innerHTML = "";
+    if (kind === "aggregate") {
+      body.innerHTML = `<label>分組欄位 Group By<input class="s4-groups" data-multi-field type="text" placeholder="pitcher,game_pk"></label>
+        <div style="grid-column:1/-1"><div class="subheading">統計指標 Metrics</div><div class="s4-metric-list"></div><button type="button" class="s4-add-metric">＋ 新增指標 Add Metric</button></div>`;
+      body.querySelector(".s4-groups").value = (preset.group_by || []).join(",");
+      body.querySelector(".s4-add-metric").addEventListener("click", () => addMetric(stage));
+      (preset.metrics?.length ? preset.metrics : [{ function:"count", alias:"row_count" }]).forEach(metric => addMetric(stage, metric));
+    } else if (kind === "derive") {
+      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text" placeholder="usage_rate"></label>
+        <label>左側欄位 Left Field<input class="s4-left" type="text" placeholder="target_count"></label>
+        <label>運算 Operator<select class="s4-operator"><option>/</option><option>*</option><option>+</option><option>-</option><option>%</option></select></label>
+        <label>右側欄位 Right Field<input class="s4-right-field" type="text" placeholder="total_count"></label>
+        <label>或固定值 Or Constant<input class="s4-right-value" type="text" placeholder="留空時使用右側欄位"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "filter") {
+      body.innerHTML = `<label>目前欄位 Field<input class="s4-field" type="text"></label><label>條件 Comparison<select class="s4-op">${COMPARE_OPTIONS}</select></label>
+        <label>固定值 Value<input class="s4-value" type="text"></label><label>或另一欄位 Or Compare Field<input class="s4-value-field" type="text"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "rolling") {
+      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text" placeholder="rolling_avg"></label><label>統計 Aggregate<select class="s4-function"><option value="avg">Average</option><option value="sum">Sum</option><option value="count">Count</option><option value="min">Min</option><option value="max">Max</option></select></label>
+        <label>資料欄位 Field<input class="s4-field" type="text"></label><label>各自計算 Partition By<input class="s4-partition" data-multi-field type="text" placeholder="pitcher"></label>
+        <label>時間／順序 Order By<input class="s4-order" type="text" placeholder="game_pk"></label><label>視窗筆數 Window Size<input class="s4-window" type="number" min="1" value="3"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "offset") {
+      body.innerHTML = `<label>新欄位名稱 Alias<input class="s4-alias" type="text"></label><label>資料欄位 Field<input class="s4-field" type="text"></label>
+        <label>方向 Direction<select class="s4-direction"><option value="lag">前一期 Lag</option><option value="lead">後一期 Lead</option></select></label>
+        <label>間隔 Offset<input class="s4-offset" type="number" min="1" value="1"></label><label>各自計算 Partition By<input class="s4-partition" data-multi-field type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "trend") {
+      body.innerHTML = `<label>結果欄位 Alias<input class="s4-alias" type="text" placeholder="usage_rising"></label><label>資料欄位 Field<input class="s4-field" type="text"></label>
+        <label>方向 Direction<select class="s4-direction"><option value="up">連續上升 Rising</option><option value="down">連續下降 Falling</option></select></label>
+        <label>連續期數 Consecutive Values<input class="s4-periods" type="number" min="2" value="3"></label><label>各自計算 Partition By<input class="s4-partition" data-multi-field type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>
+        <label class="checkbox-line"><input class="s4-strict" type="checkbox" checked> 必須嚴格上升／下降 Strict</label>`;
+      setStageValues(body,preset);
+    } else if (kind === "nth") {
+      body.innerHTML = `<label>各自選取 Partition By<input class="s4-partition" data-multi-field type="text"></label><label>順序 Order By<input class="s4-order" type="text"></label>
+        <label>第 N 筆 N<input class="s4-n" type="number" min="1" value="1"></label><label class="checkbox-line"><input class="s4-from-end" type="checkbox"> 從尾端倒數 Count From End</label>`;
+      setStageValues(body,preset);
+    } else if (kind === "rank") {
+      body.innerHTML = `<label>順位欄位 Alias<input class="s4-alias" type="text" value="rank"></label><label>各自排名 Partition By<input class="s4-partition" data-multi-field type="text"></label>
+        <label>排名依據 Order By<input class="s4-order" type="text"></label><label>並列方法 Method<select class="s4-method"><option value="row_number">固定唯一順位 Row Number</option><option value="dense_rank">保留並列 Dense Rank</option><option value="rank">保留跳號 Rank</option></select></label>
+        <label>只保留順位（選填） Keep Rank<input class="s4-keep-rank" type="number" min="1"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "project") {
+      body.innerHTML = `<label style="grid-column:1/-1">保留欄位 Keep Fields<input class="s4-fields" data-multi-field type="text" placeholder="pitcher,game_pk,usage_rate"></label>`;
+      setStageValues(body,preset);
+    } else if (kind === "sort") {
+      body.innerHTML = `<label style="grid-column:1/-1">排序欄位 Order By<input class="s4-order" type="text" placeholder="pitcher,-usage_rate"></label>`;
+      setStageValues(body,preset);
+    }
+  }
+
+  function addStage(list,preset={}) {
+    const stage=document.createElement("div"); stage.className="s4-stage";
+    stage.innerHTML=`<div class="s4-stage-head"><select class="s4-stage-kind">${STAGE_OPTIONS}</select><button type="button">× 移除 Remove</button></div><div class="s4-stage-body"></div>`;
     list.append(stage);
-    const kind = preset.kind || "aggregate"; stage.querySelector(".s4-stage-kind").value = kind; stageBody(stage, kind, preset);
-    stage.querySelector(".s4-stage-kind").addEventListener("change", event => stageBody(stage, event.target.value, {}));
-    stage.querySelector(".s4-stage-head button").addEventListener("click", () => stage.remove());
+    const kind=preset.kind||"aggregate"; stage.querySelector(".s4-stage-kind").value=kind; stageBody(stage,kind,preset);
+    stage.querySelector(".s4-stage-kind").addEventListener("change",event=>stageBody(stage,event.target.value,{}));
+    stage.querySelector(".s4-stage-head button").addEventListener("click",()=>stage.remove());
   }
 
   function metricFrom(row) {
-    const functionName = row.querySelector(".s4-metric-fn").value;
-    const field = row.querySelector(".s4-metric-field").value.trim();
-    const alias = row.querySelector(".s4-metric-alias").value.trim();
-    const result = { function: functionName, field, alias, distinct: row.querySelector(".s4-metric-distinct").checked };
-    const conditionField = row.querySelector(".s4-metric-cond-field").value.trim();
-    if (conditionField) {
-      const op = row.querySelector(".s4-metric-cond-op").value;
-      let value = row.querySelector(".s4-metric-cond-value").value;
-      if (["in", "not_in"].includes(op)) value = csv(value);
-      result.condition = { field: conditionField, op, value };
-    }
+    const functionName=row.querySelector(".s4-metric-fn").value;
+    const field=row.querySelector(".s4-metric-field").value.trim();
+    const alias=row.querySelector(".s4-metric-alias").value.trim();
+    const result={function:functionName,field,alias,distinct:row.querySelector(".s4-metric-distinct").checked};
+    const conditionField=row.querySelector(".s4-metric-cond-field").value.trim();
+    if(conditionField){const op=row.querySelector(".s4-metric-cond-op").value;let value=row.querySelector(".s4-metric-cond-value").value;if(["in","not_in"].includes(op))value=csv(value);result.condition={field:conditionField,op,value};}
     return result;
   }
 
   function stageFrom(stage) {
-    const kind = stage.querySelector(".s4-stage-kind").value;
-    const q = selector => stage.querySelector(selector);
-    if (kind === "aggregate") return { kind, group_by: csv(q(".s4-groups").value), metrics: Array.from(stage.querySelectorAll(".s4-metric-row")).map(metricFrom) };
-    if (kind === "derive") {
-      const result = { kind, alias:q(".s4-alias").value.trim(), left:q(".s4-left").value.trim(), operator:q(".s4-operator").value };
-      const rightField = q(".s4-right-field").value.trim(); const rightValue = q(".s4-right-value").value;
-      if (rightField) result.right_field = rightField; else result.right_value = typedValue(rightValue);
-      return result;
-    }
-    if (kind === "filter") {
-      const result = { kind, field:q(".s4-field").value.trim(), op:q(".s4-op").value, value:typedValue(q(".s4-value").value) };
-      const compare = q(".s4-value-field").value.trim(); if (compare) result.value_field = compare; return result;
-    }
-    if (kind === "rolling") return { kind, alias:q(".s4-alias").value.trim(), function:q(".s4-function").value, field:q(".s4-field").value.trim(), partition_by:csv(q(".s4-partition").value), order_by:orderSpec(q(".s4-order").value), window_size:numberValue(q(".s4-window").value,3) };
-    if (kind === "offset") return { kind, alias:q(".s4-alias").value.trim(), field:q(".s4-field").value.trim(), direction:q(".s4-direction").value, offset:numberValue(q(".s4-offset").value,1), partition_by:csv(q(".s4-partition").value), order_by:orderSpec(q(".s4-order").value) };
-    if (kind === "trend") return { kind, alias:q(".s4-alias").value.trim(), field:q(".s4-field").value.trim(), direction:q(".s4-direction").value, periods:numberValue(q(".s4-periods").value,3), partition_by:csv(q(".s4-partition").value), order_by:orderSpec(q(".s4-order").value), strict:q(".s4-strict").checked };
-    if (kind === "nth") return { kind, partition_by:csv(q(".s4-partition").value), order_by:orderSpec(q(".s4-order").value), n:numberValue(q(".s4-n").value,1), from_end:q(".s4-from-end").checked };
-    if (kind === "rank") return { kind, alias:q(".s4-alias").value.trim(), partition_by:csv(q(".s4-partition").value), order_by:orderSpec(q(".s4-order").value), method:q(".s4-method").value, keep_rank:q(".s4-keep-rank").value ? Number(q(".s4-keep-rank").value) : null };
-    if (kind === "project") return { kind, fields:csv(q(".s4-fields").value) };
-    if (kind === "sort") return { kind, order_by:orderSpec(q(".s4-order").value) };
+    const kind=stage.querySelector(".s4-stage-kind").value; const q=selector=>stage.querySelector(selector);
+    if(kind==="aggregate")return{kind,group_by:csv(q(".s4-groups").value),metrics:Array.from(stage.querySelectorAll(".s4-metric-row")).map(metricFrom)};
+    if(kind==="derive"){const result={kind,alias:q(".s4-alias").value.trim(),left:q(".s4-left").value.trim(),operator:q(".s4-operator").value};const rightField=q(".s4-right-field").value.trim();if(rightField)result.right_field=rightField;else result.right_value=typedValue(q(".s4-right-value").value);return result;}
+    if(kind==="filter"){const result={kind,field:q(".s4-field").value.trim(),op:q(".s4-op").value,value:typedValue(q(".s4-value").value)};const compare=q(".s4-value-field").value.trim();if(compare)result.value_field=compare;return result;}
+    if(kind==="rolling")return{kind,alias:q(".s4-alias").value.trim(),function:q(".s4-function").value,field:q(".s4-field").value.trim(),partition_by:csv(q(".s4-partition").value),order_by:orderSpec(q(".s4-order").value),window_size:numberValue(q(".s4-window").value,3)};
+    if(kind==="offset")return{kind,alias:q(".s4-alias").value.trim(),field:q(".s4-field").value.trim(),direction:q(".s4-direction").value,offset:numberValue(q(".s4-offset").value,1),partition_by:csv(q(".s4-partition").value),order_by:orderSpec(q(".s4-order").value)};
+    if(kind==="trend")return{kind,alias:q(".s4-alias").value.trim(),field:q(".s4-field").value.trim(),direction:q(".s4-direction").value,periods:numberValue(q(".s4-periods").value,3),partition_by:csv(q(".s4-partition").value),order_by:orderSpec(q(".s4-order").value),strict:q(".s4-strict").checked};
+    if(kind==="nth")return{kind,partition_by:csv(q(".s4-partition").value),order_by:orderSpec(q(".s4-order").value),n:numberValue(q(".s4-n").value,1),from_end:q(".s4-from-end").checked};
+    if(kind==="rank")return{kind,alias:q(".s4-alias").value.trim(),partition_by:csv(q(".s4-partition").value),order_by:orderSpec(q(".s4-order").value),method:q(".s4-method").value,keep_rank:q(".s4-keep-rank").value?Number(q(".s4-keep-rank").value):null};
+    if(kind==="project")return{kind,fields:csv(q(".s4-fields").value)};
+    if(kind==="sort")return{kind,order_by:orderSpec(q(".s4-order").value)};
     throw new Error(`Unsupported stage: ${kind}`);
   }
 
-  function stagesFrom(panel, selector = ".s4-stage-list") {
-    return Array.from(panel.querySelector(selector).querySelectorAll(":scope > .s4-stage")).map(stageFrom);
-  }
-
+  function stagesFrom(panel,selector=".s4-stage-list") { return Array.from(panel.querySelector(selector).querySelectorAll(":scope > .s4-stage")).map(stageFrom); }
   function wirePanelBasics(panel) {
-    panel.querySelectorAll(".s4-filter-box").forEach(box => box.querySelector(".s4-add-filter").addEventListener("click", () => addFilter(box)));
-    panel.querySelectorAll(".s4-add-stage").forEach(button => {
-      const list = button.previousElementSibling; button.addEventListener("click", () => addStage(list));
-    });
+    panel.querySelectorAll(".s4-filter-box").forEach(box=>box.querySelector(".s4-add-filter").addEventListener("click",()=>addFilter(box)));
+    panel.querySelectorAll(".s4-add-stage").forEach(button=>{const list=button.previousElementSibling;button.addEventListener("click",()=>addStage(list));});
   }
 
   function workflowPanelHtml() {
@@ -295,8 +274,8 @@
   function clusteringPanelHtml() {
     return `<div id="clustering-panel" class="panel"><div class="panel-heading">自動分群 Clustering</div><div class="panel-body">${filterBoxHtml()}${prepHtml()}
       <fieldset><legend>分群設定 Clustering Setup</legend><div class="s4-grid">
-        <label>特徵欄位 Features<input id="s4-cluster-features" type="text" value="release_speed,pfx_x,pfx_z,release_spin_rate"></label>
-        <label>識別欄位 ID Fields<input id="s4-cluster-ids" type="text" value="pitch_uid,pitcher"></label>
+        <label>特徵欄位 Features<input id="s4-cluster-features" data-multi-field type="text" value="release_speed,pfx_x,pfx_z,release_spin_rate"></label>
+        <label>識別欄位 ID Fields<input id="s4-cluster-ids" data-multi-field type="text" value="pitch_uid,pitcher"></label>
         <label>方法 Method<select id="s4-cluster-method"><option value="kmeans">K-means</option><option value="gmm">Gaussian Mixture</option></select></label>
         <label>群數 Clusters<input id="s4-cluster-k" type="number" min="2" max="50" value="3"></label>
         <label>隨機種子 Seed<input id="s4-cluster-seed" type="number" value="42"></label>
@@ -310,7 +289,7 @@
     return `<div id="regression-panel" class="panel"><div class="panel-heading">迴歸分析 Regression</div><div class="panel-body">${filterBoxHtml()}${prepHtml()}
       <fieldset><legend>模型設定 Model Setup</legend><div class="s4-grid">
         <label>應變數 Dependent<input id="s4-reg-dependent" type="text" placeholder="例如 release_speed"></label>
-        <label>自變數 Independent<input id="s4-reg-independent" type="text" placeholder="pfx_x,pfx_z,release_spin_rate"></label>
+        <label>自變數 Independent<input id="s4-reg-independent" data-multi-field type="text" placeholder="pfx_x,pfx_z,release_spin_rate"></label>
         <label>模型 Model<select id="s4-reg-model"><option value="linear">線性 Linear</option><option value="logistic">二元 Logistic</option></select></label>
         <label>信賴水準 Confidence<input id="s4-reg-confidence" type="number" min="0.5" max="0.999" step="0.01" value="0.95"></label>
         <label class="checkbox-line"><input id="s4-reg-standardize" type="checkbox"> 標準化自變數 Standardize Predictors</label>
@@ -321,7 +300,7 @@
     return `<div id="bootstrap-panel" class="panel"><div class="panel-heading">Bootstrap / 信賴區間 Confidence Interval</div><div class="panel-body">${filterBoxHtml()}${prepHtml()}
       <fieldset><legend>重抽樣設定 Resampling Setup</legend><div class="s4-grid">
         <label>數值欄位 Value Field<input id="s4-boot-value" type="text" placeholder="release_speed"></label>
-        <label>重抽樣單位 Resample Unit Fields<input id="s4-boot-units" type="text" placeholder="game_pk 或 pitcher,game_pk"></label>
+        <label>重抽樣單位 Resample Unit Fields<input id="s4-boot-units" data-multi-field type="text" placeholder="game_pk 或 pitcher,game_pk"></label>
         <label>統計量 Statistic<select id="s4-boot-stat"><option value="mean">平均 Mean</option><option value="median">中位數 Median</option><option value="proportion">比例 Proportion</option></select></label>
         <label>比較分組欄位 Group Field（選填）<input id="s4-boot-group" type="text"></label>
         <label>組 A Group A<input id="s4-boot-a" type="text"></label><label>組 B Group B<input id="s4-boot-b" type="text"></label>
@@ -335,104 +314,64 @@
   }
 
   function injectPanels() {
-    if (document.getElementById("workflow-panel")) return;
-    const navigation = document.querySelector(".navigation-pane"); const main = document.querySelector(".main-pane"); const result = document.querySelector("#result-window");
-    if (!navigation || !main || !result) return;
-    const group = document.createElement("div"); group.className = "task-group";
-    group.innerHTML = `<div class="task-group-title">進階研究 Advanced Research</div>${Object.entries(PANEL_IDS).map(([mode,id]) => `<button class="nav-item" data-panel="${id}" data-s4-nav="${mode}">${MODE_LABELS[mode]}</button>`).join("")}`;
-    const workspaceGroup = Array.from(navigation.querySelectorAll(".task-group-title")).find(node => node.textContent.includes("工作區"))?.parentElement;
-    navigation.insertBefore(group, workspaceGroup || null);
-    const holder = document.createElement("div"); holder.innerHTML = workflowPanelHtml() + clusteringPanelHtml() + regressionPanelHtml() + bootstrapPanelHtml();
-    Array.from(holder.children).forEach(panel => main.insertBefore(panel, result));
-    group.querySelectorAll("[data-s4-nav]").forEach(button => button.addEventListener("click", () => switchPanel(button.dataset.panel)));
-    document.querySelectorAll("#workflow-panel,#clustering-panel,#regression-panel,#bootstrap-panel").forEach(panel => wirePanelBasics(panel));
-    document.querySelectorAll(".s4-run").forEach(button => button.addEventListener("click", () => runMode(button.dataset.s4Mode, button)));
+    if(document.getElementById("workflow-panel"))return;
+    const navigation=document.querySelector(".navigation-pane"),main=document.querySelector(".main-pane"),result=document.querySelector("#result-window");
+    if(!navigation||!main||!result)return;
+    const group=document.createElement("div"); group.className="task-group";
+    group.innerHTML=`<div class="task-group-title">進階研究 Advanced Research</div>${Object.entries(PANEL_IDS).map(([mode,id])=>`<button class="nav-item" data-panel="${id}" data-s4-nav="${mode}">${MODE_LABELS[mode]}</button>`).join("")}`;
+    const workspaceGroup=Array.from(navigation.querySelectorAll(".task-group-title")).find(node=>node.textContent.includes("工作區"))?.parentElement;
+    navigation.insertBefore(group,workspaceGroup||null);
+    const holder=document.createElement("div");holder.innerHTML=workflowPanelHtml()+clusteringPanelHtml()+regressionPanelHtml()+bootstrapPanelHtml();
+    Array.from(holder.children).forEach(panel=>main.insertBefore(panel,result));
+    Object.values(PANEL_IDS).forEach(id=>window.treepoloPanels?.register?.(id));
+    group.querySelectorAll("[data-s4-nav]").forEach(button=>button.addEventListener("click",()=>window.treepoloPanels?.activate(button.dataset.panel,{updateUrl:true,source:"navigation"})));
+    document.querySelectorAll("#workflow-panel,#clustering-panel,#regression-panel,#bootstrap-panel").forEach(wirePanelBasics);
+    document.querySelectorAll(".s4-run").forEach(button=>button.addEventListener("click",()=>runMode(button.dataset.s4Mode,button)));
     refreshFieldSelects();
   }
 
-  function switchPanel(id) {
-    document.querySelectorAll(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.panel === id));
-    document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active-panel", panel.id === id));
-  }
-
   function buildPayload(mode) {
-    const panel = document.getElementById(PANEL_IDS[mode]);
-    const payload = { mode, filters: filtersFrom(panel) };
-    if (mode === "workflow") {
-      payload.stages = stagesFrom(panel); payload.limit = Number(document.getElementById("s4-workflow-limit").value || 500);
-    } else {
-      payload.input_stages = stagesFrom(panel, ".s4-input-stage-list");
-      if (mode === "clustering") Object.assign(payload, {
-        features:csv(document.getElementById("s4-cluster-features").value), id_fields:csv(document.getElementById("s4-cluster-ids").value),
-        method:document.getElementById("s4-cluster-method").value, clusters:Number(document.getElementById("s4-cluster-k").value), standardize:document.getElementById("s4-cluster-standardize").checked,
-        seed:Number(document.getElementById("s4-cluster-seed").value), max_input_rows:Number(document.getElementById("s4-cluster-max").value), assignment_limit:Number(document.getElementById("s4-cluster-assign").value),
-      });
-      if (mode === "regression") Object.assign(payload, {
-        dependent:document.getElementById("s4-reg-dependent").value.trim(), independent:csv(document.getElementById("s4-reg-independent").value), model:document.getElementById("s4-reg-model").value,
-        confidence:Number(document.getElementById("s4-reg-confidence").value), standardize_predictors:document.getElementById("s4-reg-standardize").checked, max_input_rows:Number(document.getElementById("s4-reg-max").value),
-      });
-      if (mode === "bootstrap") Object.assign(payload, {
-        value_field:document.getElementById("s4-boot-value").value.trim(), resample_unit_fields:csv(document.getElementById("s4-boot-units").value), statistic:document.getElementById("s4-boot-stat").value,
-        group_field:document.getElementById("s4-boot-group").value.trim() || null, group_a:typedValue(document.getElementById("s4-boot-a").value), group_b:typedValue(document.getElementById("s4-boot-b").value), success_value:typedValue(document.getElementById("s4-boot-success").value),
-        iterations:Number(document.getElementById("s4-boot-iterations").value), confidence:Number(document.getElementById("s4-boot-confidence").value), seed:Number(document.getElementById("s4-boot-seed").value), max_input_rows:Number(document.getElementById("s4-boot-max").value),
-      });
+    const panel=document.getElementById(PANEL_IDS[mode]); const payload={mode,filters:filtersFrom(panel)};
+    if(mode==="workflow"){payload.stages=stagesFrom(panel);payload.limit=Number(document.getElementById("s4-workflow-limit").value||500);}
+    else{
+      payload.input_stages=stagesFrom(panel,".s4-input-stage-list");
+      if(mode==="clustering")Object.assign(payload,{features:csv(document.getElementById("s4-cluster-features").value),id_fields:csv(document.getElementById("s4-cluster-ids").value),method:document.getElementById("s4-cluster-method").value,clusters:Number(document.getElementById("s4-cluster-k").value),standardize:document.getElementById("s4-cluster-standardize").checked,seed:Number(document.getElementById("s4-cluster-seed").value),max_input_rows:Number(document.getElementById("s4-cluster-max").value),assignment_limit:Number(document.getElementById("s4-cluster-assign").value)});
+      if(mode==="regression")Object.assign(payload,{dependent:document.getElementById("s4-reg-dependent").value.trim(),independent:csv(document.getElementById("s4-reg-independent").value),model:document.getElementById("s4-reg-model").value,confidence:Number(document.getElementById("s4-reg-confidence").value),standardize_predictors:document.getElementById("s4-reg-standardize").checked,max_input_rows:Number(document.getElementById("s4-reg-max").value)});
+      if(mode==="bootstrap")Object.assign(payload,{value_field:document.getElementById("s4-boot-value").value.trim(),resample_unit_fields:csv(document.getElementById("s4-boot-units").value),statistic:document.getElementById("s4-boot-stat").value,group_field:document.getElementById("s4-boot-group").value.trim()||null,group_a:typedValue(document.getElementById("s4-boot-a").value),group_b:typedValue(document.getElementById("s4-boot-b").value),success_value:typedValue(document.getElementById("s4-boot-success").value),iterations:Number(document.getElementById("s4-boot-iterations").value),confidence:Number(document.getElementById("s4-boot-confidence").value),seed:Number(document.getElementById("s4-boot-seed").value),max_input_rows:Number(document.getElementById("s4-boot-max").value)});
     }
     return payload;
   }
 
-  async function runMode(mode, button) {
-    const payload = buildPayload(mode); button.disabled = true;
-    const status = document.querySelector("#status-message"); if (status) status.textContent = "正在執行分析 Running analysis…";
-    window.treepoloAnalysisProgress?.start();
-    try {
-      const response = await fetch("/api/analyze", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error || `${response.status} ${response.statusText}`);
-      renderResult(body); if (status) status.textContent = "分析完成 Analysis complete";
-      document.querySelector("#result-window")?.scrollIntoView({ behavior:"smooth", block:"nearest" });
-    } catch (error) {
-      renderError(error); if (status) status.textContent = "分析失敗 Analysis failed";
-    } finally { window.treepoloAnalysisProgress?.finish(); button.disabled = false; }
+  async function runMode(mode,button) {
+    const payload=buildPayload(mode);button.disabled=true;const status=document.querySelector("#status-message");if(status)status.textContent="正在執行分析 Running analysis…";window.treepoloAnalysisProgress?.start();
+    try{const response=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const body=await response.json();if(!response.ok)throw new Error(body.error||`${response.status} ${response.statusText}`);renderResult(body);if(status)status.textContent="分析完成 Analysis complete";document.querySelector("#result-window")?.scrollIntoView({behavior:"smooth",block:"nearest"});}
+    catch(error){renderError(error);if(status)status.textContent="分析失敗 Analysis failed";}
+    finally{window.treepoloAnalysisProgress?.finish();button.disabled=false;}
   }
 
   function renderResult(result) {
-    const host = document.querySelector("#result-content"); const summary = document.querySelector("#result-summary"); if (!host || !summary) return;
-    host.innerHTML = "";
-    const sections = result.sections || [result]; let total = 0;
-    sections.forEach(section => {
-      total += Number(section.row_count ?? section.rows?.length ?? 0);
-      if (section.title) { const title = document.createElement("div"); title.className = "result-section-title"; title.textContent = `${section.title} · ${section.row_count ?? section.rows?.length ?? 0} 列 rows`; host.append(title); }
-      const table = document.createElement("table"); table.className = "result-table";
-      const thead = document.createElement("thead"); const trh = document.createElement("tr");
-      (section.columns || []).forEach(column => { const th=document.createElement("th"); th.textContent=column; trh.append(th); }); thead.append(trh); table.append(thead);
-      const tbody=document.createElement("tbody"); (section.rows || []).forEach(row => { const tr=document.createElement("tr"); (section.columns || []).forEach(column => { const td=document.createElement("td"); const value=row[column]; td.textContent=value==null?"—":typeof value==="number"?formatNumber(value):String(value); tr.append(td); }); tbody.append(tr); }); table.append(tbody); host.append(table);
-    });
-    const backend = result.backend || Array.from(new Set(sections.map(s=>s.backend).filter(Boolean))).join("+") || "—";
-    summary.textContent = `${total} 列 rows · ${backend}${result.input_backend ? ` · input: ${result.input_backend}` : ""}`;
-    if (result.cache) { const badge=document.createElement("span"); badge.className="s4-result-note"; badge.textContent=result.cache.hit?"快取命中 Cache Hit":result.cache.stored?"已快取 Cached":"未快取 Not Cached"; summary.append(" ",badge); }
+    const host=document.querySelector("#result-content"),summary=document.querySelector("#result-summary");if(!host||!summary)return;host.innerHTML="";const sections=result.sections||[result];let total=0;
+    sections.forEach(section=>{total+=Number(section.row_count??section.rows?.length??0);if(section.title){const title=document.createElement("div");title.className="result-section-title";title.textContent=`${section.title} · ${section.row_count??section.rows?.length??0} 列 rows`;host.append(title);}const table=document.createElement("table");table.className="result-table";const thead=document.createElement("thead"),trh=document.createElement("tr");(section.columns||[]).forEach(column=>{const th=document.createElement("th");th.textContent=column;trh.append(th);});thead.append(trh);table.append(thead);const tbody=document.createElement("tbody");(section.rows||[]).forEach(row=>{const tr=document.createElement("tr");(section.columns||[]).forEach(column=>{const td=document.createElement("td");const value=row[column];td.textContent=value==null?"—":typeof value==="number"?formatNumber(value):String(value);tr.append(td);});tbody.append(tr);});table.append(tbody);host.append(table);});
+    const backend=result.backend||Array.from(new Set(sections.map(s=>s.backend).filter(Boolean))).join("+")||"—";summary.textContent=`${total} 列 rows · ${backend}${result.input_backend?` · input: ${result.input_backend}`:""}`;
+    if(result.cache){const badge=document.createElement("span");badge.className="s4-result-note";badge.textContent=result.cache.hit?"快取命中 Cache Hit":result.cache.stored?"已快取 Cached":"未快取 Not Cached";summary.append(" ",badge);}
   }
-  function formatNumber(value) { if (!Number.isFinite(value)) return String(value); if (Number.isInteger(value)) return String(value); return value.toFixed(6).replace(/0+$/,"").replace(/\.$/,""); }
-  function renderError(error) {
-    const host=document.querySelector("#result-content"); const summary=document.querySelector("#result-summary"); if (summary) summary.textContent="錯誤 Error";
-    if (host) { host.innerHTML=""; const box=document.createElement("div"); box.className="error-box"; const strong=document.createElement("strong"); strong.textContent="執行失敗 Analysis Failed"; const detail=document.createElement("div"); detail.textContent=error.message; box.append(strong,detail); host.append(box); }
-  }
+  function formatNumber(value){if(!Number.isFinite(value))return String(value);if(Number.isInteger(value))return String(value);return value.toFixed(6).replace(/0+$/,"").replace(/\.$/,"");}
+  function renderError(error){const host=document.querySelector("#result-content"),summary=document.querySelector("#result-summary");if(summary)summary.textContent="錯誤 Error";if(host){host.innerHTML="";const box=document.createElement("div");box.className="error-box";const strong=document.createElement("strong");strong.textContent="執行失敗 Analysis Failed";const detail=document.createElement("div");detail.textContent=error.message;box.append(strong,detail);host.append(box);}}
 
-  function applyFilters(panel, filters = []) {
-    const box=panel.querySelector(".s4-filter-box"); const list=box.querySelector(".s4-filter-list"); list.innerHTML=""; filters.forEach(spec=>addFilter(box,spec));
-  }
-  function applyStages(panel, stages = [], selector = ".s4-stage-list") {
-    const list=panel.querySelector(selector); list.innerHTML=""; stages.forEach(spec=>addStage(list,spec));
-  }
+  function applyFilters(panel,filters=[]){const box=panel.querySelector(".s4-filter-box"),list=box.querySelector(".s4-filter-list");list.innerHTML="";filters.forEach(spec=>addFilter(box,spec));}
+  function applyStages(panel,stages=[],selector=".s4-stage-list"){const list=panel.querySelector(selector);list.innerHTML="";stages.forEach(spec=>addStage(list,spec));}
   function applyPayload(payload) {
-    const panel=document.getElementById(PANEL_IDS[payload.mode]); if (!panel) return false;
-    applyFilters(panel,payload.filters || []);
-    if (payload.mode === "workflow") { applyStages(panel,payload.stages || []); document.getElementById("s4-workflow-limit").value=payload.limit ?? 500; }
-    else applyStages(panel,payload.input_stages || [],".s4-input-stage-list");
-    if (payload.mode === "clustering") { document.getElementById("s4-cluster-features").value=(payload.features||[]).join(","); document.getElementById("s4-cluster-ids").value=(payload.id_fields||[]).join(","); document.getElementById("s4-cluster-method").value=payload.method||"kmeans"; document.getElementById("s4-cluster-k").value=payload.clusters??3; document.getElementById("s4-cluster-standardize").checked=payload.standardize!==false; document.getElementById("s4-cluster-seed").value=payload.seed??42; document.getElementById("s4-cluster-max").value=payload.max_input_rows??200000; document.getElementById("s4-cluster-assign").value=payload.assignment_limit??5000; }
-    if (payload.mode === "regression") { document.getElementById("s4-reg-dependent").value=payload.dependent||""; document.getElementById("s4-reg-independent").value=(payload.independent||[]).join(","); document.getElementById("s4-reg-model").value=payload.model||"linear"; document.getElementById("s4-reg-confidence").value=payload.confidence??.95; document.getElementById("s4-reg-standardize").checked=Boolean(payload.standardize_predictors); document.getElementById("s4-reg-max").value=payload.max_input_rows??200000; }
-    if (payload.mode === "bootstrap") { document.getElementById("s4-boot-value").value=payload.value_field||""; document.getElementById("s4-boot-units").value=(payload.resample_unit_fields||[]).join(","); document.getElementById("s4-boot-stat").value=payload.statistic||"mean"; document.getElementById("s4-boot-group").value=payload.group_field||""; document.getElementById("s4-boot-a").value=payload.group_a??""; document.getElementById("s4-boot-b").value=payload.group_b??""; document.getElementById("s4-boot-success").value=payload.success_value??1; document.getElementById("s4-boot-iterations").value=payload.iterations??2000; document.getElementById("s4-boot-confidence").value=payload.confidence??.95; document.getElementById("s4-boot-seed").value=payload.seed??42; document.getElementById("s4-boot-max").value=payload.max_input_rows??200000; }
-    switchPanel(PANEL_IDS[payload.mode]); return true;
+    const panel=document.getElementById(PANEL_IDS[payload.mode]);if(!panel)return false;
+    applyFilters(panel,payload.filters||[]);
+    if(payload.mode==="workflow"){applyStages(panel,payload.stages||[]);document.getElementById("s4-workflow-limit").value=payload.limit??500;}
+    else applyStages(panel,payload.input_stages||[],".s4-input-stage-list");
+    if(payload.mode==="clustering"){document.getElementById("s4-cluster-features").value=(payload.features||[]).join(",");document.getElementById("s4-cluster-ids").value=(payload.id_fields||[]).join(",");document.getElementById("s4-cluster-method").value=payload.method||"kmeans";document.getElementById("s4-cluster-k").value=payload.clusters??3;document.getElementById("s4-cluster-standardize").checked=payload.standardize!==false;document.getElementById("s4-cluster-seed").value=payload.seed??42;document.getElementById("s4-cluster-max").value=payload.max_input_rows??200000;document.getElementById("s4-cluster-assign").value=payload.assignment_limit??5000;}
+    if(payload.mode==="regression"){document.getElementById("s4-reg-dependent").value=payload.dependent||"";document.getElementById("s4-reg-independent").value=(payload.independent||[]).join(",");document.getElementById("s4-reg-model").value=payload.model||"linear";document.getElementById("s4-reg-confidence").value=payload.confidence??.95;document.getElementById("s4-reg-standardize").checked=Boolean(payload.standardize_predictors);document.getElementById("s4-reg-max").value=payload.max_input_rows??200000;}
+    if(payload.mode==="bootstrap"){document.getElementById("s4-boot-value").value=payload.value_field||"";document.getElementById("s4-boot-units").value=(payload.resample_unit_fields||[]).join(",");document.getElementById("s4-boot-stat").value=payload.statistic||"mean";document.getElementById("s4-boot-group").value=payload.group_field||"";document.getElementById("s4-boot-a").value=payload.group_a??"";document.getElementById("s4-boot-b").value=payload.group_b??"";document.getElementById("s4-boot-success").value=payload.success_value??1;document.getElementById("s4-boot-iterations").value=payload.iterations??2000;document.getElementById("s4-boot-confidence").value=payload.confidence??.95;document.getElementById("s4-boot-seed").value=payload.seed??42;document.getElementById("s4-boot-max").value=payload.max_input_rows??200000;}
+    document.dispatchEvent(new CustomEvent("treepolo:analysis-options-changed"));
+    return true;
   }
 
-  function init() { injectStyles(); injectPanels(); document.addEventListener("treepolo:fields-updated", refreshFieldSelects); refreshFieldSelects(); window.treepoloStage4Pages = { applyPayload, buildPayload, renderResult }; }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once:true }); else init();
+  function init(){injectStyles();injectPanels();document.addEventListener("treepolo:fields-updated",refreshFieldSelects);refreshFieldSelects();window.treepoloStage4Pages={applyPayload,buildPayload,renderResult,panelIdForMode:mode=>PANEL_IDS[mode]||null};}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();

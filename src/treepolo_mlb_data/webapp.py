@@ -255,6 +255,9 @@ class AppServices:
     def data_action(self, action: str, payload: dict[str, Any]) -> Any:
         if action == "status":
             return self.status()
+        if action.startswith("supplemental-"):
+            from .supplemental_data import handle_supplemental_action
+            return handle_supplemental_action(self.config, action, payload)
         with self.sync_lock:
             store, engine = self._sync_engine()
             try:

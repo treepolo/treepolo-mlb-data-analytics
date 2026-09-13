@@ -22,12 +22,14 @@ def test_shared_paging_owns_fresh_analysis_response_paging():
     assert "schedule(normalized)" in paging
 
 
-def test_cached_load_uses_same_paging_presenter_and_keeps_full_result_state():
+def test_cached_load_uses_same_paging_presenter_and_keeps_canonical_result_state():
     controls = source("stage4-controls.js")
     assert "window.treepoloResultPaging" in controls
     assert "paging.present(result,renderStoredResultPage)" in controls
-    assert "lastResult=item.result" in controls
-    assert "window.treepoloLastAnalysis={payload:lastPayload,result:item.result||null}" in controls
+    assert "lastResult=item.result||null" in controls
+    assert "window.treepoloLastAnalysis={" in controls
+    assert "payload:lastPayload,result:lastResult" in controls
+    assert "loaded_source_kind:source.kind||null" in controls
     assert "renderStoredResultPage(item.result)" not in controls
 
 

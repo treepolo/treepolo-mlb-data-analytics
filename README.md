@@ -1,10 +1,10 @@
 # treepolo MLB Data Analytics
 
-Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes ingestion/synchronization, a typed relational analysis engine, advanced sequence/arsenal workflows, a typed numerical-analysis boundary, a SQLite source-of-truth database, a DuckDB analytical mirror, persistent analysis state, and a local bilingual frontend.
+Baseball Savant/Statcast pitch-level data foundation and local analysis application. The project includes ingestion/synchronization, a typed relational analysis engine, advanced sequence/arsenal workflows, a typed numerical-analysis boundary, a SQLite source-of-truth database, a DuckDB analytical mirror, persistent analysis/presentation state, and a local bilingual frontend with visualization, export and report output.
 
 ## Project plan
 
-The canonical long-term architecture, ten stress-test analysis requirements, Stage 4 status, and future backlog are documented in [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md). Important future work should be recorded there rather than existing only in chat history.
+The canonical architecture, ten stress-test analysis requirements, completed Stage 4 scope, and future maintenance/backlog are documented in [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md). Stage 4A–4D are formally closed; there is no currently defined Stage 4E or other numbered next phase.
 
 ## What is implemented
 
@@ -24,7 +24,7 @@ The canonical long-term architecture, ten stress-test analysis requirements, Sta
 - Research Workflow composition: grouped/conditional metrics, derived arithmetic, filters, rolling windows, lag/lead, consecutive trends, nth/first/last selection, within-group ranking, projection and sorting.
 - Basic statistics including count, average, min/max, sum, median, population SD and sample SD.
 - Typed Numerical Executor consuming an explicit relational result with preserved schema/grain.
-- K-means and Gaussian Mixture clustering, including per-entity independent fitting and deterministic seeds.
+- K-means and Gaussian Mixture clustering, including per-entity independent fitting, deterministic seeds and Auto K with K=1 support.
 - Linear and binary logistic regression.
 - Bootstrap confidence intervals with an explicit resampling unit instead of silently treating correlated pitch rows as independent.
 - Full multi-stage cluster comparison path for stress test #10: arsenal-group candidate selection → per-entity clustering → best-cluster selection → reference-pitch comparison.
@@ -32,14 +32,25 @@ The canonical long-term architecture, ten stress-test analysis requirements, Sta
 - SQLite analysis indexes plus `ANALYZE` / `PRAGMA optimize` support.
 - Persistent result cache keyed by canonical analysis payload + data revision + requested backend; changed Statcast data therefore invalidates old cache keys automatically.
 - Persistent analysis history plus saved-analysis definitions and cached-result restoration when available.
+- Analysis Library Save / Load / Delete plus `編輯 Edit` for saved-analysis Name and Notes.
 - One shared field-checklist renderer for the original eight multi-select controls.
 - One shared result-ordering component and backend ordering layer for the original nine relational analysis modes.
 - One shared analysis Job/Progress system used by relational and Stage 4 analysis execution.
 - Reproducible local performance benchmark for the canonical season/pitch-type average-velocity query.
 - Local Chinese/English frontend with Windows XP/Windows 7 desktop-application visual style.
 - Four general Stage 4 research pages: Research Workflow, Clustering, Regression and Bootstrap, plus the dedicated Multi-stage Cluster Comparison page.
-- Table-only analysis results in the current frontend stage; charting/export remain intentionally deferred to the next product layer.
-- Unit/integration tests, known-answer numerical tests, stress-test acceptance coverage, and a live Baseball Savant smoke test in GitHub Actions.
+- Table-first analysis result pages plus a dedicated `Output` group containing Visualization, Analysis Library and Analysis History.
+- Single-chart Visualization workspace with multi-section result selection, source provenance, field metadata, built-in baseball/statistical presets and generic line/bar/scatter/range/dumbbell/difference presentations.
+- Explicit Full / Automatic / Manual sampling, random/every-Nth-row methods, deterministic seed and sampled/total-row disclosure; no silent visualization truncation.
+- Saved Visualization Live/Frozen modes and User Presets. Frozen v2 snapshots are content-addressed compressed multi-section result snapshots outside the Statcast source-of-truth database.
+- Full-result data export to CSV, JSON, XLSX and Parquet. Exports resolve the formal backend result rather than serializing the paged/sampled DOM table.
+- Figure export to SVG and PNG, plus Copy Image where the browser supports Clipboard image writes.
+- HTML and PDF reports with bilingual labels, source/provenance/presentation metadata, responsive result tables and wide-table PDF handling.
+- Request/restore lifecycle guards for rapid Visualization source switching, stale section state and Saved Visualization restore ordering.
+- Supplemental Pitch3D and Hawk-Eye spin aggregate data-management paths kept isolated from the existing Statcast analyzer until a future explicit grain-aware multi-source design exists.
+- Unit/integration tests, known-answer numerical tests, stress-test acceptance coverage, Stage 4D regression coverage, and a live Baseball Savant smoke test in GitHub Actions.
+
+Stage 4D manual acceptance **1–15** is complete and formally closed. The final accepted cycle also verified full 18,887-row CSV/JSON/XLSX/Parquet export under a 50-row Visualization sample, standalone SVG/PNG fidelity, bilingual HTML/PDF reports, Analysis History IDs, and Analysis Library Name/Notes editing.
 
 ## Install
 
@@ -53,7 +64,7 @@ treepolo-mlb init
 
 DuckDB, NumPy, SciPy and scikit-learn are normal project dependencies. After pulling a revision that changes dependencies, run the editable install command again.
 
-`init` creates `config.json` and the local databases under `data/`. The `data/` directory is intentionally gitignored; Statcast data, analytical mirrors, and analysis-state caches should not be committed to Git.
+`init` creates `config.json` and the local databases under `data/`. The `data/` directory is intentionally gitignored; Statcast data, analytical mirrors, analysis-state caches and local visualization snapshots should not be committed to Git.
 
 ## Local frontend
 
@@ -77,9 +88,11 @@ treepolo-mlb ui --no-browser
 
 The frontend keeps Chinese and English visible together. It exposes user-meaningful analysis concepts while keeping low-level SQL joins/window implementation details out of the ordinary interface.
 
-The original relational pages share result-ordering controls. All analysis execution uses the common progress system: DuckDB queries can expose actual query progress; SQLite fallback reports stage/elapsed status instead of inventing a percentage; numerical execution reports real computation stages. Analysis Library stores history and reusable analysis definitions across browser/UI restarts.
+The original relational pages share result-ordering controls. All analysis execution uses the common progress system: DuckDB queries can expose actual query progress; SQLite fallback reports stage/elapsed status instead of inventing a percentage; numerical execution reports real computation stages. Analysis History records executions, while Analysis Library stores reusable analysis definitions across browser/UI restarts.
 
 Stage 4 advanced research pages allow relational preparation before numerical work. For example, rows can first be grouped or ranked, then passed into clustering/regression/bootstrap without bypassing the typed grain contract.
+
+The `Output` group is presentation-only: charts, comparisons, exports and reports consume the formal analysis result contract and do not implement a second statistics engine. Visualization is single-chart in the current product, while its saved spec remains independently serializable for possible future composition.
 
 If Auto Update is enabled, the scheduler logic runs while the UI service is running. For a machine-level recurring schedule independent of the UI process, use the scheduler command with Windows Task Scheduler, cron, a service, or equivalent wrapper.
 
@@ -136,7 +149,9 @@ Long-running CLI maintenance commands expose stage/current-work/elapsed progress
 
 `data/statcast.duckdb` is a persistent columnar analytical mirror. It exists for fast analytical scans/grouping/window workloads; it is not the source of truth. If it is missing or stale, it can be rebuilt/refreshed from SQLite. If DuckDB execution fails, relational analysis can fall back to SQLite.
 
-`data/analysis_state.sqlite3` stores result-cache entries, analysis history and saved analysis definitions. It is deliberately separate from Statcast source-of-truth data. Cache keys include the Statcast `data_revision`, so a data refresh does not silently reuse a result computed from an older dataset.
+`data/analysis_state.sqlite3` stores result-cache entries, analysis history, saved analysis definitions, Saved Visualization metadata and User Presets. It is deliberately separate from Statcast source-of-truth data. Cache keys include the Statcast `data_revision`, so a data refresh does not silently reuse a result computed from an older dataset.
+
+Frozen Visualization v2 result payloads are stored as content-addressed gzip JSON snapshots outside the database; `analysis_state.sqlite3` stores the snapshot hash/path/metadata and reference relationships. This avoids placing large frozen result JSON directly inside the state database.
 
 The primary pitch identity is `game_pk + at_bat_number + pitch_number`. Rows missing any part of that natural key receive a deterministic fallback key and are surfaced by `verify`.
 
@@ -161,6 +176,11 @@ Numerical Executor
         └─ bootstrap
         ↓
 Structured result sections
+        ├─ table-first Analysis Result
+        └─ Output presentation layer
+             ├─ Visualization
+             ├─ full-result data / figure export
+             └─ HTML / PDF report
 ```
 
 DuckDB remains a relational analytical executor; it is not the Numerical Executor. Numerical methods only receive an explicit typed relational result, and clustering assignments preserve grain keys so their labels can be safely related back to the analysis units that produced them.
@@ -184,7 +204,7 @@ Run:
 treepolo-mlb benchmark --year 2026 --runs 3 --backend both
 ```
 
-The report separates DuckDB mirror preparation from measured query runs and reports min/median/max query time. The Stage 4 roadmap records the completed full persistent-database benchmark; CI synthetic data remains a correctness check rather than a substitute for local multi-million-row performance measurement.
+The report separates DuckDB mirror preparation from measured query runs and reports min/median/max query time. The Stage 4 plan records the completed full persistent-database benchmark; CI synthetic data remains a correctness check rather than a substitute for local multi-million-row performance measurement.
 
 `treepolo-mlb optimize` remains useful for SQLite fallback and comparison. The project intentionally does not create indexes for every possible combination of Statcast columns; general OLAP work is primarily routed through DuckDB.
 
@@ -197,6 +217,7 @@ The report separates DuckDB mirror preparation from measured query runs and repo
 - Regression reports model sample size and model-specific diagnostics.
 - Bootstrap requires explicit resampling-unit fields and supports grouped differences, preventing the API from silently assuming every pitch is an independent experimental unit.
 - Randomized numerical methods expose reproducible seeds.
+- Visualization sampling is presentation-only and always disclosed; it does not change the underlying analysis result or full-result export population.
 
 ## Data correctness behavior
 
@@ -219,4 +240,4 @@ pytest -q -m "not integration"
 pytest -q -m integration  # requires internet access to Baseball Savant
 ```
 
-CI runs both the deterministic suite and a live Savant smoke test. Deterministic coverage includes shared UI behavior, SQLite-vs-DuckDB relational compatibility, workflow composition, known-answer clustering/regression/bootstrap behavior, grain preservation, cache/history persistence, and the multi-stage stress-test #10 acceptance path.
+CI runs both the deterministic suite and a live Savant smoke test. The latest accepted Stage 4D implementation head before the documentation refresh reported **226 passed, 2 deselected** for the persistent suite, with the live Savant job also passing. Deterministic coverage includes shared UI behavior, SQLite-vs-DuckDB relational compatibility, workflow composition, known-answer clustering/regression/bootstrap behavior, grain preservation, cache/history persistence, the multi-stage stress-test #10 path, Visualization lifecycle races, Saved/Frozen presentation state, exports and reports.
