@@ -16,13 +16,9 @@ INTEGER_COLUMNS = {
     "pitcher_days_until_next_game", "batter_days_until_next_game",
     # CPBL provider-native integer/boolean fields.
     "cpbl_source_index", "cpbl_source_pitch_cnt", "cpbl_is_ball", "cpbl_is_strike",
-    "cpbl_is_score", "cpbl_zone_estimated",
+    "cpbl_is_score", "cpbl_has_trackman", "cpbl_zone_estimated",
 }
 
-# These columns are identifiers even when SQLite stores them as INTEGER. Treating
-# their numeric codes as continuous model features creates meaningless distances
-# and coefficients (for example pitcher 800260 is not "larger" than pitcher
-# 670912 in a statistical sense).
 IDENTIFIER_COLUMNS = {
     "pitch_uid", "game_pk", "pitcher", "batter",
     "on_1b", "on_2b", "on_3b",
@@ -85,7 +81,7 @@ CURRENT_DOCUMENTED_COLUMNS = {
     "cpbl_source_index", "cpbl_source_pitch_cnt", "cpbl_pitcher_acnt",
     "cpbl_pitcher_name", "cpbl_batter_acnt", "cpbl_batter_name",
     "cpbl_batting_action", "cpbl_content", "cpbl_is_ball", "cpbl_is_strike",
-    "cpbl_is_score", "pitch_call", "auto_pitch_type", "tagged_pitch_type",
+    "cpbl_is_score", "cpbl_has_trackman", "pitch_call", "auto_pitch_type", "tagged_pitch_type",
     "rel_speed_kph", "spin_rate", "extension_m", "rel_height_m", "rel_side_m",
     "zone_speed_kph", "horz_appr_angle", "vert_appr_angle", "traj_x_json",
     "traj_y_json", "traj_z_json", "hit_exit_speed_kph", "hit_launch_angle",
