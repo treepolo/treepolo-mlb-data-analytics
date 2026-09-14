@@ -74,13 +74,23 @@ def _game_date(game: dict[str, Any], fallback: date | None) -> str:
 
 
 def _is_pitch(log: dict[str, Any]) -> bool:
+    """Recognize pitch-grain LiveLog rows without requiring Trackman coverage.
+
+    Some valid pitches have play-by-play/count data but missing tracking. Those
+    rows must remain in the canonical pitch stream with NULL measurement fields.
+    """
     trackman = log.get("Trackman")
-    if not isinstance(trackman, dict) or not trackman:
-        return False
-    tag = _dig(trackman, "Play", "PitchTag")
-    release = _dig(trackman, "Pitch", "Release")
-    location = _dig(trackman, "Pitch", "Location")
-    return any(isinstance(value, dict) and bool(value) for value in (tag, release, location))
+    if isinstance(trackman, dict) and trackman:
+        tag = _dig(trackman, "Play", "PitchTag")
+        release = _dig(trackman, "Pitch", "Release")
+        location = _dig(trackman, "Pitch", "Location")
+        if any(isinstance(value, dict) and bool(value) for value in (tag, release, location)):
+            return True
+    has_matchup = _first(log, "PitcherAcnt", "PitcherAccount", "PitcherId") not in (None, "") and _first(
+        log, "HitterAcnt", "BatterAcnt", "HitterAccount", "BatterId"
+    ) not in (None, "")
+    has_pitch_sequence = _first(log, "PitchCnt", "PitchNumber", "PitchSeq") not in (None, "")
+    return bool(has_matchup and has_pitch_sequence)
 
 
 def _estimated_zone(side: float | None, height: float | None) -> int | None:
@@ -135,7 +145,7 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
                 pitch_in_pa = 0
 
         pitch_in_pa += 1
-        trackman = log.get("Trackman") or {}
+        trackman = log.get("Trackman") if isinstance(log.get("Trackman"), dict) else {}
         tag = _dig(trackman, "Play", "PitchTag") or {}
         pitch = trackman.get("Pitch") if isinstance(trackman.get("Pitch"), dict) else {}
         release = pitch.get("Release") if isinstance(pitch.get("Release"), dict) else {}
@@ -179,7 +189,7 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
             "cpbl_field_no": _text(field.get("No")),
             "cpbl_field_name": _text(field.get("Abbe")),
             "cpbl_source_index": source_index,
-            "cpbl_source_pitch_cnt": _int(log.get("PitchCnt")),
+            "cpbl_source_pitch_cnt": _int(_first(log, "PitchCnt", "PitchNumber", "PitchSeq")),
             "cpbl_pitcher_acnt": pitcher_acnt,
             "cpbl_pitcher_name": _text(log.get("PitcherName")),
             "cpbl_batter_acnt": batter_acnt,
@@ -189,6 +199,7 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
             "cpbl_is_ball": _int(log.get("IsBall")),
             "cpbl_is_strike": _int(log.get("IsStrike")),
             "cpbl_is_score": _int(log.get("IsScoreCnt")),
+            "cpbl_has_trackman": 1 if bool(trackman) else 0,
             "pitch_call": pitch_call,
             "auto_pitch_type": auto_type,
             "tagged_pitch_type": tagged_type,
