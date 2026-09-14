@@ -16,8 +16,8 @@ def test_live_cpbl_schedule_and_game_contract():
     assert games, "CPBL schedule endpoint returned no games for a known played date"
 
     ids = {str(game.get("GameId") or game.get("gameId") or "") for game in games}
-    assert "2026-A-91" in ids
+    assert "2026-A-93" in ids
 
-    game = client.game("2026-A-91")
-    assert str(game.get("GameId") or game.get("gameId") or "") == "2026-A-91"
+    game = client.game("2026-A-93")
+    assert str(game.get("GameId") or game.get("gameId") or "") == "2026-A-93"
     assert isinstance(game.get("LiveLog"), list)
