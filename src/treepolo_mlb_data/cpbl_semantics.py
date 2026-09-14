@@ -5,12 +5,17 @@ from typing import Any
 # Trackman spellings vary slightly between feeds/versions. Normalize only the
 # values we understand; unknown values are preserved verbatim so ingestion is
 # lossless and future schema work can classify them later.
-_PITCH_TYPES = {
+#
+# CPBL 2026 public Trackman has an important source quirk: AutoPitchType is
+# almost always the low-information value ``breakingball`` while
+# TaggedPitchType carries the actually useful public coarse class
+# (``fastball`` / ``breakingball``). A detailed AutoPitchType still wins when
+# one is present, but a generic/undefined AutoPitchType must not overwrite the
+# more informative tagged class.
+_DETAILED_PITCH_TYPES = {
     "fourseamfastball": "FF",
     "four-seamfastball": "FF",
-    "four-seamfastball": "FF",
     "4-seamfastball": "FF",
-    "fastball": "FF",
     "twoseamfastball": "SI",
     "two-seamfastball": "SI",
     "2-seamfastball": "SI",
@@ -31,6 +36,19 @@ _PITCH_TYPES = {
     "knuckleball": "KN",
     "eephus": "EP",
     "screwball": "SC",
+}
+
+_COARSE_PITCH_TYPES = {
+    "fastball": "fastball",
+    "breakingball": "breakingball",
+}
+
+_LOW_INFORMATION_AUTO_TYPES = {
+    "fastball",
+    "breakingball",
+    "undefined",
+    "unknown",
+    "other",
 }
 
 _PITCH_CALLS = {
@@ -57,12 +75,35 @@ def _key(value: Any) -> str:
     return "".join(str(value).strip().lower().split())
 
 
-def canonical_pitch_type(auto_pitch_type: Any, tagged_pitch_type: Any = None) -> str | None:
-    raw = auto_pitch_type if auto_pitch_type not in (None, "") else tagged_pitch_type
+def _canonical_pitch_type_value(raw: Any) -> str | None:
     if raw in (None, ""):
         return None
     text = str(raw).strip()
-    return _PITCH_TYPES.get(_key(text), text)
+    key = _key(text)
+    return _DETAILED_PITCH_TYPES.get(key, _COARSE_PITCH_TYPES.get(key, text))
+
+
+def canonical_pitch_type(auto_pitch_type: Any, tagged_pitch_type: Any = None) -> str | None:
+    """Return the most informative source-supported pitch classification.
+
+    Detailed automatic classifications (Slider, FourSeamFastBall, etc.) take
+    precedence. CPBL's public 2026 feed, however, commonly emits a generic
+    AutoPitchType=breakingball for both public TaggedPitchType classes; in that
+    case TaggedPitchType is the meaningful source classification and is used.
+    Generic ``fastball`` is intentionally *not* rewritten to ``FF`` because the
+    public feed does not establish that it is specifically a four-seam fastball.
+    """
+    if auto_pitch_type not in (None, ""):
+        auto_text = str(auto_pitch_type).strip()
+        auto_key = _key(auto_text)
+        if auto_key not in _LOW_INFORMATION_AUTO_TYPES:
+            return _DETAILED_PITCH_TYPES.get(auto_key, auto_text)
+
+    tagged = _canonical_pitch_type_value(tagged_pitch_type)
+    if tagged is not None:
+        return tagged
+
+    return _canonical_pitch_type_value(auto_pitch_type)
 
 
 def canonical_pitch_call(pitch_call: Any) -> str | None:
@@ -75,6 +116,6 @@ def canonical_pitch_call(pitch_call: Any) -> str | None:
 def semantic_value_sets() -> dict[str, tuple[str, ...]]:
     """Finite CPBL semantic values useful to UI controls and tests."""
     return {
-        "pitch_type": tuple(sorted(set(_PITCH_TYPES.values()))),
+        "pitch_type": tuple(sorted(set(_DETAILED_PITCH_TYPES.values()) | set(_COARSE_PITCH_TYPES.values()))),
         "description": tuple(sorted(set(_PITCH_CALLS.values()))),
     }
