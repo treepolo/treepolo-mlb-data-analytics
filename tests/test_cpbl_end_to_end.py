@@ -81,14 +81,51 @@ class _ResumedGameClient:
     GAME_ID = "2026-D-117"
 
     def schedule(self, day):
-        return [{"GameId": self.GAME_ID, "KindCode": "D", "PreExeDate": f"{day.isoformat()}T14:05:00"}]
+        return [{
+            "GameId": self.GAME_ID,
+            "KindCode": "D",
+            "PreExeDate": f"{day.isoformat()}T14:05:00",
+            "GameStatus": "RESERVED",
+        }]
 
     def game(self, game_id):
         assert game_id == self.GAME_ID
         payload = _game()
         payload["GameId"] = self.GAME_ID
         payload["KindCode"] = "D"
+        payload["GameStatus"] = "START"
         payload["PreExeDate"] = "2026-09-19T14:05:00"
+        return payload
+
+
+class _PostponedGameClient:
+    GAME_ID = "2026-D-7"
+    ORIGINAL = date(2026, 4, 1)
+    PLAYED = date(2026, 4, 19)
+
+    def schedule(self, day):
+        if day == self.ORIGINAL:
+            status = "POSTPONED"
+        elif day == self.PLAYED:
+            status = "FINISHED"
+        else:
+            return []
+        return [{
+            "GameId": self.GAME_ID,
+            "KindCode": "D",
+            "PreExeDate": f"{day.isoformat()}T14:05:00",
+            "GameStatus": status,
+        }]
+
+    def game(self, game_id):
+        assert game_id == self.GAME_ID
+        # Historical detail lookup returns the current/final game payload even
+        # when the caller is iterating the original postponed schedule date.
+        payload = _game()
+        payload["GameId"] = self.GAME_ID
+        payload["KindCode"] = "D"
+        payload["GameStatus"] = "FINISHED"
+        payload["PreExeDate"] = f"{self.PLAYED.isoformat()}T14:05:00"
         return payload
 
 
@@ -126,7 +163,7 @@ def test_cpbl_sync_archives_normalizes_and_is_idempotent(tmp_path):
     assert read_fast_status(db)["pitch_rows"] == 2
 
 
-def test_cpbl_resumed_game_keeps_first_pitch_date_across_later_refresh(tmp_path):
+def test_cpbl_resumed_game_keeps_first_play_date_across_later_refresh(tmp_path):
     root = tmp_path / "cpbl"
     db = root / "cpbl.sqlite3"
     prepare_fast_status(db)
@@ -145,6 +182,42 @@ def test_cpbl_resumed_game_keeps_first_pitch_date_across_later_refresh(tmp_path)
             (_ResumedGameClient.GAME_ID,),
         ).fetchall()
     assert rows == [("2026-06-14", "2026-09-19T14:05:00")]
+
+
+def test_cpbl_postponed_game_uses_later_played_date_and_raw_rebuild_matches(tmp_path):
+    root = tmp_path / "cpbl"
+    db = root / "cpbl.sqlite3"
+    prepare_fast_status(db)
+    client = _PostponedGameClient()
+    engine = CPBLSyncEngine(db, root, client)
+
+    postponed = engine.backfill(client.ORIGINAL, client.ORIGINAL, resume=False)
+    assert postponed.games == 1
+    assert postponed.pitches == 0
+    assert postponed.inserted == 0
+
+    played = engine.backfill(client.PLAYED, client.PLAYED, resume=False)
+    assert played.inserted == 2
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT DISTINCT game_date FROM pitches WHERE cpbl_game_id=?",
+            (client.GAME_ID,),
+        ).fetchall() == [(client.PLAYED.isoformat(),)]
+
+    # Disaster recovery must recover the same date from raw schedule status,
+    # even though a final LiveLog payload is also archived under the postponed
+    # schedule occurrence.
+    for suffix in ("", "-wal", "-shm"):
+        path = root / f"cpbl.sqlite3{suffix}"
+        if path.exists():
+            path.unlink()
+    rebuilt = engine.rebuild_from_raw()
+    assert rebuilt.inserted == 2
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT DISTINCT game_date FROM pitches WHERE cpbl_game_id=?",
+            (client.GAME_ID,),
+        ).fetchall() == [(client.PLAYED.isoformat(),)]
 
 
 def test_cpbl_sqlite_and_duckdb_produce_equivalent_analysis(tmp_path):
