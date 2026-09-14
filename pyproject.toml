@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "treepolo-mlb-data-analytics"
 version = "0.1.0"
-description = "Local Baseball Savant pitch-level data mirror and synchronization layer"
+description = "Local pitch-level baseball data mirror and analysis engine for Baseball Savant and CPBL Trackman"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -31,4 +31,4 @@ treepolo_mlb_data = ["web_static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: tests requiring live Baseball Savant access"]
+markers = ["integration: tests requiring live upstream data-provider access"]
