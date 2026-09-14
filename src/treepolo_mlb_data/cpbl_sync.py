@@ -35,6 +35,29 @@ def _has_trackman(rows: list[dict[str, Any]]) -> bool:
     return any(int(row.get("cpbl_has_trackman") or 0) == 1 for row in rows)
 
 
+def _existing_game_date(store: StatcastStore, game_id: str) -> str | None:
+    """Return a previously established canonical game date, if any.
+
+    CPBL can move a suspended game's detail-level PreExeDate to a future resume
+    date while retaining the pitches already thrown. Once a game has pitch rows,
+    the first schedule date that established those rows must remain stable on
+    refresh/rebuild instead of drifting every time the resume date changes.
+    """
+    exists = store.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pitches'"
+    ).fetchone()
+    if not exists:
+        return None
+    columns = {str(row[1]) for row in store.conn.execute("PRAGMA table_info(pitches)")}
+    if "cpbl_game_id" not in columns or "game_date" not in columns:
+        return None
+    row = store.conn.execute(
+        "SELECT MIN(game_date) FROM pitches WHERE cpbl_game_id=? AND game_date IS NOT NULL",
+        (game_id,),
+    ).fetchone()
+    return str(row[0]) if row and row[0] not in (None, "") else None
+
+
 class CPBLSyncEngine:
     """Date/game based CPBL sync. SQLite is source of truth; raw JSON is rebuildable."""
 
@@ -88,7 +111,9 @@ class CPBLSyncEngine:
                             game = self.client.game(game_id)
                             record = self.archive.save_game(game_id, day, game)
                             store.record_snapshot(record.snapshot)
-                            rows = normalize_game(game, fallback_date=day)
+                            stable_date = _existing_game_date(store, game_id)
+                            canonical_day = date.fromisoformat(stable_date) if stable_date else day
+                            rows = normalize_game(game, fallback_date=canonical_day)
                             if not rows:
                                 continue
                             payload = rows_to_csv(rows)
@@ -171,7 +196,10 @@ class CPBLSyncEngine:
         with StatcastStore(self.database_path) as store:
             for path in self.archive.iter_games():
                 snapshot, game = self.archive.read_verified(path)
-                rows = normalize_game(game, fallback_date=date.fromisoformat(snapshot.start_date))
+                game_id = str(game.get("GameId") or game.get("gameId") or "") if isinstance(game, dict) else ""
+                stable_date = _existing_game_date(store, game_id) if game_id else None
+                canonical_day = date.fromisoformat(stable_date) if stable_date else date.fromisoformat(snapshot.start_date)
+                rows = normalize_game(game, fallback_date=canonical_day)
                 store.record_snapshot(snapshot)
                 totals.games += 1
                 if not rows:
