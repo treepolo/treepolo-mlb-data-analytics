@@ -77,7 +77,7 @@ CURRENT_DOCUMENTED_COLUMNS = {
     "swing_length", "miss_distance", "attack_angle", "attack_direction", "swing_path_tilt",
     "intercept_ball_minus_batter_pos_x_inches", "intercept_ball_minus_batter_pos_y_inches",
     # CPBL native provenance/classification and public Trackman measurements.
-    "cpbl_game_id", "cpbl_game_kind", "cpbl_field_no", "cpbl_field_name",
+    "cpbl_game_id", "cpbl_game_kind", "cpbl_pre_exe_date", "cpbl_field_no", "cpbl_field_name",
     "cpbl_source_index", "cpbl_source_pitch_cnt", "cpbl_pitcher_acnt",
     "cpbl_pitcher_name", "cpbl_batter_acnt", "cpbl_batter_name",
     "cpbl_batting_action", "cpbl_content", "cpbl_is_ball", "cpbl_is_strike",
