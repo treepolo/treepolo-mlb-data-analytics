@@ -8,6 +8,8 @@ import re
 from datetime import date
 from typing import Any, Iterable
 
+from .cpbl_semantics import canonical_pitch_call, canonical_pitch_type
+
 _GAME_RE = re.compile(r"^(?P<year>\d{4})-(?P<kind>[A-Za-z]+)-(?P<number>\d+)$")
 
 
@@ -158,8 +160,8 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
             "pitch_number": pitch_in_pa,
             "pitcher": _int(pitcher_acnt),
             "batter": _int(batter_acnt),
-            "pitch_type": auto_type or tagged_type,
-            "description": pitch_call,
+            "pitch_type": canonical_pitch_type(auto_type, tagged_type),
+            "description": canonical_pitch_call(pitch_call),
             "inning": _int(_first(log, "InningSeq", "Inning")),
             "balls": balls,
             "strikes": strikes,
