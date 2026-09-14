@@ -1,6 +1,6 @@
 # CPBL Trackman expansion — Stage 1–6 implementation status
 
-Status: implementation complete on `feature/cpbl-dataset`; Stage 7 full-season acceptance remains separate.
+Status: Stage 1–6 complete on `feature/cpbl-dataset`; Stage 7 full-season acceptance remains separate.
 
 ## Design invariant
 
@@ -193,6 +193,17 @@ CPBL-specific tests cover:
 - live CPBL schedule/game API contract smoke.
 
 Existing MLB tests remain in the same suite and must continue to pass.
+
+## Stage 6 closure verification
+
+Stage 6 is closed after CI run 1034 on the Stage 1–6 branch passed both jobs:
+
+- the normal test job, including frontend syntax checks and `pytest -m 'not integration'`;
+- the live integration job, including the CPBL schedule/game smoke and existing Savant smoke tests.
+
+The CPBL client now uses browser-compatible request headers required by the public CPBL proxy edge layer. The live fixture uses a confirmed 2026-05-10 CPBL game (`2026-A-93`).
+
+No Stage 7 full-season acquisition or production-scale stress work is included in this closure.
 
 ## Stage 7 intentionally remaining
 
