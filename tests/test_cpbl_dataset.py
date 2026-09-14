@@ -94,7 +94,30 @@ def test_cpbl_store_is_idempotent_and_keeps_numeric_trackman_fields(tmp_path):
         assert row == ("2026-A-328", "Slider", "SL", "swinging_strike", -5.0, 136.0)
 
 
-def test_cpbl_game_without_trackman_is_valid_zero_pitch_game():
+def test_identifiable_pitch_without_trackman_is_retained_with_null_measurements():
+    game = {
+        "GameId": "2026-A-329",
+        "KindCode": "A",
+        "PreExeDate": "2026-09-14T00:00:00",
+        "LiveLog": [{
+            "InningSeq": 1,
+            "BallCnt": 0,
+            "StrikeCnt": 0,
+            "PitchCnt": 1,
+            "PitcherAcnt": "0000000001",
+            "HitterAcnt": "0000000002",
+            "Content": "tracking missing",
+        }],
+    }
+    rows = normalize_game(game)
+    assert len(rows) == 1
+    assert rows[0]["cpbl_has_trackman"] == 0
+    assert rows[0]["release_speed"] is None
+    assert rows[0]["pitch_type"] is None
+    assert rows[0]["cpbl_source_pitch_cnt"] == 1
+
+
+def test_non_pitch_live_log_without_trackman_is_valid_zero_pitch_game():
     game = {
         "GameId": "2026-D-105",
         "KindCode": "D",
