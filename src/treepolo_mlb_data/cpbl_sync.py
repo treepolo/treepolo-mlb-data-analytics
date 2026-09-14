@@ -10,6 +10,7 @@ from .cpbl_client import CPBLClient
 from .cpbl_normalize import normalize_game, rows_to_csv
 from .cpbl_raw import CPBLRawArchive
 from .duckdb_mirror import refresh_existing_mirror
+from .fast_status import update_fast_status_after_ingest
 from .storage import IngestStats, StatcastStore
 
 
@@ -72,7 +73,8 @@ class CPBLSyncEngine:
                     day_stats = IngestStats()
                     try:
                         schedule = self.client.schedule(day)
-                        self.archive.save_schedule(day, schedule)
+                        schedule_record = self.archive.save_schedule(day, schedule)
+                        store.record_snapshot(schedule_record.snapshot)
                         totals.days += 1
                         for summary in schedule:
                             game_id = _game_id(summary)
@@ -85,8 +87,10 @@ class CPBLSyncEngine:
                             rows = normalize_game(game, fallback_date=day)
                             if not rows:
                                 continue
+                            payload = rows_to_csv(rows)
                             totals.tracked_games += 1
-                            stats = store.ingest_csv(rows_to_csv(rows), record.snapshot.snapshot_id)
+                            stats = store.ingest_csv(payload, record.snapshot.snapshot_id)
+                            update_fast_status_after_ingest(self.database_path, payload, stats.inserted)
                             day_stats.received += stats.received
                             day_stats.inserted += stats.inserted
                             day_stats.updated += stats.updated
@@ -101,7 +105,7 @@ class CPBLSyncEngine:
                             day.isoformat(),
                             day.isoformat(),
                             "success",
-                            f"cpbl-day:{day.isoformat()}",
+                            schedule_record.snapshot.snapshot_id,
                             day_stats,
                         )
                     except Exception as exc:
@@ -167,7 +171,9 @@ class CPBLSyncEngine:
                 totals.games += 1
                 if not rows:
                     continue
-                stats = store.ingest_csv(rows_to_csv(rows), snapshot.snapshot_id)
+                payload = rows_to_csv(rows)
+                stats = store.ingest_csv(payload, snapshot.snapshot_id)
+                update_fast_status_after_ingest(self.database_path, payload, stats.inserted)
                 totals.tracked_games += 1
                 totals.pitches += stats.received
                 totals.inserted += stats.inserted
