@@ -83,6 +83,10 @@ class CPBLRawArchive:
             raise ValueError(f"CPBL raw snapshot verification failed: {path}")
         return snapshot, json.loads(raw.decode("utf-8"))
 
+    def iter_schedules(self) -> list[Path]:
+        schedule_root = self.root / "schedule"
+        return sorted(schedule_root.glob("**/*.json.gz")) if schedule_root.exists() else []
+
     def iter_games(self) -> list[Path]:
         games_root = self.root / "games"
         return sorted(games_root.glob("**/*.json.gz")) if games_root.exists() else []
