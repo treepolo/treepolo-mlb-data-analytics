@@ -26,9 +26,31 @@ class CPBLSyncStats:
     errors: int = 0
 
 
+_NON_PLAY_STATUSES = {"POSTPONED", "SCHEDULED", "CANCELLED", "CANCELED"}
+
+
 def _game_id(item: dict[str, Any]) -> str | None:
     value = item.get("GameId") or item.get("gameId")
     return str(value) if value not in (None, "") else None
+
+
+def _schedule_status(item: dict[str, Any]) -> str:
+    value = item.get("GameStatus") or item.get("Status") or item.get("GameStatusName") or ""
+    return str(value).strip().upper()
+
+
+def _schedule_indicates_play(item: dict[str, Any]) -> bool:
+    """Whether this schedule occurrence can establish the baseball game date.
+
+    Historical CPBL schedule queries retain the same GameId across reschedules.
+    POSTPONED means that occurrence never started and therefore must not receive
+    the later completed game's LiveLog. RESERVED is different: it is CPBL's
+    suspended/reserved-game state and means play occurred, so its first date is
+    the stable game date even when the detail endpoint later moves PreExeDate to
+    another resume date.
+    """
+    status = _schedule_status(item)
+    return bool(status and status not in _NON_PLAY_STATUSES)
 
 
 def _has_trackman(rows: list[dict[str, Any]]) -> bool:
@@ -36,13 +58,7 @@ def _has_trackman(rows: list[dict[str, Any]]) -> bool:
 
 
 def _existing_game_date(store: StatcastStore, game_id: str) -> str | None:
-    """Return a previously established canonical game date, if any.
-
-    CPBL can move a suspended game's detail-level PreExeDate to a future resume
-    date while retaining the pitches already thrown. Once a game has pitch rows,
-    the first schedule date that established those rows must remain stable on
-    refresh/rebuild instead of drifting every time the resume date changes.
-    """
+    """Return a previously established canonical game date, if any."""
     exists = store.conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pitches'"
     ).fetchone()
@@ -56,6 +72,34 @@ def _existing_game_date(store: StatcastStore, game_id: str) -> str | None:
         (game_id,),
     ).fetchone()
     return str(row[0]) if row and row[0] not in (None, "") else None
+
+
+def _raw_canonical_game_dates(archive: CPBLRawArchive) -> dict[str, str]:
+    """Recover stable game dates from archived schedule state.
+
+    Prefer the earliest occurrence whose schedule state proves that play took
+    place (e.g. RESERVED or FINISHED). This deliberately skips POSTPONED dates.
+    If a provider version has no status at all, keep the earliest schedule date
+    only as a fallback so old archives remain rebuildable.
+    """
+    played: dict[str, str] = {}
+    fallback: dict[str, str] = {}
+    for path in archive.iter_schedules():
+        snapshot, payload = archive.read_verified(path)
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            game_id = _game_id(item)
+            if not game_id:
+                continue
+            fallback.setdefault(game_id, snapshot.start_date)
+            if _schedule_indicates_play(item):
+                old = played.get(game_id)
+                if old is None or snapshot.start_date < old:
+                    played[game_id] = snapshot.start_date
+    return {game_id: played.get(game_id, day) for game_id, day in fallback.items()}
 
 
 class CPBLSyncEngine:
@@ -111,6 +155,14 @@ class CPBLSyncEngine:
                             game = self.client.game(game_id)
                             record = self.archive.save_game(game_id, day, game)
                             store.record_snapshot(record.snapshot)
+
+                            # A historical POSTPONED occurrence can point at the
+                            # same now-finished game detail. Archive it, but never
+                            # ingest the later LiveLog under a date on which no
+                            # play occurred.
+                            if _schedule_status(summary) == "POSTPONED":
+                                continue
+
                             stable_date = _existing_game_date(store, game_id)
                             canonical_day = date.fromisoformat(stable_date) if stable_date else day
                             rows = normalize_game(game, fallback_date=canonical_day)
@@ -193,13 +245,14 @@ class CPBLSyncEngine:
 
     def rebuild_from_raw(self) -> CPBLSyncStats:
         totals = CPBLSyncStats()
+        canonical_dates = _raw_canonical_game_dates(self.archive)
         with StatcastStore(self.database_path) as store:
             for path in self.archive.iter_games():
                 snapshot, game = self.archive.read_verified(path)
                 game_id = str(game.get("GameId") or game.get("gameId") or "") if isinstance(game, dict) else ""
                 stable_date = _existing_game_date(store, game_id) if game_id else None
-                canonical_day = date.fromisoformat(stable_date) if stable_date else date.fromisoformat(snapshot.start_date)
-                rows = normalize_game(game, fallback_date=canonical_day)
+                chosen_date = stable_date or canonical_dates.get(game_id) or snapshot.start_date
+                rows = normalize_game(game, fallback_date=date.fromisoformat(chosen_date))
                 store.record_snapshot(snapshot)
                 totals.games += 1
                 if not rows:
