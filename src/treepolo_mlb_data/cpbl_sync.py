@@ -31,6 +31,10 @@ def _game_id(item: dict[str, Any]) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _has_trackman(rows: list[dict[str, Any]]) -> bool:
+    return any(int(row.get("cpbl_has_trackman") or 0) == 1 for row in rows)
+
+
 class CPBLSyncEngine:
     """Date/game based CPBL sync. SQLite is source of truth; raw JSON is rebuildable."""
 
@@ -88,7 +92,8 @@ class CPBLSyncEngine:
                             if not rows:
                                 continue
                             payload = rows_to_csv(rows)
-                            totals.tracked_games += 1
+                            if _has_trackman(rows):
+                                totals.tracked_games += 1
                             stats = store.ingest_csv(payload, record.snapshot.snapshot_id)
                             update_fast_status_after_ingest(self.database_path, payload, stats.inserted)
                             day_stats.received += stats.received
@@ -174,7 +179,8 @@ class CPBLSyncEngine:
                 payload = rows_to_csv(rows)
                 stats = store.ingest_csv(payload, snapshot.snapshot_id)
                 update_fast_status_after_ingest(self.database_path, payload, stats.inserted)
-                totals.tracked_games += 1
+                if _has_trackman(rows):
+                    totals.tracked_games += 1
                 totals.pitches += stats.received
                 totals.inserted += stats.inserted
                 totals.updated += stats.updated
