@@ -6,7 +6,6 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer
 from typing import Any
 
-from .analysis_state import AnalysisStateStore
 from .config import AppConfig
 from .cpbl_client import CPBLClient
 from .cpbl_sync import CPBLSyncEngine
@@ -26,8 +25,6 @@ class DatasetAppServices(AppServices):
         view = dataset_config(base_config, dataset_id)
         super().__init__(view)  # type: ignore[arg-type]
         self.config: DatasetConfigView = view
-        # Replace the generic facade constructed by AppServices so metadata also
-        # carries the dataset contract and units.
         self.analysis = AnalysisFacade(
             self.spec.database_path,
             self.spec.analytics_database_path,
@@ -38,17 +35,14 @@ class DatasetAppServices(AppServices):
             distance_unit=self.spec.distance_unit,
         )
 
-    def _sync_engine(self):
-        if self.spec.dataset_id == "mlb":
-            return super()._sync_engine()
-        store = StatcastStore(self.spec.database_path)
+    def _cpbl_engine(self) -> CPBLSyncEngine:
         client = CPBLClient(
             self.base_config.request_timeout_seconds,
             self.base_config.request_retries,
             self.base_config.request_backoff_seconds,
             self.base_config.request_pause_seconds,
         )
-        engine = CPBLSyncEngine(
+        return CPBLSyncEngine(
             self.spec.database_path,
             self.spec.raw_root,
             client,
@@ -56,7 +50,11 @@ class DatasetAppServices(AppServices):
             recent_refresh_days=self.spec.recent_refresh_days,
             auto_update_interval_hours=self.base_config.auto_update_interval_hours,
         )
-        return store, engine
+
+    def _sync_engine(self):
+        if self.spec.dataset_id == "mlb":
+            return super()._sync_engine()
+        return StatcastStore(self.spec.database_path), self._cpbl_engine()
 
     def status(self) -> dict[str, Any]:
         result = super().status()
@@ -91,8 +89,7 @@ class DatasetAppServices(AppServices):
             with StatcastStore(self.spec.database_path):
                 pass
             prepare_fast_status(self.spec.database_path)
-            _, engine = self._sync_engine()
-            result = engine.rebuild_from_raw()
+            result = self._cpbl_engine().rebuild_from_raw()
             return {"dataset": "cpbl", "rebuild": _jsonable(result)}
 
 
