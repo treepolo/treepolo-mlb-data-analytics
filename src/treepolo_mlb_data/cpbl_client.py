@@ -7,6 +7,15 @@ from typing import Any
 import requests
 
 CPBL_API_BASE = "https://stats.cpbl.com.tw/api/proxy"
+CPBL_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    "Accept": "application/json",
+}
 
 
 def _unwrap(value: Any) -> Any:
@@ -36,8 +45,9 @@ class CPBLClient:
         self.pause_seconds = max(0.0, pause_seconds)
         self.base_url = base_url.rstrip("/")
         self.session = session or requests.Session()
-        self.session.headers.setdefault("Accept", "application/json")
-        self.session.headers.setdefault("User-Agent", "Mozilla/5.0 treepolo-cpbl-data-mirror/1.0")
+        # These match the headers used by a known working public CPBL scraper.
+        # A custom/bot-looking UA is rejected by the site's edge layer with 403.
+        self.session.headers.update(CPBL_BROWSER_HEADERS)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         cleaned = None
