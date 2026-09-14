@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -39,11 +40,15 @@ class CPBLSyncEngine:
         client: CPBLClient,
         *,
         analytics_database_path: Path | None = None,
+        recent_refresh_days: int = 7,
+        auto_update_interval_hours: int = 24,
     ):
         self.database_path = Path(database_path)
         self.analytics_database_path = Path(analytics_database_path) if analytics_database_path else None
         self.client = client
         self.archive = CPBLRawArchive(raw_root)
+        self.recent_refresh_days = max(1, int(recent_refresh_days))
+        self.auto_update_interval_hours = max(1, int(auto_update_interval_hours))
 
     def backfill(
         self,
@@ -121,10 +126,36 @@ class CPBLSyncEngine:
             refresh_existing_mirror(self.database_path, self.analytics_database_path)
         return totals
 
-    def update(self, through: date | None = None, *, recent_days: int = 7) -> CPBLSyncStats:
+    def update(self, through: date | None = None, *, recent_days: int | None = None) -> CPBLSyncStats:
         through = through or date.today()
-        start = through - timedelta(days=max(0, recent_days - 1))
+        days = self.recent_refresh_days if recent_days is None else max(1, int(recent_days))
+        start = through - timedelta(days=days - 1)
         return self.backfill(start, through, continue_on_error=True, resume=False)
+
+    def retry_failed(self) -> list[CPBLSyncStats]:
+        with StatcastStore(self.database_path) as store:
+            ranges = store.failed_chunk_ranges()
+        results = []
+        for start, end in ranges:
+            results.append(
+                self.backfill(
+                    date.fromisoformat(start),
+                    date.fromisoformat(end),
+                    continue_on_error=True,
+                    resume=False,
+                )
+            )
+        return results
+
+    def scheduler(self, stop_after_one: bool = False) -> None:
+        while True:
+            with StatcastStore(self.database_path) as store:
+                enabled = store.get_setting("auto_update_enabled", "false") == "true"
+            if enabled:
+                self.update()
+            if stop_after_one:
+                return
+            time.sleep(self.auto_update_interval_hours * 3600)
 
     def rebuild_from_raw(self) -> CPBLSyncStats:
         totals = CPBLSyncStats()
