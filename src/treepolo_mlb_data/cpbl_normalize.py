@@ -64,11 +64,16 @@ def canonical_game_pk(game_id: str) -> int:
 
 
 def _game_date(game: dict[str, Any], fallback: date | None) -> str:
+    # The date from the schedule endpoint is the stable baseball game date.
+    # CPBL may later rewrite a suspended game's detail-level PreExeDate to the
+    # future resume date while keeping already-recorded pitches in LiveLog.
+    # Prefer the schedule date when the caller has one, and retain PreExeDate
+    # separately as source provenance.
+    if fallback:
+        return fallback.isoformat()
     raw = _first(game, "PreExeDate", "ExeDate", "GameDate", "Date")
     if raw:
         return str(raw).split("T", 1)[0].replace("/", "-")
-    if fallback:
-        return fallback.isoformat()
     match = _GAME_RE.match(str(game.get("GameId") or ""))
     return f"{match.group('year')}-01-01" if match else "1970-01-01"
 
@@ -109,6 +114,7 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
     if not game_id:
         raise ValueError("CPBL game payload has no GameId")
     game_date = _game_date(game, fallback_date)
+    pre_exe_date = _text(_first(game, "PreExeDate", "ExeDate", "GameDate", "Date"))
     try:
         game_year = int(game_date[:4])
     except ValueError:
@@ -186,6 +192,7 @@ def normalize_game(game: dict[str, Any], *, fallback_date: date | None = None) -
             "plate_z": plate_z,
             "cpbl_game_id": game_id,
             "cpbl_game_kind": kind_code,
+            "cpbl_pre_exe_date": pre_exe_date,
             "cpbl_field_no": _text(field.get("No")),
             "cpbl_field_name": _text(field.get("Abbe")),
             "cpbl_source_index": source_index,
