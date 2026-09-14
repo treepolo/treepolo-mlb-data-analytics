@@ -4,6 +4,7 @@ import sqlite3
 from datetime import date
 
 from treepolo_mlb_data.cpbl_normalize import canonical_game_pk, normalize_game, rows_to_csv
+from treepolo_mlb_data.cpbl_semantics import canonical_pitch_type
 from treepolo_mlb_data.storage import StatcastStore
 
 
@@ -74,6 +75,21 @@ def test_cpbl_normalization_builds_deterministic_pitch_grain():
     assert first[1]["description"] == "swinging_strike"
     assert first[1]["vert_appr_angle"] == -5.0
     assert first[0]["game_pk"] == canonical_game_pk("2026-A-328")
+
+
+def test_cpbl_public_coarse_tagged_type_beats_degenerate_auto_type():
+    # Full-season 2026 source census shows AutoPitchType is commonly the
+    # low-information value "breakingball" even when TaggedPitchType says
+    # "fastball". Preserve the source-supported coarse class instead of
+    # inventing a four-seam classification.
+    assert canonical_pitch_type("breakingball", "fastball") == "fastball"
+    assert canonical_pitch_type("breakingball", "breakingball") == "breakingball"
+    assert canonical_pitch_type(None, "fastball") == "fastball"
+    assert canonical_pitch_type(None, "breakingball") == "breakingball"
+    # If a future/detail feed really provides a detailed automatic class, it
+    # remains more informative and therefore takes precedence.
+    assert canonical_pitch_type("FourSeamFastBall", "fastball") == "FF"
+    assert canonical_pitch_type("Slider", "breakingball") == "SL"
 
 
 def test_cpbl_store_is_idempotent_and_keeps_numeric_trackman_fields(tmp_path):
