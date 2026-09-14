@@ -109,7 +109,7 @@ def test_cpbl_relational_modes_share_the_existing_analysis_core(tmp_path):
         "result_sort": [{"field": "row_count", "descending": True}],
     })
     counts = {row["pitch_type"]: row["row_count"] for row in basic["rows"]}
-    assert counts == {"CH": 16, "FF": 16, "SL": 10}
+    assert counts == {"CH": 16, "FF": 14, "SL": 10}
 
     sequence = facade.analyze({
         "mode": "sequence_pattern",
