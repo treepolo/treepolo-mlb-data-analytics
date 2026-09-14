@@ -189,8 +189,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 # CPBL rebuild reads its archived game JSON directly.
                 store.close()
-                _, engine = _engine(config, "cpbl")
-                print(engine.rebuild_from_raw())
+                rebuild_store, engine = _engine(config, "cpbl")
+                try:
+                    print(engine.rebuild_from_raw())
+                finally:
+                    rebuild_store.close()
         return 0
     finally:
         try:
