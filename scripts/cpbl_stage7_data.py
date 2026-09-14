@@ -140,12 +140,26 @@ def walk_paths(value: Any, prefix: str = ""):
             yield from walk_paths(child, prefix + "[]")
 
 
+def acquisition_window(root: Path) -> tuple[str | None, str | None]:
+    path = root / "reports" / "7a_acquisition.json"
+    if not path.exists():
+        return None, None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    window = payload.get("window") if isinstance(payload, dict) else None
+    if not isinstance(window, dict):
+        return None, None
+    start = window.get("start")
+    end = window.get("end")
+    return (str(start) if start else None, str(end) if end else None)
+
+
 def audit(root: Path) -> None:
     config = make_config(root)
     spec = dataset_spec(config, "cpbl")
     archive = CPBLRawArchive(spec.raw_root)
     raw_games = latest_raw_games(archive)
     scheduled_ids, source_dates = schedule_games(archive)
+    window_start, window_end = acquisition_window(root)
 
     if not spec.database_path.exists():
         raise SystemExit("Stage 7B/C failed: CPBL database artifact is missing")
@@ -161,6 +175,20 @@ def audit(root: Path) -> None:
     duplicate_uid = int(conn.execute(
         "SELECT COUNT(*) FROM (SELECT pitch_uid FROM pitches GROUP BY pitch_uid HAVING COUNT(*)>1)"
     ).fetchone()[0])
+    min_game_date, max_game_date = conn.execute("SELECT MIN(game_date),MAX(game_date) FROM pitches").fetchone()
+    out_of_window_rows = 0
+    out_of_window_games: list[dict[str, Any]] = []
+    if window_end:
+        out_of_window_rows = int(
+            conn.execute("SELECT COUNT(*) FROM pitches WHERE game_date > ?", (window_end,)).fetchone()[0]
+        )
+        out_of_window_games = [
+            {"game_id": str(row[0]), "game_date": str(row[1]), "pitches": int(row[2])}
+            for row in conn.execute(
+                "SELECT cpbl_game_id,game_date,COUNT(*) FROM pitches WHERE game_date > ? GROUP BY cpbl_game_id,game_date ORDER BY game_date,cpbl_game_id",
+                (window_end,),
+            )
+        ]
 
     reconciliation: list[dict[str, Any]] = []
     auto_values: Counter[str] = Counter()
@@ -179,7 +207,10 @@ def audit(root: Path) -> None:
     for game_id in sorted(set(scheduled_ids) | set(raw_games)):
         raw_entry = raw_games.get(game_id)
         game = raw_entry[1] if raw_entry else None
-        rows = normalize_game(game, fallback_date=date.fromisoformat(source_dates.get(game_id, "2026-01-01"))) if game else []
+        rows = normalize_game(
+            game,
+            fallback_date=date.fromisoformat(source_dates.get(game_id, "2026-01-01")),
+        ) if game else []
         identifiable = len(rows)
         normalized, tracked = normalized_by_game.get(game_id, (0, 0))
         total_identifiable += identifiable
@@ -207,13 +238,31 @@ def audit(root: Path) -> None:
             for raw_path, value in walk_paths(game):
                 raw_path_types[raw_path][type(value).__name__] += 1
 
-        unknown_auto = sum(1 for row in rows if row.get("auto_pitch_type") and canonical_pitch_type(row.get("auto_pitch_type"), row.get("tagged_pitch_type")) not in known_pitch)
-        unknown_tagged = sum(1 for row in rows if not row.get("auto_pitch_type") and row.get("tagged_pitch_type") and canonical_pitch_type(None, row.get("tagged_pitch_type")) not in known_pitch)
-        unknown_call = sum(1 for row in rows if row.get("pitch_call") and canonical_pitch_call(row.get("pitch_call")) not in known_calls)
+        unknown_auto = sum(
+            1
+            for row in rows
+            if row.get("auto_pitch_type")
+            and canonical_pitch_type(row.get("auto_pitch_type"), row.get("tagged_pitch_type")) not in known_pitch
+        )
+        unknown_tagged = sum(
+            1
+            for row in rows
+            if not row.get("auto_pitch_type")
+            and row.get("tagged_pitch_type")
+            and canonical_pitch_type(None, row.get("tagged_pitch_type")) not in known_pitch
+        )
+        unknown_call = sum(
+            1
+            for row in rows
+            if row.get("pitch_call") and canonical_pitch_call(row.get("pitch_call")) not in known_calls
+        )
         reconciliation.append({
             "game_id": game_id,
             "source_date": source_dates.get(game_id),
-            "source_status": next((str(game.get(k)) for k in ("GameStatusName", "GameStatus", "Status") if game and game.get(k) not in (None, "")), None),
+            "source_status": next(
+                (str(game.get(k)) for k in ("GameStatusName", "GameStatus", "Status") if game and game.get(k) not in (None, "")),
+                None,
+            ),
             "raw_schedule_present": game_id in scheduled_ids,
             "raw_game_present": bool(raw_entry),
             "live_log_entries": len(game.get("LiveLog") or []) if game else 0,
@@ -245,7 +294,10 @@ def audit(root: Path) -> None:
         non_null, minimum, maximum = conn.execute(
             f'SELECT COUNT("{field}"), MIN("{field}"), MAX("{field}") FROM pitches'
         ).fetchone()
-        sample = [row[0] for row in conn.execute(f'SELECT "{field}" FROM pitches WHERE "{field}" IS NOT NULL LIMIT 5')]
+        sample = [
+            row[0]
+            for row in conn.execute(f'SELECT "{field}" FROM pitches WHERE "{field}" IS NOT NULL LIMIT 5')
+        ]
         numeric_coverage[field] = {
             "available": True,
             "non_null": int(non_null),
@@ -256,8 +308,16 @@ def audit(root: Path) -> None:
             "sample": sample,
         }
 
-    canonical_pitch_counts = {str(r[0]): int(r[1]) for r in conn.execute("SELECT pitch_type,COUNT(*) FROM pitches GROUP BY pitch_type ORDER BY 2 DESC") if r[0] is not None}
-    canonical_call_counts = {str(r[0]): int(r[1]) for r in conn.execute("SELECT description,COUNT(*) FROM pitches GROUP BY description ORDER BY 2 DESC") if r[0] is not None}
+    canonical_pitch_counts = {
+        str(r[0]): int(r[1])
+        for r in conn.execute("SELECT pitch_type,COUNT(*) FROM pitches GROUP BY pitch_type ORDER BY 2 DESC")
+        if r[0] is not None
+    }
+    canonical_call_counts = {
+        str(r[0]): int(r[1])
+        for r in conn.execute("SELECT description,COUNT(*) FROM pitches GROUP BY description ORDER BY 2 DESC")
+        if r[0] is not None
+    }
     conn.close()
 
     unknown_auto_values = sorted(v for v in auto_values if canonical_pitch_type(v, None) not in known_pitch)
@@ -266,6 +326,11 @@ def audit(root: Path) -> None:
 
     summary = {
         "stage": "7B/7C",
+        "acquisition_window": {"start": window_start, "end": window_end},
+        "database_game_date_min": min_game_date,
+        "database_game_date_max": max_game_date,
+        "out_of_window_pitch_rows": out_of_window_rows,
+        "out_of_window_games": out_of_window_games,
         "schedule_games": len(scheduled_ids),
         "raw_games": len(raw_games),
         "normalized_games": len(normalized_by_game),
@@ -304,6 +369,10 @@ def audit(root: Path) -> None:
         blocking.append(f"raw-vs-normalized pitch count mismatches={mismatches}")
     if scheduled_ids - set(raw_games):
         blocking.append(f"schedule games without raw game payload={len(scheduled_ids - set(raw_games))}")
+    if out_of_window_rows:
+        blocking.append(
+            f"canonical game_date escaped acquisition window end {window_end}: rows={out_of_window_rows}, games={len(out_of_window_games)}"
+        )
     if blocking:
         raise SystemExit("Stage 7B/C failed: " + "; ".join(blocking))
 
