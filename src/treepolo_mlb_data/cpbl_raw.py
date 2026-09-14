@@ -22,7 +22,9 @@ class CPBLRawArchive:
     """Lossless CPBL JSON archive, physically separate from MLB Savant CSV raw data."""
 
     def __init__(self, root: Path):
-        self.root = Path(root) / "raw" / "cpbl"
+        # `root` is already the selected CPBL dataset root (`data/cpbl`). Keep
+        # provider raw data at `data/cpbl/raw/...`, never inside the MLB raw tree.
+        self.root = Path(root) / "raw"
         self.root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
