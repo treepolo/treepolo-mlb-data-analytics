@@ -77,6 +77,21 @@ class _FakeCPBLClient:
         return _game()
 
 
+class _ResumedGameClient:
+    GAME_ID = "2026-D-117"
+
+    def schedule(self, day):
+        return [{"GameId": self.GAME_ID, "KindCode": "D", "PreExeDate": f"{day.isoformat()}T14:05:00"}]
+
+    def game(self, game_id):
+        assert game_id == self.GAME_ID
+        payload = _game()
+        payload["GameId"] = self.GAME_ID
+        payload["KindCode"] = "D"
+        payload["PreExeDate"] = "2026-09-19T14:05:00"
+        return payload
+
+
 def test_cpbl_sync_archives_normalizes_and_is_idempotent(tmp_path):
     root = tmp_path / "cpbl"
     db = root / "cpbl.sqlite3"
@@ -109,6 +124,27 @@ def test_cpbl_sync_archives_normalizes_and_is_idempotent(tmp_path):
     assert len(list((raw / "schedule").glob("**/*.json.gz"))) == 1
     assert len(list((raw / "games").glob("**/*.json.gz"))) == 1
     assert read_fast_status(db)["pitch_rows"] == 2
+
+
+def test_cpbl_resumed_game_keeps_first_pitch_date_across_later_refresh(tmp_path):
+    root = tmp_path / "cpbl"
+    db = root / "cpbl.sqlite3"
+    prepare_fast_status(db)
+    engine = CPBLSyncEngine(db, root, _ResumedGameClient())
+
+    original = date(2026, 6, 14)
+    later_schedule = date(2026, 8, 30)
+    first = engine.backfill(original, original, resume=False)
+    second = engine.backfill(later_schedule, later_schedule, resume=False)
+
+    assert first.inserted == 2
+    assert second.inserted == 0
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT game_date,cpbl_pre_exe_date FROM pitches WHERE cpbl_game_id=?",
+            (_ResumedGameClient.GAME_ID,),
+        ).fetchall()
+    assert rows == [("2026-06-14", "2026-09-19T14:05:00")]
 
 
 def test_cpbl_sqlite_and_duckdb_produce_equivalent_analysis(tmp_path):
