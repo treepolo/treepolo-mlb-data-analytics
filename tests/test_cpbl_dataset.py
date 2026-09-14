@@ -68,8 +68,10 @@ def test_cpbl_normalization_builds_deterministic_pitch_grain():
     assert first == second
     assert [row["at_bat_number"] for row in first] == [1, 1, 2, 2]
     assert [row["pitch_number"] for row in first] == [1, 2, 1, 2]
+    assert [row["pitch_type"] for row in first] == ["FF", "SL", "CH", "CH"]
     assert first[1]["auto_pitch_type"] == "Slider"
-    assert first[1]["description"] == "StrikeSwinging"
+    assert first[1]["pitch_call"] == "StrikeSwinging"
+    assert first[1]["description"] == "swinging_strike"
     assert first[1]["vert_appr_angle"] == -5.0
     assert first[0]["game_pk"] == canonical_game_pk("2026-A-328")
 
@@ -86,10 +88,10 @@ def test_cpbl_store_is_idempotent_and_keeps_numeric_trackman_fields(tmp_path):
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM pitches").fetchone()[0] == 4
         row = conn.execute(
-            "SELECT cpbl_game_id,auto_pitch_type,vert_appr_angle,release_speed FROM pitches "
+            "SELECT cpbl_game_id,auto_pitch_type,pitch_type,description,vert_appr_angle,release_speed FROM pitches "
             "WHERE at_bat_number=1 AND pitch_number=2"
         ).fetchone()
-        assert row == ("2026-A-328", "Slider", -5.0, 136.0)
+        assert row == ("2026-A-328", "Slider", "SL", "swinging_strike", -5.0, 136.0)
 
 
 def test_cpbl_game_without_trackman_is_valid_zero_pitch_game():
