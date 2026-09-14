@@ -92,6 +92,16 @@ def test_cpbl_public_coarse_tagged_type_beats_degenerate_auto_type():
     assert canonical_pitch_type("Slider", "breakingball") == "SL"
 
 
+def test_cpbl_schedule_date_stays_canonical_when_pre_exe_date_moves_for_resume():
+    game = _tracked_game()
+    game["GameId"] = "2026-D-117"
+    game["PreExeDate"] = "2026-09-19T14:05:00"
+    rows = normalize_game(game, fallback_date=date(2026, 6, 14))
+    assert rows
+    assert {row["game_date"] for row in rows} == {"2026-06-14"}
+    assert {row["cpbl_pre_exe_date"] for row in rows} == {"2026-09-19T14:05:00"}
+
+
 def test_cpbl_store_is_idempotent_and_keeps_numeric_trackman_fields(tmp_path):
     rows = normalize_game(_tracked_game(), fallback_date=date(2026, 9, 13))
     payload = rows_to_csv(rows)
