@@ -91,11 +91,11 @@ jobs:
             stage7_work/data
             stage7_work/reports
 
-  stage7-parity:
-    name: 7E SQLite-DuckDB parity
+  stage7-parity-prepare:
+    name: 7E prepare SQLite-DuckDB parity
     needs: stage7-rebuild
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -106,9 +106,78 @@ jobs:
         with:
           name: cpbl-stage7-7d
           path: stage7_work
-      - run: python scripts/cpbl_stage7_engineering.py parity --root stage7_work
-      - name: Upload 7E artifact
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --prepare
+      - name: Upload 7E parity base
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-parity-case:
+    name: 7E parity ${{ matrix.case }}
+    needs: stage7-parity-prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - basic
+          - sequence
+          - follow
+          - arsenal
+          - role
+          - temporal
+          - percentile
+          - cross
+          - arsenal_change
+          - workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --case '${{ matrix.case }}'
+      - name: Upload parity evidence
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7e-case-${{ matrix.case }}
+          retention-days: 5
+          compression-level: 6
+          path: stage7_work/reports/7e_parity_${{ matrix.case }}.json
+
+  stage7-parity-finalize:
+    name: 7E finalize SQLite-DuckDB parity
+    needs: stage7-parity-case
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          path: stage7_work
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cpbl-stage7-7e-case-*
+          path: stage7_work/reports
+          merge-multiple: true
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --finalize
+      - name: Upload 7E artifact
         uses: actions/upload-artifact@v4
         with:
           name: cpbl-stage7-7e
@@ -120,7 +189,7 @@ jobs:
 
   stage7-performance:
     name: 7F full-data performance and cache lifecycle
-    needs: stage7-parity
+    needs: stage7-parity-finalize
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
