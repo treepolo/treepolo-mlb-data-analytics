@@ -257,7 +257,7 @@ jobs:
         with:
           name: cpbl-stage7-7g-backend
           path: stage7_work
-      - run: python scripts/cpbl_stage7_e2e.py --root stage7_work
+      - run: python scripts/cpbl_stage7_e2e_runner.py --root stage7_work
       - name: Upload 7G browser evidence
         if: always()
         uses: actions/upload-artifact@v4
