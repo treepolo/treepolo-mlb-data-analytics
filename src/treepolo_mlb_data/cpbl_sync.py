@@ -102,6 +102,36 @@ def _raw_canonical_game_dates(archive: CPBLRawArchive) -> dict[str, str]:
     return {game_id: played.get(game_id, day) for game_id, day in fallback.items()}
 
 
+def _raw_non_play_only_game_ids(archive: CPBLRawArchive) -> set[str]:
+    """GameIds whose archived schedule history contains only explicit non-play states.
+
+    This is used by raw rebuild so it follows the same source contract as live
+    ingestion. If a GameId was POSTPONED/SCHEDULED/CANCELLED on every explicit
+    schedule occurrence, an archived detail response must not create pitches.
+    A later RESERVED/START/FINISHED occurrence makes the game ingestible. Raw
+    archives with no explicit schedule status remain rebuildable for backwards
+    compatibility.
+    """
+    statuses: dict[str, set[str]] = {}
+    for path in archive.iter_schedules():
+        _, payload = archive.read_verified(path)
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            game_id = _game_id(item)
+            status = _schedule_status(item)
+            if not game_id or not status:
+                continue
+            statuses.setdefault(game_id, set()).add(status)
+    return {
+        game_id
+        for game_id, values in statuses.items()
+        if values and all(value in _NON_PLAY_STATUSES for value in values)
+    }
+
+
 class CPBLSyncEngine:
     """Date/game based CPBL sync. SQLite is source of truth; raw JSON is rebuildable."""
 
@@ -156,11 +186,11 @@ class CPBLSyncEngine:
                             record = self.archive.save_game(game_id, day, game)
                             store.record_snapshot(record.snapshot)
 
-                            # A historical POSTPONED occurrence can point at the
-                            # same now-finished game detail. Archive it, but never
-                            # ingest the later LiveLog under a date on which no
-                            # play occurred.
-                            if _schedule_status(summary) == "POSTPONED":
+                            # Explicit non-play schedule states can still point at
+                            # a populated detail payload. Archive that response,
+                            # but never ingest its LiveLog for an occurrence on
+                            # which no baseball was played.
+                            if _schedule_status(summary) in _NON_PLAY_STATUSES:
                                 continue
 
                             stable_date = _existing_game_date(store, game_id)
@@ -246,15 +276,18 @@ class CPBLSyncEngine:
     def rebuild_from_raw(self) -> CPBLSyncStats:
         totals = CPBLSyncStats()
         canonical_dates = _raw_canonical_game_dates(self.archive)
+        non_play_only = _raw_non_play_only_game_ids(self.archive)
         with StatcastStore(self.database_path) as store:
             for path in self.archive.iter_games():
                 snapshot, game = self.archive.read_verified(path)
                 game_id = str(game.get("GameId") or game.get("gameId") or "") if isinstance(game, dict) else ""
+                store.record_snapshot(snapshot)
+                totals.games += 1
+                if game_id and game_id in non_play_only:
+                    continue
                 stable_date = _existing_game_date(store, game_id) if game_id else None
                 chosen_date = stable_date or canonical_dates.get(game_id) or snapshot.start_date
                 rows = normalize_game(game, fallback_date=date.fromisoformat(chosen_date))
-                store.record_snapshot(snapshot)
-                totals.games += 1
                 if not rows:
                     continue
                 payload = rows_to_csv(rows)
