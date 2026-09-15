@@ -69,6 +69,9 @@
   }
 
   async function loadUiEnhancements() {
+    await loadScriptOnce("/dataset-workspace.js", "datasetWorkspace");
+    const dataset = await (window.treepoloDatasetReady || Promise.resolve({ id:"mlb" }));
+
     // Stage 4 also knows how to request this page at DOMContentLoaded. Claim the
     // shared loader marker now, while this parser-time bootstrap is still running,
     // so both paths refer to one script instead of racing two independent loaders.
@@ -88,7 +91,10 @@
     await loadScriptOnce("/field-controls-native-arrow.js", "nativeFieldArrowDonor");
     await loadScriptOnce("/ui-consistency-fixes.js", "uiConsistencyFixes");
     await loadScriptOnce("/navigation-routes.js", "navigationRoutes");
-    await loadScriptOnce("/supplemental-data.js", "supplementalData");
+    // Pitch3D/Hawk-Eye supplemental sources belong to the MLB workspace only.
+    if (dataset?.id === "mlb") {
+      await loadScriptOnce("/supplemental-data.js", "supplementalData");
+    }
     await loadScriptOnce("/cap04-auto-cluster.js", "cap04AutoCluster");
 
     await waitForFieldCatalog();

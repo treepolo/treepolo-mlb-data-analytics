@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import AppConfig, load_config, save_config
+from .datasets import SUPPORTED_DATASETS, dataset_config, dataset_spec
 from .fast_status import prepare_fast_status, read_fast_status
 from .raw import RawArchive
 from .savant import SavantClient
@@ -16,8 +17,14 @@ DEFAULT_CONFIG = Path("config.json")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="treepolo-mlb", description="Local Baseball Savant pitch-data mirror")
+    p = argparse.ArgumentParser(prog="treepolo-mlb", description="Local pitch-data mirror and analysis workspace")
     p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    p.add_argument(
+        "--dataset",
+        choices=SUPPORTED_DATASETS,
+        default="mlb",
+        help="Select one isolated dataset for this process (default: mlb)",
+    )
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     b = sub.add_parser("backfill")
@@ -28,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("verify"); sub.add_parser("status"); sub.add_parser("retry-failed")
     sub.add_parser("optimize", help="Build/refresh SQLite analysis indexes and planner statistics")
     sub.add_parser("analytics-sync", help="Build or refresh the persistent DuckDB analytical mirror")
-    bench = sub.add_parser("benchmark", help="Benchmark representative analysis on the local full database")
+    bench = sub.add_parser("benchmark", help="Benchmark representative analysis on the selected local database")
     bench.add_argument("--year", type=int, default=2026)
     bench.add_argument("--runs", type=int, default=3)
     bench.add_argument("--backend", choices=("sqlite", "duckdb", "both"), default="both")
@@ -36,37 +43,69 @@ def build_parser() -> argparse.ArgumentParser:
     g = a.add_mutually_exclusive_group(required=True); g.add_argument("--enable", action="store_true"); g.add_argument("--disable", action="store_true")
     s = sub.add_parser("scheduler"); s.add_argument("--once", action="store_true")
     r = sub.add_parser("rebuild"); r.add_argument("--yes", action="store_true", help="Required: recreates normalized DB from raw snapshots")
-    ui = sub.add_parser("ui", help="Open the local bilingual Windows XP/7-style analysis interface")
+    ui = sub.add_parser("ui", help="Open the local bilingual analysis interface for the selected dataset")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8765)
     ui.add_argument("--no-browser", action="store_true", help="Do not open the default browser automatically")
     return p
 
 
-def _engine(config: AppConfig):
-    store = StatcastStore(config.database_path)
-    archive = RawArchive(config.root)
-    client = SavantClient(config.request_timeout_seconds, config.request_retries, config.request_backoff_seconds, config.request_pause_seconds)
-    return store, SyncEngine(config, store, client, archive)
+def _engine(config: AppConfig, dataset_id: str):
+    spec = dataset_spec(config, dataset_id)
+    store = StatcastStore(spec.database_path)
+    if dataset_id == "mlb":
+        view = dataset_config(config, "mlb")
+        archive = RawArchive(spec.root)
+        client = SavantClient(
+            config.request_timeout_seconds,
+            config.request_retries,
+            config.request_backoff_seconds,
+            config.request_pause_seconds,
+        )
+        return store, SyncEngine(view, store, client, archive)  # type: ignore[arg-type]
+
+    from .cpbl_client import CPBLClient
+    from .cpbl_sync import CPBLSyncEngine
+
+    client = CPBLClient(
+        config.request_timeout_seconds,
+        config.request_retries,
+        config.request_backoff_seconds,
+        config.request_pause_seconds,
+    )
+    return store, CPBLSyncEngine(
+        spec.database_path,
+        spec.raw_root,
+        client,
+        analytics_database_path=spec.analytics_database_path,
+        recent_refresh_days=spec.recent_refresh_days,
+        auto_update_interval_hours=config.auto_update_interval_hours,
+    )
 
 
-def _remove_analytics_db(config: AppConfig) -> None:
+def _remove_analytics_db(path: Path) -> None:
     for suffix in ("", ".wal"):
-        path = Path(str(config.analytics_database_path) + suffix)
-        if path.exists():
-            path.unlink()
+        candidate = Path(str(path) + suffix)
+        if candidate.exists():
+            candidate.unlink()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
+    spec = dataset_spec(config, args.dataset)
+    view = dataset_config(config, args.dataset)
+
     if args.command == "init":
-        if not args.config.exists(): save_config(args.config, config)
-        config.root.mkdir(parents=True, exist_ok=True)
-        with StatcastStore(config.database_path): pass
-        prepare_fast_status(config.database_path)
-        print(f"Initialized {config.database_path}")
+        if not args.config.exists():
+            save_config(args.config, config)
+        spec.root.mkdir(parents=True, exist_ok=True)
+        with StatcastStore(spec.database_path):
+            pass
+        prepare_fast_status(spec.database_path)
+        print(f"Initialized {spec.label}: {spec.database_path}")
         return 0
+
     if args.command == "ui":
         from . import webapp
         from .stage4d import install as install_stage4d
@@ -79,22 +118,35 @@ def main(argv: list[str] | None = None) -> int:
         install_stage4d_report_v2()
         install_stage4d_export_v2()
         install_stage4d_frontend_patch(webapp)
-        webapp.serve(config, host=args.host, port=args.port, open_browser=not args.no_browser)
-        return 0
-    if args.command == "analytics-sync":
-        from .duckdb_mirror import DuckDBMirror
-        result = DuckDBMirror(config.database_path, config.analytics_database_path).ensure()
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
-    if args.command == "benchmark":
-        from .benchmark import run_benchmark
-        print(json.dumps(run_benchmark(config, year=args.year, runs=max(1, args.runs), backend=args.backend), indent=2, ensure_ascii=False))
+        from .dataset_webapp import serve_dataset
+        serve_dataset(
+            config,
+            dataset_id=args.dataset,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+        )
         return 0
 
-    store, engine = _engine(config)
+    if args.command == "analytics-sync":
+        from .duckdb_mirror import DuckDBMirror
+        result = DuckDBMirror(spec.database_path, spec.analytics_database_path).ensure()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "benchmark":
+        from .benchmark import run_benchmark
+        print(json.dumps(
+            run_benchmark(view, year=args.year, runs=max(1, args.runs), backend=args.backend),  # type: ignore[arg-type]
+            indent=2,
+            ensure_ascii=False,
+        ))
+        return 0
+
+    store, engine = _engine(config, args.dataset)
     try:
         if args.command == "backfill":
-            start = date.fromisoformat(args.start or config.earliest_date)
+            start = date.fromisoformat(args.start or spec.earliest_date)
             end = date.fromisoformat(args.end) if args.end else date.today()
             print(engine.backfill(start, end, continue_on_error=not args.fail_fast, resume=args.resume))
         elif args.command == "update":
@@ -105,34 +157,49 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify":
             print(json.dumps(store.verify(), indent=2, ensure_ascii=False))
         elif args.command == "status":
-            prepare_fast_status(config.database_path)
-            print(json.dumps(read_fast_status(config.database_path), indent=2, ensure_ascii=False))
+            prepare_fast_status(spec.database_path)
+            status = read_fast_status(spec.database_path)
+            status["dataset"] = args.dataset
+            status["database_path"] = str(spec.database_path)
+            print(json.dumps(status, indent=2, ensure_ascii=False))
         elif args.command == "optimize":
             from .cli_progress import optimize_with_progress
             optimize_with_progress(store)
-            print("SQLite analysis indexes and statistics optimized")
+            print(f"{spec.label} SQLite analysis indexes and statistics optimized")
         elif args.command == "auto-update":
             value = "true" if args.enable else "false"
             store.set_setting("auto_update_enabled", value)
-            print(f"auto_update_enabled={value}")
+            print(f"{args.dataset}.auto_update_enabled={value}")
         elif args.command == "scheduler":
             engine.scheduler(stop_after_one=args.once)
         elif args.command == "rebuild":
-            if not args.yes: raise SystemExit("rebuild requires --yes")
+            if not args.yes:
+                raise SystemExit("rebuild requires --yes")
             store.close()
-            db = config.database_path
             for suffix in ("", "-wal", "-shm"):
-                p = Path(str(db) + suffix)
-                if p.exists(): p.unlink()
-            _remove_analytics_db(config)
-            store = StatcastStore(db)
-            prepare_fast_status(db)
-            engine = SyncEngine(config, store, engine.fetcher, engine.archive)
-            print(f"Reingested {engine.rebuild_from_raw()} raw snapshots")
+                candidate = Path(str(spec.database_path) + suffix)
+                if candidate.exists():
+                    candidate.unlink()
+            _remove_analytics_db(spec.analytics_database_path)
+            store = StatcastStore(spec.database_path)
+            prepare_fast_status(spec.database_path)
+            if args.dataset == "mlb":
+                engine = SyncEngine(view, store, engine.fetcher, engine.archive)  # type: ignore[attr-defined,arg-type]
+                print(f"Reingested {engine.rebuild_from_raw()} raw snapshots")
+            else:
+                # CPBL rebuild reads its archived game JSON directly.
+                store.close()
+                rebuild_store, engine = _engine(config, "cpbl")
+                try:
+                    print(engine.rebuild_from_raw())
+                finally:
+                    rebuild_store.close()
         return 0
     finally:
-        try: store.close()
-        except Exception: pass
+        try:
+            store.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

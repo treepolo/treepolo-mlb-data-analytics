@@ -1,0 +1,43 @@
+name: CPBL Stage 7 Final Focused Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/cpbl-dataset
+    paths:
+      - .github/workflows/cpbl-stage7-tail-diagnostic.yml
+      - scripts/cpbl_stage7_data.py
+      - src/treepolo_mlb_data/cpbl_sync.py
+
+jobs:
+  final-data:
+    name: Final reconciliation and raw rebuild
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Download latest clean full-season artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7bc
+          path: stage7_work
+          repository: treepolo/treepolo-mlb-data-analytics
+          run-id: 34938379948
+          github-token: ${{ github.token }}
+      - name: Reconcile ingest-eligible raw pitches with normalized data
+        run: python scripts/cpbl_stage7_data.py audit --root stage7_work
+      - name: Verify raw rebuild and idempotent lifecycle
+        run: python scripts/cpbl_stage7_engineering.py lifecycle --root stage7_work
+      - name: Upload final data evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-final-focused
+          retention-days: 5
+          compression-level: 6
+          path: stage7_work/reports

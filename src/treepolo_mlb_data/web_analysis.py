@@ -31,10 +31,18 @@ class AnalysisFacade(
         analytics_database_path: Path | None = None,
         *,
         backend: str = "sqlite",
+        dataset_id: str = "mlb",
+        dataset_label: str | None = None,
+        speed_unit: str | None = None,
+        distance_unit: str | None = None,
     ):
         self.database_path = Path(database_path)
         self.analytics_database_path = Path(analytics_database_path) if analytics_database_path is not None else None
         self.analysis_backend = backend
+        self.dataset_id = str(dataset_id).lower()
+        self.dataset_label = dataset_label or ("MLB / Baseball Savant" if self.dataset_id == "mlb" else self.dataset_id.upper())
+        self.speed_unit = speed_unit or ("mph" if self.dataset_id == "mlb" else None)
+        self.distance_unit = distance_unit or ("ft" if self.dataset_id == "mlb" else None)
 
     def meta(self) -> dict[str, Any]:
         result = super().meta()
@@ -42,6 +50,18 @@ class AnalysisFacade(
             if not isinstance(item, dict) or not item.get("name"):
                 continue
             item["capabilities"] = list(field_capabilities(str(item["name"]), str(item.get("type") or "TEXT")))
+        result["dataset"] = {
+            "id": self.dataset_id,
+            "label": self.dataset_label,
+            "speed_unit": self.speed_unit,
+            "distance_unit": self.distance_unit,
+        }
+        if self.dataset_id == "cpbl":
+            from .cpbl_semantics import semantic_value_sets
+            choices = result.setdefault("choices", {})
+            for field, values in semantic_value_sets().items():
+                if field in self.schema():
+                    choices[field] = list(values)
         return result
 
     @staticmethod

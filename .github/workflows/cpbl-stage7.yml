@@ -1,0 +1,283 @@
+name: CPBL Stage 7 Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/cpbl-dataset
+    paths:
+      - .github/workflows/cpbl-stage7.yml
+      - .stage7-trigger
+
+concurrency:
+  group: cpbl-stage7-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage7-acquire:
+    name: 7A full-season acquisition
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Acquire 2026 CPBL public season-to-date
+        run: python scripts/cpbl_stage7_data.py acquire --root stage7_work --start 2026-01-01 --end 2026-09-15 --clean
+      - name: Upload 7A dataset artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7a
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-reconcile:
+    name: 7B-7C reconciliation and field census
+    needs: stage7-acquire
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7a
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_data.py audit --root stage7_work
+      - name: Upload 7B-7C artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7bc
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-rebuild:
+    name: 7D lifecycle and disaster recovery
+    needs: stage7-reconcile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7bc
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_engineering.py lifecycle --root stage7_work
+      - name: Upload 7D artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7d
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-parity-prepare:
+    name: 7E prepare SQLite-DuckDB parity
+    needs: stage7-rebuild
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7d
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --prepare
+      - name: Upload 7E parity base
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-parity-case:
+    name: 7E parity ${{ matrix.case }}
+    needs: stage7-parity-prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - basic
+          - sequence
+          - follow
+          - arsenal
+          - role
+          - temporal
+          - percentile
+          - cross
+          - arsenal_change
+          - workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --case '${{ matrix.case }}'
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7e-case-${{ matrix.case }}
+          retention-days: 5
+          compression-level: 6
+          path: stage7_work/reports/7e_parity_${{ matrix.case }}.json
+
+  stage7-parity-finalize:
+    name: 7E finalize SQLite-DuckDB parity
+    needs: stage7-parity-case
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7e-base
+          path: stage7_work
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cpbl-stage7-7e-case-*
+          path: stage7_work/reports
+          merge-multiple: true
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --finalize
+      - name: Upload 7E artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7e
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-performance:
+    name: 7F full-data performance and cache lifecycle
+    needs: stage7-parity-finalize
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7e
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_engineering.py performance --root stage7_work
+      - name: Upload 7F artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7f
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-ten-question-backend:
+    name: 7G ten permanent questions on real CPBL data
+    needs: stage7-performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7f
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_acceptance_runner.py --root stage7_work
+      - name: Upload 7G backend evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7g-backend
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/data
+            stage7_work/reports
+
+  stage7-ten-question-e2e:
+    name: 7G actual CPBL workspace browser E2E
+    needs: stage7-ten-question-backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]' playwright
+      - run: python -m playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7g-backend
+          path: stage7_work
+      - run: python scripts/cpbl_stage7_e2e_runner.py --root stage7_work
+      - name: Upload 7G browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-7g-e2e
+          retention-days: 5
+          compression-level: 6
+          path: |
+            stage7_work/reports
+
+  stage7-mlb-regression:
+    name: Shared-engine MLB regression
+    needs: stage7-ten-question-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest -q -m 'not integration'
+      - run: pytest -q -m integration

@@ -1,0 +1,58 @@
+name: CPBL Stage 7 Parity Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/cpbl-dataset
+    paths:
+      - .github/workflows/cpbl-stage7-parity-diagnostic.yml
+      - scripts/cpbl_stage7_parity_case.py
+      - scripts/cpbl_stage7_engineering.py
+      - src/treepolo_mlb_data/analysis/compiler.py
+      - src/treepolo_mlb_data/analysis/optimized_compiler.py
+      - src/treepolo_mlb_data/analysis/engine.py
+      - src/treepolo_mlb_data/web_analysis_modes.py
+      - src/treepolo_mlb_data/web_analysis_advanced.py
+
+jobs:
+  parity:
+    name: Diagnose ${{ matrix.case }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - basic
+          - sequence
+          - follow
+          - arsenal
+          - role
+          - temporal
+          - percentile
+          - cross
+          - arsenal_change
+          - workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Download known-good Stage 7D full-data artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cpbl-stage7-7d
+          path: stage7_work
+          repository: treepolo/treepolo-mlb-data-analytics
+          run-id: 34882426283
+          github-token: ${{ github.token }}
+      - run: python scripts/cpbl_stage7_parity_case.py --root stage7_work --case '${{ matrix.case }}'
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-stage7-parity-diagnostic-${{ matrix.case }}
+          retention-days: 2
+          path: stage7_work/reports/7e_parity_${{ matrix.case }}.json

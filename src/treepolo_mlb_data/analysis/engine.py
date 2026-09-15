@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ..duckdb_mirror import DuckDBMirror
 from .compiler import CompiledQuery, SQLCompiler
 from .model import Grain, Node, output_grain
+from .optimized_compiler import OptimizedSQLCompiler
 
 ProgressCallback = Callable[[str, float | None, str | None], None]
 
@@ -94,7 +95,7 @@ class ExecutionPlanner:
     """Plan relational analysis nodes for SQL; numerical nodes can route elsewhere later."""
 
     def __init__(self, compiler: SQLCompiler | None = None):
-        self.compiler = compiler or SQLCompiler()
+        self.compiler = compiler or OptimizedSQLCompiler()
 
     def plan(self, node: Node) -> ExecutionPlan:
         return ExecutionPlan("sqlite", self.compiler.compile(node), output_grain(node))

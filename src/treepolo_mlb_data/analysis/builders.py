@@ -93,8 +93,14 @@ def empirical_percentile(
     alias: str,
     partition_fields: tuple[str, ...],
 ) -> Node:
-    """Attach an empirical cumulative percentile inside each partition."""
+    """Attach an empirical cumulative percentile inside each partition.
+
+    Missing measurements are not observations of the requested distribution.
+    Exclude them before the window calculation so percentile semantics are stable
+    across SQLite and DuckDB, whose default NULL ordering differs.
+    """
+    clean_source = Filter(source, IsNull(Column(value_field), True))
     return Window(
-        source,
+        clean_source,
         (WindowField(alias, "cume_dist", (), tuple(Column(x) for x in partition_fields), (OrderKey(Column(value_field)),)),),
     )
