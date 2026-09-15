@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/cpbl-stage7-tail-diagnostic.yml
       - scripts/cpbl_stage7_acceptance_runner.py
+      - scripts/cpbl_stage7_e2e_runner.py
 
 jobs:
   performance:
@@ -83,7 +84,7 @@ jobs:
         with:
           name: cpbl-stage7-tail-7g-backend
           path: stage7_work
-      - run: python scripts/cpbl_stage7_e2e.py --root stage7_work
+      - run: python scripts/cpbl_stage7_e2e_runner.py --root stage7_work
       - name: Upload browser diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
