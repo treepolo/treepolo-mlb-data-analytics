@@ -1,0 +1,181 @@
+name: CPBL public source probe
+
+on:
+  push:
+    branches: [feature/cpbl-dataset]
+    paths:
+      - .github/workflows/cpbl-source-probe.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probe live CPBL public surfaces
+        shell: bash
+        run: |
+          python - <<'PY'
+          import collections, html as htmlmod, json, re, urllib.request
+          from pathlib import Path
+          from urllib.parse import urljoin
+
+          BASE = 'https://stats.cpbl.com.tw'
+          UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+          TARGETS = [
+              'VertApprAngle','HorzApprAngle','InducedVertBreak','HorzBreak','VertBreak',
+              'SpinAxis','SpinDirection','Movement','Break','Appr','Trajectory','PlateLoc','Release'
+          ]
+          PLAYER_IDS = ['0000007062','0000006888','0000001318','0000005545']
+
+          def fetch(url):
+              req = urllib.request.Request(url, headers={
+                  'User-Agent': UA,
+                  'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+                  'Accept': '*/*',
+              })
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  return r.read().decode('utf-8', errors='replace')
+
+          PUSH_RE = re.compile(r'self\.__next_f\.push\(\[(.*?)\]\)', re.DOTALL)
+          def extract_rsc_stream(page):
+              out=[]
+              for m in PUSH_RE.findall(page):
+                  if ',' not in m: continue
+                  _, tail = m.split(',',1)
+                  tail=tail.strip()
+                  if tail.startswith('"'):
+                      try:
+                          x=json.loads(tail)
+                          if isinstance(x,str): out.append(x)
+                      except Exception: pass
+              return ''.join(out)
+
+          def balanced(stream,start):
+              depth=0; ins=False; esc=False
+              for i in range(start,len(stream)):
+                  ch=stream[i]
+                  if esc: esc=False; continue
+                  if ch=='\\': esc=True; continue
+                  if ch=='"': ins=not ins; continue
+                  if ins: continue
+                  if ch=='{': depth+=1
+                  elif ch=='}':
+                      depth-=1
+                      if depth==0: return stream[start:i+1]
+              return None
+
+          def iter_queries(stream):
+              for m in re.finditer(r'\{"dehydratedAt":',stream):
+                  raw=balanced(stream,m.start())
+                  if not raw: continue
+                  try: yield json.loads(raw)
+                  except Exception: pass
+
+          def paths(obj,prefix='',counter=None,samples=None):
+              counter = counter if counter is not None else collections.Counter()
+              samples = samples if samples is not None else {}
+              if isinstance(obj,dict):
+                  for k,v in obj.items():
+                      p=f'{prefix}.{k}' if prefix else str(k)
+                      counter[p]+=1
+                      if p not in samples and v is not None and not isinstance(v,(dict,list)):
+                          samples[p]=v
+                      paths(v,p,counter,samples)
+              elif isinstance(obj,list):
+                  p=f'{prefix}[]'
+                  counter[p]+=len(obj)
+                  for v in obj: paths(v,p,counter,samples)
+              return counter,samples
+
+          report={'players':{},'js':{},'game':{},'candidate_endpoints':[]}
+          all_js_urls=set()
+          endpoint_strings=set()
+
+          for pid in PLAYER_IDS:
+              url=f'{BASE}/players/{pid}'
+              page=fetch(url)
+              scripts=[urljoin(BASE,s) for s in re.findall(r'<script[^>]+src=["\']([^"\']+)["\']',page)]
+              all_js_urls.update(scripts)
+              stream=extract_rsc_stream(page)
+              qs=list(iter_queries(stream))
+              info={'html_bytes':len(page),'rsc_bytes':len(stream),'query_keys':[], 'queries':{}}
+              for q in qs:
+                  qk=q.get('queryKey') or []
+                  key=qk[0] if qk and isinstance(qk[0],str) else str(qk[:1])
+                  info['query_keys'].append(qk)
+                  data=(q.get('state') or {}).get('data')
+                  c,s=paths(data)
+                  interesting={p:{'count':n,'sample':s.get(p)} for p,n in c.items() if any(t.lower() in p.lower() for t in TARGETS)}
+                  info['queries'].setdefault(key,[]).append({
+                      'queryKey':qk,
+                      'path_count':len(c),
+                      'interesting_paths':interesting,
+                      'all_paths':sorted(c.keys()) if key=='player-logs' else [],
+                  })
+              # Raw-string target search catches fields outside parsed queries too.
+              info['raw_hits']={t:stream.lower().count(t.lower()) for t in TARGETS}
+              info['script_count']=len(scripts)
+              report['players'][pid]=info
+
+          # Download every JS chunk referenced by the sampled player pages and search
+          # both field names and backend route strings, retaining context around hits.
+          for jsurl in sorted(all_js_urls):
+              try: text=fetch(jsurl)
+              except Exception as e:
+                  report['js'][jsurl]={'error':repr(e)}; continue
+              hits={}
+              low=text.lower()
+              for t in TARGETS + ['player-logs','player-pitch-tracking','pitch-tracking','/api/proxy','/v1/players','/v1/games']:
+                  idx=low.find(t.lower())
+                  if idx>=0:
+                      hits[t]=text[max(0,idx-600):min(len(text),idx+1200)]
+              for m in re.finditer(r'[/A-Za-z0-9_.{}$`:-]*(?:api/proxy|/v1/)[/A-Za-z0-9_.{}$`?&=:-]+',text):
+                  val=m.group(0)
+                  if len(val)<300: endpoint_strings.add(val)
+              if hits:
+                  report['js'][jsurl]={'bytes':len(text),'hits':hits}
+
+          # Current game-detail control sample.
+          for gid in ['2026-A-91','2026-A-100']:
+              try:
+                  raw=fetch(f'{BASE}/api/proxy/v1/games/{gid}')
+                  obj=json.loads(raw)
+                  c,s=paths(obj)
+                  report['game'][gid]={
+                      'bytes':len(raw),
+                      'interesting_paths':{p:{'count':n,'sample':s.get(p)} for p,n in c.items() if any(t.lower() in p.lower() for t in TARGETS)},
+                  }
+              except Exception as e:
+                  report['game'][gid]={'error':repr(e)}
+
+          report['candidate_endpoints']=sorted(endpoint_strings)
+          Path('cpbl_source_probe.json').write_text(json.dumps(report,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+
+          print('=== PLAYER QUERY KEYS ===')
+          for pid,x in report['players'].items():
+              print(pid, [q[0] if isinstance(q,list) and q else q for q in x['query_keys']])
+              print('raw_hits=', {k:v for k,v in x['raw_hits'].items() if v})
+              for key,entries in x['queries'].items():
+                  if key=='player-logs':
+                      for ent in entries:
+                          print('PLAYER_LOGS',pid,'queryKey=',ent['queryKey'])
+                          print('PLAYER_LOGS interesting=',json.dumps(ent['interesting_paths'],ensure_ascii=False)[:20000])
+                          print('PLAYER_LOGS all_paths=',json.dumps(ent['all_paths'],ensure_ascii=False)[:30000])
+          print('=== JS ENDPOINT / FIELD HITS ===')
+          print('candidate_endpoints=', json.dumps(report['candidate_endpoints'],ensure_ascii=False)[:30000])
+          for u,x in report['js'].items():
+              if x.get('hits'):
+                  print('JS',u)
+                  for k,v in x['hits'].items():
+                      print('HIT',k,repr(v[:1800]))
+          print('=== GAME CONTROL ===')
+          print(json.dumps(report['game'],ensure_ascii=False)[:30000])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpbl-source-probe
+          path: cpbl_source_probe.json
