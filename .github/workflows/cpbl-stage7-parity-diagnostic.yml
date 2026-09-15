@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/cpbl-stage7-parity-diagnostic.yml
 
+# Re-run marker: percentile NULL semantics fixed on 2026-09-15.
 jobs:
   parity:
     name: Diagnose ${{ matrix.case }}
