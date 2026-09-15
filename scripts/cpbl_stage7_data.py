@@ -16,7 +16,7 @@ from treepolo_mlb_data.cpbl_client import CPBLClient
 from treepolo_mlb_data.cpbl_normalize import normalize_game
 from treepolo_mlb_data.cpbl_raw import CPBLRawArchive
 from treepolo_mlb_data.cpbl_semantics import canonical_pitch_call, canonical_pitch_type, semantic_value_sets
-from treepolo_mlb_data.cpbl_sync import CPBLSyncEngine
+from treepolo_mlb_data.cpbl_sync import CPBLSyncEngine, _schedule_indicates_play
 from treepolo_mlb_data.datasets import dataset_spec
 from treepolo_mlb_data.storage import StatcastStore
 
@@ -108,12 +108,13 @@ def latest_raw_games(archive: CPBLRawArchive) -> dict[str, tuple[Any, dict[str, 
     return selected
 
 
-def schedule_games(archive: CPBLRawArchive) -> tuple[set[str], dict[str, str]]:
+def schedule_games(archive: CPBLRawArchive) -> tuple[set[str], dict[str, str], set[str]]:
     game_ids: set[str] = set()
     source_date: dict[str, str] = {}
+    playable_ids: set[str] = set()
     schedule_root = archive.root / "schedule"
     if not schedule_root.exists():
-        return game_ids, source_date
+        return game_ids, source_date, playable_ids
     for path in sorted(schedule_root.glob("**/*.json.gz")):
         snapshot, payload = archive.read_verified(path)
         if not isinstance(payload, list):
@@ -126,7 +127,9 @@ def schedule_games(archive: CPBLRawArchive) -> tuple[set[str], dict[str, str]]:
                 text = str(game_id)
                 game_ids.add(text)
                 source_date.setdefault(text, snapshot.start_date)
-    return game_ids, source_date
+                if _schedule_indicates_play(item):
+                    playable_ids.add(text)
+    return game_ids, source_date, playable_ids
 
 
 def walk_paths(value: Any, prefix: str = ""):
@@ -158,7 +161,7 @@ def audit(root: Path) -> None:
     spec = dataset_spec(config, "cpbl")
     archive = CPBLRawArchive(spec.raw_root)
     raw_games = latest_raw_games(archive)
-    scheduled_ids, source_dates = schedule_games(archive)
+    scheduled_ids, source_dates, playable_ids = schedule_games(archive)
     window_start, window_end = acquisition_window(root)
 
     if not spec.database_path.exists():
@@ -212,10 +215,11 @@ def audit(root: Path) -> None:
             fallback_date=date.fromisoformat(source_dates.get(game_id, "2026-01-01")),
         ) if game else []
         identifiable = len(rows)
+        expected_normalized = identifiable if game_id in playable_ids else 0
         normalized, tracked = normalized_by_game.get(game_id, (0, 0))
-        total_identifiable += identifiable
+        total_identifiable += expected_normalized
         total_trackman += tracked
-        if identifiable != normalized:
+        if expected_normalized != normalized:
             mismatches += 1
 
         for row in rows:
@@ -263,10 +267,12 @@ def audit(root: Path) -> None:
                 (str(game.get(k)) for k in ("GameStatusName", "GameStatus", "Status") if game and game.get(k) not in (None, "")),
                 None,
             ),
+            "schedule_indicates_play": game_id in playable_ids,
             "raw_schedule_present": game_id in scheduled_ids,
             "raw_game_present": bool(raw_entry),
             "live_log_entries": len(game.get("LiveLog") or []) if game else 0,
             "identifiable_pitches": identifiable,
+            "expected_normalized_pitches": expected_normalized,
             "normalized_pitches": normalized,
             "trackman_pitches": tracked,
             "missing_trackman_pitches": max(0, normalized - tracked),
@@ -332,10 +338,11 @@ def audit(root: Path) -> None:
         "out_of_window_pitch_rows": out_of_window_rows,
         "out_of_window_games": out_of_window_games,
         "schedule_games": len(scheduled_ids),
+        "schedule_playable_games": len(playable_ids),
         "raw_games": len(raw_games),
         "normalized_games": len(normalized_by_game),
         "normalized_pitches": total_rows,
-        "identifiable_pitches_from_latest_raw": total_identifiable,
+        "identifiable_pitches_expected_for_ingest": total_identifiable,
         "trackman_pitches": total_trackman,
         "pitches_without_trackman": total_rows - total_trackman,
         "duplicate_pitch_uid": duplicate_uid,
