@@ -7,8 +7,14 @@ on:
       - feature/cpbl-dataset
     paths:
       - .github/workflows/cpbl-stage7-parity-diagnostic.yml
+      - scripts/cpbl_stage7_parity_case.py
+      - scripts/cpbl_stage7_engineering.py
+      - src/treepolo_mlb_data/analysis/compiler.py
+      - src/treepolo_mlb_data/analysis/optimized_compiler.py
+      - src/treepolo_mlb_data/analysis/engine.py
+      - src/treepolo_mlb_data/web_analysis_modes.py
+      - src/treepolo_mlb_data/web_analysis_advanced.py
 
-# Re-run marker: percentile NULL semantics fixed on 2026-09-15.
 jobs:
   parity:
     name: Diagnose ${{ matrix.case }}
