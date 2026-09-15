@@ -7,6 +7,7 @@ on:
       - feature/cpbl-dataset
     paths:
       - .github/workflows/cpbl-stage7-tail-diagnostic.yml
+      - scripts/cpbl_stage7_acceptance_runner.py
 
 jobs:
   performance:
@@ -54,7 +55,7 @@ jobs:
         with:
           name: cpbl-stage7-tail-7f
           path: stage7_work
-      - run: python scripts/cpbl_stage7_acceptance.py --root stage7_work
+      - run: python scripts/cpbl_stage7_acceptance_runner.py --root stage7_work
       - name: Upload 7G backend diagnostic artifact
         if: always()
         uses: actions/upload-artifact@v4
