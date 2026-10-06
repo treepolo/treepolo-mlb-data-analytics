@@ -1,0 +1,15 @@
+== run 123: models=['hgb'] memory=2 ladder=False entity=[] seed=1 early_stopping=False
+   RvR hgb      base→full gain -0.01184 [-0.01790, -0.00605]
+   RvL hgb      base→full gain +0.01581 [+0.00969, +0.02302]
+   LvR hgb      base→full gain +0.08891 [+0.07605, +0.10082]
+   LvL hgb      base→full gain +0.12264 [+0.08772, +0.16462]
+== run 124: models=['hgb'] memory=2 ladder=False entity=[] seed=2 early_stopping=False
+   RvR hgb      base→full gain -0.01355 [-0.02018, -0.00702]
+   RvL hgb      base→full gain +0.04208 [+0.03379, +0.04995]
+   LvR hgb      base→full gain +0.08891 [+0.07843, +0.10002]
+   LvL hgb      base→full gain +0.12264 [+0.09061, +0.15497]
+== run 125: models=['hgb'] memory=2 ladder=False entity=[] seed=3 early_stopping=False
+   RvR hgb      base→full gain -0.02285 [-0.02768, -0.01669]
+   RvL hgb      base→full gain +0.00015 [-0.00728, +0.00700]
+   LvR hgb      base→full gain +0.08891 [+0.07611, +0.10277]
+   LvL hgb      base→full gain +0.12264 [+0.08993, +0.15881]

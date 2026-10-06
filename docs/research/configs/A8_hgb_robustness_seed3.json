@@ -1,0 +1,35 @@
+{
+ "bootstrap_reps": 200,
+ "ev_check": true,
+ "groups": [
+  "RvR",
+  "RvL",
+  "LvR",
+  "LvL"
+ ],
+ "hgb_early_stopping": false,
+ "kind": "outcome_model",
+ "memory": 2,
+ "models": [
+  "hgb"
+ ],
+ "purpose": "tuning",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023,
+   2024
+  ]
+ },
+ "seed": 3,
+ "split": "holdout_years",
+ "study": "P5-4 sequence",
+ "test_years": [
+  2024
+ ],
+ "train_years": [
+  2023
+ ]
+}

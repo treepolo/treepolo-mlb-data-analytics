@@ -26,7 +26,7 @@ class OutcomeModelMethod(ResearchMethod):
     """Multinomial outcome models (logistic / gradient boosting) per handedness group with held-out evaluation and sequence gain."""
 
     kind = "outcome_model"
-    version = 2  # 2: entity_features, hgb_early_stopping (default off), memory 0
+    version = 3  # 2: entity_features, hgb_early_stopping (default off), memory 0; 3: sequence_ladder
     label_zh = "結果機率模型與序列增益"
     label_en = "Outcome model and sequence gain"
     requires_scope = True
@@ -43,6 +43,8 @@ class OutcomeModelMethod(ResearchMethod):
         ConfigField("sequence_categorical", "str_list", default=["prev1_pitch_type", "prev2_pitch_type", "prev1_description", "streak_cap"], label_zh="序列類別特徵", label_en="Sequence categorical features"),
         ConfigField("memory", "int", default=2, minimum=0, maximum=5, label_zh="序列記憶長度", label_en="Sequence memory",
                     help_zh="0＝完全不用前球資訊（只剩 base，沒有序列增益）。", help_en="0 = no previous-pitch information at all (base only, no sequence gain)."),
+        ConfigField("sequence_ladder", "bool", default=False, label_zh="記憶長度階梯", label_en="Memory ladder",
+                    help_zh="true：變體 base、m1…m{memory}（m_j 含前 j 球的球種、前一球結果、連投顆數與數值差），輸出各 m 相對 base 與相對前一個 m 的邊際增益。", help_en="Fits base, m1..m{memory}; reports cumulative and marginal gains."),
         ConfigField("entity_features", "str_list", default=[], label_zh="個體效應（投手、打者）", label_en="Entity effects",
                     help_zh="可含 pitcher、batter；只對 logistic 生效（稀疏單熱編碼，不足 entity_min_count 球的個體併入 OTHER）。", help_en="pitcher and/or batter; logistic only."),
         ConfigField("entity_min_count", "int", default=200, minimum=1, label_zh="個體最小訓練球數", label_en="Minimum training pitches per entity"),
@@ -80,14 +82,19 @@ class OutcomeModelMethod(ResearchMethod):
             raise ConfigError(f"groups must be a non-empty subset of {list(GROUPS)} / groups 必須是 {list(GROUPS)} 的非空子集")
         if not config["models"] or set(config["models"]) - set(md.MODEL_NAMES):
             raise ConfigError(f"models must be a non-empty subset of {list(md.MODEL_NAMES)} / models 必須是 {list(md.MODEL_NAMES)} 的非空子集")
-        if not config["variants"] or set(config["variants"]) - {"base", "full"}:
+        if config["sequence_ladder"]:
+            if config["memory"] < 1:
+                raise ConfigError("sequence_ladder needs memory >= 1 / sequence_ladder 需要 memory >= 1")
+            config["variants"] = ["base"] + [f"m{j}" for j in range(1, config["memory"] + 1)]
+            config["sequence_categorical"] = []
+        if not config["variants"] or set(config["variants"]) - ({"base", "full"} | {f"m{j}" for j in range(1, 6)}):
             raise ConfigError("variants must be a non-empty subset of base, full / variants 必須是 base、full 的非空子集")
         for key, allowed in (("base_numeric", md.NUMERIC_FEATURES), ("sequence_numeric", md.NUMERIC_FEATURES),
                              ("base_categorical", md.CATEGORICAL_FEATURES), ("sequence_categorical", md.CATEGORICAL_FEATURES)):
             bad = sorted(set(config[key]) - set(allowed))
             if bad:
                 raise ConfigError(f"{key} has unknown features {bad}; allowed {list(allowed)} / {key} 含未知特徵 {bad}")
-        num_f, cat_f = self._split_features(config, "full"); needed = set(md.source_columns(num_f + cat_f))
+        num_f, cat_f = self._split_features(config, f"m{config['memory']}" if config["sequence_ladder"] else "full"); needed = set(md.source_columns(num_f + cat_f))
         available = pitch_table_columns(memory=max(config["memory"], 1), with_value=config["ev_check"], mirror=True, extra_columns=EXTRA_RAW)
         if needed - available:
             raise ConfigError(f"features need columns the pitch table does not have (memory too small?): {sorted(needed - available)} / 特徵需要的欄位不存在（memory 太小？）")
@@ -220,19 +227,26 @@ class OutcomeModelMethod(ResearchMethod):
                     ok = ~np.isnan(realized); err = ev_pred[key][ok] - realized[ok]
                     ev_rows.append({"group": group, "model": model, "variant": variant, "n_value": int(ok.sum()), "rmse": float(np.sqrt(np.mean(err ** 2))),
                                     "mean_error": float(err.mean()), "fallback_lookups": ev_fallback[key]})
-            if {"base", "full"} <= set(config["variants"]):
+            variants = list(config["variants"])
+            if config["sequence_ladder"]:
+                pairs = [(variants[i - 1], variants[i]) for i in range(1, len(variants))] + [("base", v) for v in variants[2:]]
+            elif {"base", "full"} <= set(variants):
+                pairs = [("base", "full")]
+            else:
+                pairs = []
+            for first, second in pairs:
                 for model in config["models"]:
-                    delta = losses[(model, "base")] - losses[(model, "full")]
+                    delta = losses[(model, first)] - losses[(model, second)]
                     mean, lo, hi, se = md.paired_game_bootstrap(delta, games_eval, reps=config["bootstrap_reps"], seed=config["seed"], confidence=config["confidence"])
-                    row = {"group": group, "model": model, "delta_logloss": mean, "lo": lo, "hi": hi, "se": se, "n_eval": n_eval}
+                    row = {"group": group, "model": model, "comparison": f"{first}→{second}", "delta_logloss": mean, "lo": lo, "hi": hi, "se": se, "n_eval": n_eval}
                     if re:
                         ok = ~np.isnan(realized)
-                        d_ev = (ev_pred[(model, "base")][ok] - realized[ok]) ** 2 - (ev_pred[(model, "full")][ok] - realized[ok]) ** 2
+                        d_ev = (ev_pred[(model, first)][ok] - realized[ok]) ** 2 - (ev_pred[(model, second)][ok] - realized[ok]) ** 2
                         m2, l2, h2, _ = md.paired_game_bootstrap(d_ev, games_eval[ok], reps=config["bootstrap_reps"], seed=config["seed"], confidence=config["confidence"])
                         row.update(delta_ev_mse=m2, ev_lo=l2, ev_hi=h2)
                     gain_rows.append(row)
                     for ci, cname in enumerate(classes):
-                        class_rows.append({"group": group, "model": model, "class": cname, "delta_logloss_contribution": float((delta * (y_eval == ci)).mean())})
+                        class_rows.append({"group": group, "model": model, "comparison": f"{first}→{second}", "class": cname, "delta_logloss_contribution": float((delta * (y_eval == ci)).mean())})
             del rows
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "split": config["split"], "re_scope": config["re_scope"] if re else None,
                   "final_test": config["purpose"] == "final_test", "extra_study": config["purpose"] == "extra_study",
@@ -240,9 +254,9 @@ class OutcomeModelMethod(ResearchMethod):
         sections = [make_section("Fit summary 擬合摘要", ("group", "model", "variant", "n_train", "n_eval", "n_features", "classes", "logloss", "brier", "prior_logloss", "skill", "fit_seconds",
                                                           "rows_dropped_unmapped", "rows_dropped_missing"), fit_rows, ("group", "model", "variant"), backend, DIGITS)]
         if gain_rows:
-            sections.append(make_section("Sequence gain 序列增益（base − full，正值＝序列資訊有用）", ("group", "model", "delta_logloss", "lo", "hi", "se", "n_eval", "delta_ev_mse", "ev_lo", "ev_hi"),
-                                         gain_rows, ("group", "model"), backend, DIGITS))
-            sections.append(make_section("Sequence gain by true class 各類別的增益貢獻", ("group", "model", "class", "delta_logloss_contribution"), class_rows, ("group", "model", "class"), backend, DIGITS))
+            sections.append(make_section("Sequence gain 序列增益（base − full，正值＝序列資訊有用）", ("group", "model", "comparison", "delta_logloss", "lo", "hi", "se", "n_eval", "delta_ev_mse", "ev_lo", "ev_hi"),
+                                         gain_rows, ("group", "model", "comparison"), backend, DIGITS))
+            sections.append(make_section("Sequence gain by true class 各類別的增益貢獻", ("group", "model", "comparison", "class", "delta_logloss_contribution"), class_rows, ("group", "model", "comparison", "class"), backend, DIGITS))
         sections.append(make_section("Calibration 校準", ("group", "model", "variant", "class", "bin", "n", "mean_pred", "observed"), cal_rows, ("group", "model", "variant", "class", "bin"), backend, DIGITS))
         if cons_rows:
             sections.append(make_section("Model vs counted tables 與次數表一致性", ("group", "model", "variant", "class", "cells", "mean_abs_diff", "max_abs_diff", "share_abs_z_above_critical"),
@@ -260,6 +274,9 @@ class OutcomeModelMethod(ResearchMethod):
         num = list(config["base_numeric"]); cat = list(config["base_categorical"])
         if variant == "full":
             num += config["sequence_numeric"]; cat += config["sequence_categorical"]
+        elif variant.startswith("m"):
+            j = int(variant[1:])
+            num += config["sequence_numeric"]; cat += [f"prev{i}_pitch_type" for i in range(1, j + 1)] + ["prev1_description", "streak_cap"]
         return num, cat
 
     @staticmethod

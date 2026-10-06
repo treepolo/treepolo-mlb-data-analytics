@@ -80,3 +80,15 @@ def test_memory_zero_has_no_sequence_features_and_no_gain_section(service):
 def test_invalid_entity_settings(service, bad):
     with pytest.raises(ConfigError):
         service.run("outcome_model", {**BASE, **bad})
+
+
+def test_memory_ladder_reports_cumulative_and_marginal_gains(service):
+    run = service.run("outcome_model", {**BASE, "memory": 2, "sequence_ladder": True, "sequence_categorical": ["streak_cap"], "entity_features": ["pitcher"]})["run"]
+    assert run["config"]["variants"] == ["base", "m1", "m2"]
+    rows = service.result_page(run["id"], 1, 0, 20)["rows"]
+    assert [r["comparison"] for r in rows] == ["base→m1", "m1→m2", "base→m2"]
+    assert all(abs(r["delta_logloss"]) < 0.0005 for r in rows)             # entity effects included, no true order effect: nothing to gain
+    fit = service.result_page(run["id"], 0, 0, 10)["rows"]
+    assert [r["variant"] for r in fit] == ["base", "m1", "m2"] and fit[2]["n_features"] > fit[1]["n_features"] > fit[0]["n_features"]
+    with pytest.raises(ConfigError, match="memory"):
+        service.run("outcome_model", {**BASE, "memory": 0, "sequence_ladder": True})
