@@ -1,0 +1,1742 @@
+[
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "LvR",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0289,
+  "lo": 0.0134,
+  "hi": 0.0443,
+  "2025": {
+   "est": 0.0272,
+   "lo": 0.0063,
+   "hi": 0.0481,
+   "z": -0.17,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0295,
+   "lo": 0.011,
+   "hi": 0.048,
+   "z": 0.07,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "LvR",
+   "SL",
+   "k=2"
+  ],
+  "model": 0.0565,
+  "lo": 0.0246,
+  "hi": 0.0885,
+  "2025": {
+   "est": 0.0274,
+   "lo": -0.015,
+   "hi": 0.0698,
+   "z": -1.41,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.019,
+   "lo": -0.0251,
+   "hi": 0.063,
+   "z": -1.78,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "LvR",
+   "SL",
+   "k=3"
+  ],
+  "model": 0.0755,
+  "lo": 0.0281,
+  "hi": 0.1229,
+  "2025": {
+   "est": 0.0616,
+   "lo": -0.0168,
+   "hi": 0.14,
+   "z": -0.39,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0064,
+   "lo": -0.1035,
+   "hi": 0.0907,
+   "z": -1.95,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "medium"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvL",
+   "CH",
+   "k=2"
+  ],
+  "model": 0.0349,
+  "lo": 0.0135,
+  "hi": 0.0563,
+  "2025": {
+   "est": 0.0296,
+   "lo": 0.001,
+   "hi": 0.0581,
+   "z": -0.39,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0374,
+   "lo": 0.011,
+   "hi": 0.0639,
+   "z": 0.19,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvL",
+   "CH",
+   "k=3"
+  ],
+  "model": 0.0593,
+  "lo": 0.0156,
+  "hi": 0.103,
+  "2025": {
+   "est": 0.0568,
+   "lo": 0.0028,
+   "hi": 0.1107,
+   "z": -0.09,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0664,
+   "lo": 0.0098,
+   "hi": 0.1229,
+   "z": 0.26,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvL",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0293,
+  "lo": 0.0174,
+  "hi": 0.0412,
+  "2025": {
+   "est": 0.0283,
+   "lo": 0.0119,
+   "hi": 0.0447,
+   "z": -0.13,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.017,
+   "lo": 0.0019,
+   "hi": 0.0321,
+   "z": -1.64,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvL",
+   "SL",
+   "k=2"
+  ],
+  "model": 0.0355,
+  "lo": 0.0149,
+  "hi": 0.0561,
+  "2025": {
+   "est": 0.0294,
+   "lo": -0.0056,
+   "hi": 0.0643,
+   "z": -0.39,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.019,
+   "lo": -0.0132,
+   "hi": 0.0511,
+   "z": -1.11,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvR",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0232,
+  "lo": 0.0115,
+  "hi": 0.035,
+  "2025": {
+   "est": 0.019,
+   "lo": 0.0019,
+   "hi": 0.0361,
+   "z": -0.53,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0071,
+   "lo": -0.0117,
+   "hi": 0.0259,
+   "z": -1.87,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvR",
+   "SL",
+   "k=2"
+  ],
+  "model": 0.0283,
+  "lo": 0.0123,
+  "hi": 0.0443,
+  "2025": {
+   "est": 0.0174,
+   "lo": -0.009,
+   "hi": 0.0438,
+   "z": -0.91,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.042,
+   "lo": 0.0093,
+   "hi": 0.0747,
+   "z": 0.97,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvR",
+   "SL",
+   "k=3"
+  ],
+  "model": 0.056,
+  "lo": 0.0265,
+  "hi": 0.0855,
+  "2025": {
+   "est": 0.051,
+   "lo": 0.0076,
+   "hi": 0.0945,
+   "z": -0.24,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0286,
+   "lo": -0.0225,
+   "hi": 0.0797,
+   "z": -1.19,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvR",
+   "ST",
+   "k=2"
+  ],
+  "model": 0.0556,
+  "lo": 0.0316,
+  "hi": 0.0797,
+  "2025": {
+   "est": 0.0454,
+   "lo": 0.0129,
+   "hi": 0.0779,
+   "z": -0.65,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.036,
+   "lo": 0.0016,
+   "hi": 0.0705,
+   "z": -1.2,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "whiff_per_swing",
+  "key": [
+   "RvR",
+   "ST",
+   "k=3"
+  ],
+  "model": 0.0704,
+  "lo": 0.0279,
+  "hi": 0.1128,
+  "2025": {
+   "est": 0.0699,
+   "lo": 0.0104,
+   "hi": 0.1294,
+   "z": -0.02,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0739,
+   "lo": 0.0084,
+   "hi": 0.1393,
+   "z": 0.12,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "LvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0315,
+  "lo": -0.0585,
+  "hi": -0.0046,
+  "2025": {
+   "est": -0.0601,
+   "lo": -0.0944,
+   "hi": -0.0258,
+   "z": -1.69,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.031,
+   "lo": -0.061,
+   "hi": -0.001,
+   "z": 0.03,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "LvR",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0223,
+  "lo": -0.0376,
+  "hi": -0.0071,
+  "2025": {
+   "est": -0.0277,
+   "lo": -0.0468,
+   "hi": -0.0085,
+   "z": -0.56,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0254,
+   "lo": -0.044,
+   "hi": -0.0068,
+   "z": -0.32,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "LvR",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.0234,
+  "lo": -0.0426,
+  "hi": -0.0042,
+  "2025": {
+   "est": -0.0213,
+   "lo": -0.0568,
+   "hi": 0.0142,
+   "z": 0.13,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0093,
+   "lo": -0.0453,
+   "hi": 0.0267,
+   "z": 0.89,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "RvL",
+   "CU",
+   "k=2"
+  ],
+  "model": -0.0307,
+  "lo": -0.0588,
+  "hi": -0.0027,
+  "2025": {
+   "est": -0.0146,
+   "lo": -0.048,
+   "hi": 0.0188,
+   "z": 0.95,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0033,
+   "lo": -0.0379,
+   "hi": 0.0314,
+   "z": 1.59,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "RvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0174,
+  "lo": -0.0282,
+  "hi": -0.0066,
+  "2025": {
+   "est": -0.0254,
+   "lo": -0.0413,
+   "hi": -0.0095,
+   "z": -1.07,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.025,
+   "lo": -0.0388,
+   "hi": -0.0111,
+   "z": -1.11,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "RvR",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.021,
+  "lo": -0.0326,
+  "hi": -0.0094,
+  "2025": {
+   "est": -0.0263,
+   "lo": -0.0435,
+   "hi": -0.009,
+   "z": -0.66,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0286,
+   "lo": -0.0468,
+   "hi": -0.0105,
+   "z": -0.91,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "swing_rate",
+  "key": [
+   "RvR",
+   "SI",
+   "k=2"
+  ],
+  "model": -0.0151,
+  "lo": -0.0302,
+  "hi": -0.0001,
+  "2025": {
+   "est": -0.0175,
+   "lo": -0.0372,
+   "hi": 0.0022,
+   "z": -0.24,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0073,
+   "lo": -0.0287,
+   "hi": 0.0142,
+   "z": 0.77,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "LvL",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0637,
+  "lo": 0.0321,
+  "hi": 0.0953,
+  "2025": {
+   "est": 0.0594,
+   "lo": 0.0066,
+   "hi": 0.1122,
+   "z": -0.18,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0484,
+   "lo": 0.007,
+   "hi": 0.0899,
+   "z": -0.75,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "LvL",
+   "FF",
+   "k=3"
+  ],
+  "model": 0.0752,
+  "lo": 0.022,
+  "hi": 0.1283,
+  "2025": {
+   "est": 0.0194,
+   "lo": -0.0603,
+   "hi": 0.0991,
+   "z": -1.5,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0047,
+   "lo": -0.0762,
+   "hi": 0.0669,
+   "z": -2.31,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "refuted"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "LvR",
+   "CU",
+   "k=2"
+  ],
+  "model": 0.059,
+  "lo": 0.0204,
+  "hi": 0.0977,
+  "2025": {
+   "est": 0.0011,
+   "lo": -0.0549,
+   "hi": 0.057,
+   "z": -2.2,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "weak"
+  },
+  "2026": {
+   "est": 0.001,
+   "lo": -0.064,
+   "hi": 0.066,
+   "z": -1.98,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "LvR",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0337,
+  "lo": 0.0149,
+  "hi": 0.0525,
+  "2025": {
+   "est": 0.0291,
+   "lo": 0.0007,
+   "hi": 0.0576,
+   "z": -0.34,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0284,
+   "lo": 0.0014,
+   "hi": 0.0555,
+   "z": -0.41,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "LvR",
+   "FF",
+   "k=3"
+  ],
+  "model": 0.0491,
+  "lo": 0.0196,
+  "hi": 0.0787,
+  "2025": {
+   "est": 0.0388,
+   "lo": -0.003,
+   "hi": 0.0806,
+   "z": -0.52,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0665,
+   "lo": 0.0223,
+   "hi": 0.1107,
+   "z": 0.84,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvL",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0334,
+  "lo": 0.0203,
+  "hi": 0.0465,
+  "2025": {
+   "est": 0.0431,
+   "lo": 0.0237,
+   "hi": 0.0625,
+   "z": 1.07,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0324,
+   "lo": 0.0135,
+   "hi": 0.0513,
+   "z": -0.11,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvL",
+   "FF",
+   "k=3"
+  ],
+  "model": 0.0335,
+  "lo": 0.011,
+  "hi": 0.0561,
+  "2025": {
+   "est": 0.0362,
+   "lo": 0.0062,
+   "hi": 0.0663,
+   "z": 0.19,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0088,
+   "lo": -0.0217,
+   "hi": 0.0394,
+   "z": -1.68,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvL",
+   "SL",
+   "k=2"
+  ],
+  "model": 0.0317,
+  "lo": 0.0074,
+  "hi": 0.0561,
+  "2025": {
+   "est": 0.013,
+   "lo": -0.0197,
+   "hi": 0.0457,
+   "z": -1.18,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0236,
+   "lo": -0.0116,
+   "hi": 0.0587,
+   "z": -0.49,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvL",
+   "SL",
+   "k=3"
+  ],
+  "model": 0.0496,
+  "lo": 0.0056,
+  "hi": 0.0937,
+  "2025": {
+   "est": -0.0023,
+   "lo": -0.0532,
+   "hi": 0.0486,
+   "z": -1.99,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "refuted"
+  },
+  "2026": {
+   "est": -0.019,
+   "lo": -0.0733,
+   "hi": 0.0353,
+   "z": -2.53,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "refuted"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "FF",
+   "k=2"
+  ],
+  "model": 0.0341,
+  "lo": 0.0187,
+  "hi": 0.0495,
+  "2025": {
+   "est": 0.034,
+   "lo": 0.0115,
+   "hi": 0.0566,
+   "z": -0.01,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.033,
+   "lo": 0.0085,
+   "hi": 0.0574,
+   "z": -0.1,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "FF",
+   "k=3"
+  ],
+  "model": 0.0311,
+  "lo": 0.0068,
+  "hi": 0.0554,
+  "2025": {
+   "est": 0.0263,
+   "lo": -0.0117,
+   "hi": 0.0643,
+   "z": -0.28,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0084,
+   "lo": -0.0326,
+   "hi": 0.0493,
+   "z": -1.23,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "SI",
+   "k=2"
+  ],
+  "model": 0.0256,
+  "lo": 0.0056,
+  "hi": 0.0457,
+  "2025": {
+   "est": 0.0049,
+   "lo": -0.0268,
+   "hi": 0.0367,
+   "z": -1.42,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0124,
+   "lo": -0.0189,
+   "hi": 0.0436,
+   "z": -0.92,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "SL",
+   "k=2"
+  ],
+  "model": 0.0171,
+  "lo": 0.0016,
+  "hi": 0.0326,
+  "2025": {
+   "est": 0.0154,
+   "lo": -0.0086,
+   "hi": 0.0394,
+   "z": -0.16,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0268,
+   "lo": 0.0004,
+   "hi": 0.0531,
+   "z": 0.81,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "SL",
+   "k=3"
+  ],
+  "model": 0.0291,
+  "lo": 0.0062,
+  "hi": 0.052,
+  "2025": {
+   "est": 0.0342,
+   "lo": -0.0057,
+   "hi": 0.0741,
+   "z": 0.28,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0306,
+   "lo": -0.0083,
+   "hi": 0.0694,
+   "z": 0.08,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "called_strike_per_take",
+  "key": [
+   "RvR",
+   "ST",
+   "k=2"
+  ],
+  "model": 0.0235,
+  "lo": 0.0024,
+  "hi": 0.0447,
+  "2025": {
+   "est": 0.0228,
+   "lo": -0.0065,
+   "hi": 0.0521,
+   "z": -0.05,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0026,
+   "lo": -0.0254,
+   "hi": 0.0307,
+   "z": -1.53,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "foul_per_swing",
+  "key": [
+   "RvR",
+   "SI",
+   "k=2"
+  ],
+  "model": 0.026,
+  "lo": 0.0074,
+  "hi": 0.0446,
+  "2025": {
+   "est": -0.0033,
+   "lo": -0.0331,
+   "hi": 0.0265,
+   "z": -2.15,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "medium"
+  },
+  "2026": {
+   "est": -0.0068,
+   "lo": -0.0372,
+   "hi": 0.0236,
+   "z": -2.37,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "refuted"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "LvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0362,
+  "lo": -0.0694,
+  "hi": -0.0031,
+  "2025": {
+   "est": -0.0511,
+   "lo": -0.0995,
+   "hi": -0.0027,
+   "z": -0.65,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0219,
+   "lo": -0.0691,
+   "hi": 0.0254,
+   "z": 0.64,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "LvR",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0357,
+  "lo": -0.0557,
+  "hi": -0.0156,
+  "2025": {
+   "est": -0.0255,
+   "lo": -0.0519,
+   "hi": 0.0008,
+   "z": 0.79,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0478,
+   "lo": -0.0746,
+   "hi": -0.021,
+   "z": -0.94,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "LvR",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.037,
+  "lo": -0.0687,
+  "hi": -0.0054,
+  "2025": {
+   "est": -0.038,
+   "lo": -0.0767,
+   "hi": 0.0007,
+   "z": -0.05,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0773,
+   "lo": -0.1214,
+   "hi": -0.0332,
+   "z": -1.91,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "LvR",
+   "SI",
+   "k=3"
+  ],
+  "model": -0.0593,
+  "lo": -0.1057,
+  "hi": -0.013,
+  "2025": {
+   "est": -0.0064,
+   "lo": -0.0832,
+   "hi": 0.0705,
+   "z": 1.52,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": 0.0273,
+   "lo": -0.0537,
+   "hi": 0.1083,
+   "z": 2.39,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "refuted"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "LvR",
+   "SL",
+   "k=2"
+  ],
+  "model": -0.0349,
+  "lo": -0.0681,
+  "hi": -0.0017,
+  "2025": {
+   "est": -0.0225,
+   "lo": -0.075,
+   "hi": 0.0299,
+   "z": 0.51,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0049,
+   "lo": -0.06,
+   "hi": 0.0503,
+   "z": 1.2,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvL",
+   "CH",
+   "k=2"
+  ],
+  "model": -0.0358,
+  "lo": -0.0615,
+  "hi": -0.01,
+  "2025": {
+   "est": -0.028,
+   "lo": -0.0613,
+   "hi": 0.0054,
+   "z": 0.48,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0341,
+   "lo": -0.064,
+   "hi": -0.0042,
+   "z": 0.11,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvL",
+   "CU",
+   "k=3"
+  ],
+  "model": -0.0669,
+  "lo": -0.1266,
+  "hi": -0.0071,
+  "2025": {
+   "est": 0.0036,
+   "lo": -0.0909,
+   "hi": 0.0981,
+   "z": 1.62,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "medium"
+  },
+  "2026": {
+   "est": -0.0713,
+   "lo": -0.1679,
+   "hi": 0.0253,
+   "z": -0.1,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0309,
+  "lo": -0.0448,
+  "hi": -0.0169,
+  "2025": {
+   "est": -0.0436,
+   "lo": -0.0629,
+   "hi": -0.0244,
+   "z": -1.39,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0218,
+   "lo": -0.0403,
+   "hi": -0.0032,
+   "z": 1.01,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvL",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.0343,
+  "lo": -0.0549,
+  "hi": -0.0138,
+  "2025": {
+   "est": -0.0349,
+   "lo": -0.0628,
+   "hi": -0.0071,
+   "z": -0.04,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0131,
+   "lo": -0.0407,
+   "hi": 0.0145,
+   "z": 1.59,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvL",
+   "SL",
+   "k=2"
+  ],
+  "model": -0.0368,
+  "lo": -0.0601,
+  "hi": -0.0136,
+  "2025": {
+   "est": -0.0234,
+   "lo": -0.0547,
+   "hi": 0.0079,
+   "z": 0.89,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0318,
+   "lo": -0.0677,
+   "hi": 0.0041,
+   "z": 0.3,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvR",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0327,
+  "lo": -0.0468,
+  "hi": -0.0185,
+  "2025": {
+   "est": -0.0374,
+   "lo": -0.058,
+   "hi": -0.0168,
+   "z": -0.49,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0259,
+   "lo": -0.0494,
+   "hi": -0.0024,
+   "z": 0.63,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvR",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.043,
+  "lo": -0.0657,
+  "hi": -0.0202,
+  "2025": {
+   "est": -0.0372,
+   "lo": -0.0698,
+   "hi": -0.0047,
+   "z": 0.37,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0321,
+   "lo": -0.0691,
+   "hi": 0.0049,
+   "z": 0.65,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvR",
+   "ST",
+   "k=2"
+  ],
+  "model": -0.0396,
+  "lo": -0.0654,
+  "hi": -0.0138,
+  "2025": {
+   "est": -0.0228,
+   "lo": -0.0572,
+   "hi": 0.0116,
+   "z": 1.01,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0113,
+   "lo": -0.05,
+   "hi": 0.0275,
+   "z": 1.57,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "in_play_per_swing",
+  "key": [
+   "RvR",
+   "ST",
+   "k=3"
+  ],
+  "model": -0.0472,
+  "lo": -0.0875,
+  "hi": -0.007,
+  "2025": {
+   "est": -0.0362,
+   "lo": -0.097,
+   "hi": 0.0247,
+   "z": 0.39,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0125,
+   "lo": -0.0729,
+   "hi": 0.0479,
+   "z": 1.23,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "hr_per_pitch",
+  "key": [
+   "LvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0065,
+  "lo": -0.0115,
+  "hi": -0.0015,
+  "2025": {
+   "est": -0.0082,
+   "lo": -0.0164,
+   "hi": 0.0001,
+   "z": -0.44,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.004,
+   "lo": -0.0096,
+   "hi": 0.0016,
+   "z": 0.88,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "hr_per_pitch",
+  "key": [
+   "LvR",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.0049,
+  "lo": -0.0095,
+  "hi": -0.0003,
+  "2025": {
+   "est": -0.0005,
+   "lo": -0.0086,
+   "hi": 0.0076,
+   "z": 1.22,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0046,
+   "lo": -0.0118,
+   "hi": 0.0026,
+   "z": 0.1,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "hr_per_pitch",
+  "key": [
+   "RvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0027,
+  "lo": -0.0048,
+  "hi": -0.0006,
+  "2025": {
+   "est": -0.0023,
+   "lo": -0.0054,
+   "hi": 0.0008,
+   "z": 0.27,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0025,
+   "lo": -0.0054,
+   "hi": 0.0004,
+   "z": 0.12,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "LvL",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0178,
+  "lo": -0.033,
+  "hi": -0.0026,
+  "2025": {
+   "est": -0.0236,
+   "lo": -0.0444,
+   "hi": -0.0029,
+   "z": -0.58,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0137,
+   "lo": -0.0301,
+   "hi": 0.0028,
+   "z": 0.48,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "LvL",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.0235,
+  "lo": -0.0464,
+  "hi": -0.0006,
+  "2025": {
+   "est": 0.0047,
+   "lo": -0.0312,
+   "hi": 0.0406,
+   "z": 1.71,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "medium"
+  },
+  "2026": {
+   "est": -0.0095,
+   "lo": -0.0442,
+   "hi": 0.0252,
+   "z": 0.87,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "LvR",
+   "FF",
+   "k=3"
+  ],
+  "model": -0.0128,
+  "lo": -0.0254,
+  "hi": -0.0002,
+  "2025": {
+   "est": 0.0051,
+   "lo": -0.0142,
+   "hi": 0.0243,
+   "z": 2.0,
+   "same_sign": false,
+   "excl0": false,
+   "grade": "medium"
+  },
+  "2026": {
+   "est": -0.0206,
+   "lo": -0.04,
+   "hi": -0.0012,
+   "z": -0.87,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "RvR",
+   "FF",
+   "k=2"
+  ],
+  "model": -0.0098,
+  "lo": -0.0168,
+  "hi": -0.0029,
+  "2025": {
+   "est": -0.009,
+   "lo": -0.0189,
+   "hi": 0.0009,
+   "z": 0.17,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0053,
+   "lo": -0.0165,
+   "hi": 0.0059,
+   "z": 0.88,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "RvR",
+   "FS",
+   "k=3"
+  ],
+  "model": -0.0373,
+  "lo": -0.0723,
+  "hi": -0.0023,
+  "2025": {
+   "est": -0.0603,
+   "lo": -0.1124,
+   "hi": -0.0083,
+   "z": -0.94,
+   "same_sign": true,
+   "excl0": true,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0092,
+   "lo": -0.0555,
+   "hi": 0.0371,
+   "z": 1.25,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "RvR",
+   "SL",
+   "k=2"
+  ],
+  "model": -0.0086,
+  "lo": -0.0165,
+  "hi": -0.0006,
+  "2025": {
+   "est": -0.0085,
+   "lo": -0.0211,
+   "hi": 0.0042,
+   "z": 0.02,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0069,
+   "lo": -0.021,
+   "hi": 0.0072,
+   "z": 0.26,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "RvR",
+   "ST",
+   "k=2"
+  ],
+  "model": -0.0155,
+  "lo": -0.0253,
+  "hi": -0.0057,
+  "2025": {
+   "est": -0.0059,
+   "lo": -0.0232,
+   "hi": 0.0114,
+   "z": 1.25,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0099,
+   "lo": -0.0255,
+   "hi": 0.0057,
+   "z": 0.78,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ },
+ {
+  "rate": "mean_pitch_value",
+  "key": [
+   "RvR",
+   "ST",
+   "k=3"
+  ],
+  "model": -0.0202,
+  "lo": -0.0385,
+  "hi": -0.0018,
+  "2025": {
+   "est": -0.0203,
+   "lo": -0.0495,
+   "hi": 0.0088,
+   "z": -0.01,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  },
+  "2026": {
+   "est": -0.0144,
+   "lo": -0.0482,
+   "hi": 0.0193,
+   "z": 0.39,
+   "same_sign": true,
+   "excl0": false,
+   "grade": "strong"
+  }
+ }
+]
