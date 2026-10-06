@@ -18,6 +18,8 @@ from .config import AppConfig
 from .duckdb_mirror import DuckDBMirror
 from .fast_status import prepare_fast_status, read_fast_status, rebuild_fast_status
 from .raw import RawArchive
+from .research import api as research_api
+from .research.service import ResearchService
 from .savant import SavantClient
 from .storage import StatcastStore
 from .sync import SyncEngine
@@ -36,6 +38,7 @@ class AppServices:
             backend=config.analysis_backend,
         )
         self.analysis_state = AnalysisStateStore(config.analysis_state_database_path)
+        self.research = ResearchService(config, self.analysis)
         self.sync_lock = threading.Lock()
         self._scheduler_started = False
         self._summary_bootstrap_started = False
@@ -331,6 +334,32 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _bytes(self, status: int, body: bytes, content_type: str, filename: str | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if filename:
+            safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in filename)
+            self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_body_bytes(self, max_bytes: int) -> bytes:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            raise RequestError("Request body is empty")
+        if length > max_bytes:
+            raise RequestError("Request body is too large")
+        return self.rfile.read(length)
+
+    def _send_research(self, response: tuple[int, Any]) -> None:
+        status, body = response
+        if isinstance(body, research_api.BinaryResponse):
+            self._bytes(status, body.body, body.content_type, body.filename)
+        else:
+            self._json(status, body)
+
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length > 2_000_000:
@@ -385,6 +414,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/data/status":
                 self._json(HTTPStatus.OK, self.services.status())
                 return
+            if path.startswith(research_api.PREFIX):
+                self._send_research(research_api.handle_get(self.services.research, path, parsed.query))
+                return
             self._static(path)
         except Exception as exc:
             self._error(exc)
@@ -392,7 +424,14 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == research_api.PREFIX + "import":
+                data = self._read_body_bytes(research_api.MAX_IMPORT_BYTES)
+                self._send_research(research_api.handle_import(self.services.research, data))
+                return
             payload = self._read_json()
+            if path.startswith(research_api.PREFIX):
+                self._send_research(research_api.handle_post(self.services.research, path, payload))
+                return
             if path == "/api/analyze":
                 self._json(HTTPStatus.OK, self.services.analyze(payload))
                 return
@@ -413,8 +452,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._error(exc)
 
     def do_DELETE(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
+            if path.startswith(research_api.PREFIX):
+                self._send_research(research_api.handle_delete(self.services.research, path, parsed.query))
+                return
             if path.startswith("/api/analysis/saved/"):
                 saved_id = self._path_id(path, "/api/analysis/saved/")
                 deleted = self.services.analysis_state.delete_saved(int(saved_id)) if saved_id is not None else False
@@ -482,3 +525,4 @@ def serve(config: AppConfig, host: str = "127.0.0.1", port: int = 8765, open_bro
     finally:
         server.server_close()
         services.analysis_state.close()
+        services.research.close()

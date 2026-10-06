@@ -17,6 +17,9 @@ def test_scope_normalization_sorts_and_defaults_game_types():
 
 def test_scope_optional_and_required():
     assert normalize_scope(None, required=False) == {}
+    assert normalize_scope({}, required=False) == {}  # a stored "no scope" must survive a rerun
+    with pytest.raises(ConfigError):
+        normalize_scope({}, required=True)
     with pytest.raises(ConfigError, match="required"):
         normalize_scope(None, required=True)
 

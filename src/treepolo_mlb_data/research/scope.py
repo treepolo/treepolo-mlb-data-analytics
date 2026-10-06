@@ -35,7 +35,7 @@ def normalize_scope(raw: Mapping[str, Any] | None, *, required: bool) -> dict[st
     seasons; ``game_types`` defaults to regular season only.
     """
 
-    if raw is None:
+    if raw is None or (not required and isinstance(raw, Mapping) and not raw):
         if required:
             raise ConfigError("scope is required / 必須指定研究範圍 scope")
         return {}
