@@ -386,7 +386,7 @@ class StreakCurveMethod(ResearchMethod):
     """Streak (same-type run) curve: naive pooled curve versus the same-point comparison at fixed strata."""
 
     kind = "streak_curve"
-    version = 1
+    version = 2  # 2: placebo_mode (default pairs)
     label_zh = "連投曲線（走到同一點再比較）"
     label_en = "Streak curve (same-point comparison)"
     requires_scope = True
@@ -407,6 +407,8 @@ class StreakCurveMethod(ResearchMethod):
         ConfigField("bootstrap_reps", "int", default=200, minimum=20, maximum=5000, label_zh="Bootstrap 次數", label_en="Bootstrap replicates"),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
         ConfigField("placebo_shuffles", "int", default=0, minimum=0, maximum=1000, label_zh="安慰劑打亂次數（0＝不做）", label_en="Placebo shuffles (0 = off)"),
+        ConfigField("placebo_mode", "choice", default="pairs", choices=("pairs", "labels"), label_zh="安慰劑模式", label_en="Placebo mode",
+                    help_zh="pairs：球種、是否合格、數值一起打亂（預設，診斷用）；labels：只打亂球種標籤（球種危險率不同時會假陽性）。", help_en="pairs keeps type-specific outcome levels; labels breaks them. Diagnostic only."),
     )
 
     def validate(self, config: dict[str, Any], ctx: ResearchContext) -> None:
@@ -488,7 +490,7 @@ class StreakCurveMethod(ResearchMethod):
         observed = {tuple(row[f] for f in group_fields) + (row["pitch_type"], row["k"]): row["estimate"] for row in same if row["estimate"] is not None}
         return placebo_same_point(list(result.rows), group_fields=group_fields, strata_fields=strata, pitch_types=sorted(wanted),
                                   kmax=config["kmax"], shuffles=config["placebo_shuffles"], seed=config["seed"],
-                                  min_n=config["min_stratum_n"], observed=observed)
+                                  min_n=config["min_stratum_n"], observed=observed, mode=config["placebo_mode"])
 
 
 for _method in (RunExpectancyMethod(), OutcomeTableMethod(), StreakCurveMethod()):

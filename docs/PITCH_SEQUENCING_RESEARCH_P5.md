@@ -1,6 +1,6 @@
 # 配球序列研究系統 — P5 研究計畫
 
-**狀態：計畫完成，尚未開始任何步驟。** 日期：2026-10-06。接續 P3、P4（已完成，見 [`PITCH_SEQUENCING_DEV_P3_P4.md`](PITCH_SEQUENCING_DEV_P3_P4.md) 附錄 C）。「做什麼、為什麼」以 [`PITCH_SEQUENCING_PLAN.md`](PITCH_SEQUENCING_PLAN.md)（下稱規劃文件）為準；施工慣例沿用 [`PITCH_SEQUENCING_DEV.md`](PITCH_SEQUENCING_DEV.md) 第 0 節（下稱 DEV）。
+**狀態：計畫完成；5.0 工具已開發完成（見附錄 E）；5.1 起的研究步驟尚未開始。** 日期：2026-10-06。接續 P3、P4（已完成，見 [`PITCH_SEQUENCING_DEV_P3_P4.md`](PITCH_SEQUENCING_DEV_P3_P4.md) 附錄 C）。「做什麼、為什麼」以 [`PITCH_SEQUENCING_PLAN.md`](PITCH_SEQUENCING_PLAN.md)（下稱規劃文件）為準；施工慣例沿用 [`PITCH_SEQUENCING_DEV.md`](PITCH_SEQUENCING_DEV.md) 第 0 節（下稱 DEV）。
 
 本文件是**預先登記**：研究問題、要跑的分析、判斷準則、停止條件、交付物，都在**看到 2025、2026 的任何結果之前**寫死。之後想改，必須在紀錄中標明「事後修改」，並把受影響的檢驗標為「檢驗集已非乾淨」（規劃文件第 7 節）。
 
@@ -248,7 +248,7 @@ R 的清單（全部各自計算，不合成）：`whiff_per_swing`（**主要**
 
 ### A.5 安慰劑「連同結果打亂」模式
 
-`placebo_same_point` 新增參數 `mode`（`labels`｜`pairs`，預設 `pairs`）；`streak_curve` 新增設定 `placebo_mode`（預設 `pairs`，**方法版本升為 2**）。`pairs`：同一打席內把每一球的 (球種, 是否合格, 數值 x) **一起**在位置間打亂，位置相關的分層欄位（球序、球數）留在原位。已驗證程式見附錄 B.2。已知答案（合成世界，15 萬打席，20 次打亂，觀察值減安慰劑平均）：T2（零衰減、危險率不同）≈ +0.002／−0.004（正確為零；`labels` 模式為 −0.050 假陽性）；T1 −0.015／−0.048（有削弱）。測試只斷言 T0、T2 的差 |差| < 0.01；T1 的差 < −0.005；並在文件註明：**安慰劑只當診斷**（見第 1 節 4）。
+`placebo_same_point` 新增參數 `mode`（`labels`｜`pairs`，預設 `pairs`）；`streak_curve` 新增設定 `placebo_mode`（預設 `pairs`，**方法版本升為 2**）。`pairs`：同一打席內把每一球的 (球種, 是否合格, 數值 x) **一起**在位置間打亂，位置相關的分層欄位（球序、球數）留在原位。已驗證程式見附錄 B.2。已知答案（合成世界，20 次打亂，觀察值減安慰劑平均）：T2（零衰減、危險率不同）k=2 ≈ 0（`labels` 模式為 −0.050 假陽性），k=3 在 30 萬打席時殘餘 −0.020（原始偏誤 −0.044，只去掉一半以上）；T1 k=2 −0.015（有削弱）。實作時的斷言：T0 觀察值在帶內；T1 觀察值低於帶；T2 k=2 |差| < 0.01、k=3 差 > −0.03；`labels` 模式在 T2 的差 < −0.03。**安慰劑只當診斷**（見第 1 節 4），k≥3 的解讀要更保守。
 
 ---
 
@@ -403,3 +403,18 @@ def pair_shuffle_estimates(rows, strata, shuffles, kmax=5, seed=0, ptype="SL", m
 ```
 
 **`P5_LOG.md` 格式**（一列一步）：`日期 | 步驟 ID | 研究專案 | run_key 前 12 碼 | 耗時 | 一句話結果 | 偏離計畫？（無／說明）`。
+
+
+---
+
+## 附錄 E：5.0 工具完成紀錄（2026-10-06）
+
+全套測試 **443 passed, 2 deselected**（約 8.6 分鐘）。五個工具各一個 commit。與附錄 A 不同或實作時才發現的事：
+
+1. **圖表**（`web_static/research-charts.js`、`research-runs-page.js` 的「圖表」分頁）：純函式建出元素樹（Node 測試 `tests/research-charts.test.cjs`，另有 pytest 包裝），可轉成 DOM 或 SVG 字串下載。已用 Playwright 在真實研究紀錄上截圖檢視四種預設圖。**發現並修正兩個問題**：①SVG 的 CSS 類名 `panel` 與應用程式既有樣式衝突（整個圖不顯示），改為 `rc-` 前綴；②前一球熱圖與散點圖在含稀有球種與小樣本格時無法閱讀，預設隱藏 `low_n` 格並讓熱圖格子加大。圖型：連投曲線（含區間帶、零線、分面）、前一球→下一球熱圖、位置熱圖（高處在上）、期望值對全壘打散點圖（含誤差線）；每個圖都標示「歷史結果，不是改投別的球會怎樣」。
+2. **`streak_regression`**（`research/regression_methods.py`、`fixed_effects.py`）：與附錄 B.1 相同的核心，通過合成世界 T0–T3 的已知答案測試（附錄 A.2 的門檻原樣使用）、分群 SE 與暴力計算一致、可重現。真實資料（SL、FF、四組合併、S3）：SL k=2/3/4 ＝ +0.0361／+0.0534／+0.0593、FF ＝ +0.0274／+0.0201／+0.0270，與探索時完全相同；耗時 22 秒。`prior_same_type_count` 一律計算；`pitcher_game` 固定效應的耗時依資料量，需另行量測。
+3. **`run_compare`**（`research/compare_methods.py`）：用 `run_key` 找兩個成功的紀錄；`diff = b − a`；`se_diff = √(se_a²＋se_b²)`；輸出配對、未配對、設定差異三節。已用手算值測試（RE 差 0.5、se_diff 1.8028、z 0.2774）。
+4. **`outcome_model` 版本 2**：新增 `entity_features`（只能搭配 `logistic`）、`entity_min_count`、`hgb_early_stopping`（預設關）、`memory=0`（自動只剩 `base`）。已知答案（合成「兩位投手」世界，無衰減）：不加個體效應時序列增益 +0.0048 [0.0045, 0.0051]（假的）；加入投手效應後 −0.00002 [−0.00005, 0.00001]。為此 `synthetic.simulate` 新增 `pitcher_mix`（舊種子的結果不變）。
+5. **安慰劑 `pairs` 模式**：`placebo_same_point(mode=...)` 預設 `pairs`；`streak_curve` 版本 2 新增 `placebo_mode`。`synthetic_check` 的安慰劑檢查改為：T0 在帶內、T1 在帶外、T2 k=2 差 ≈ 0（`labels` 模式在 T2 為假陽性）。**實測 T2 的 k=3 在 30 萬打席時仍有 −0.020 的殘餘**（原始偏誤 −0.044），所以 k≥3 的安慰劑解讀要更保守；附錄 A.5 已更正。
+
+未做：`streak_regression` 對 `pitcher_game` 的效能最佳化（真實資料 FF 四組合併約需 2 分鐘，可接受）；結果頁圖表沒有欄位值篩選器（用研究紀錄的「條件過濾」在分析端篩選）。

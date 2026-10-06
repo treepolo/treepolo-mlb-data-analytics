@@ -8,13 +8,20 @@ from .streak import same_point_curve
 def placebo_same_point(
     rows: Sequence[dict[str, Any]], *, group_fields: Sequence[str], strata_fields: Sequence[str], pitch_types: Sequence[str],
     kmax: int, shuffles: int, seed: int = 0, min_n: int = 30, observed: Mapping[tuple, float] | None = None,
+    mode: str = "pairs",
 ) -> list[dict[str, Any]]:
-    """Same-point estimates after shuffling pitch types inside every plate appearance (the placebo).
+    """Same-point estimates after shuffling inside every plate appearance (the placebo; a DIAGNOSTIC, never a decision rule).
+
+    ``mode="pairs"`` (default) moves each pitch's (pitch type, eligibility, value) together between the positions of its plate
+    appearance and leaves the position-bound strata (pitch index, count) in place. Pitch-type-specific outcome levels
+    survive, so differing hazards between pitch types do not create a false effect (synthetic world T2: observed minus
+    placebo is about 0), while a true streak effect is partly retained (it is attenuated, not erased).
+    ``mode="labels"`` moves only the pitch-type labels: that breaks the link between type and outcome and gives a false
+    effect when hazards differ (T2: -0.05), so it is kept only for comparison.
 
     ``rows`` are pitch-level dicts sorted by (game_pk, at_bat_number, pitch_index_in_pa) with ``game_pk``,
     ``at_bat_number``, ``pitch_type``, the group and strata fields, ``e`` (1 if the pitch is eligible for the rate) and
-    ``x`` (its value). The outcome stays with its position; only the pitch-type labels move, so any streak effect that
-    survives is an artifact of the method. Returns one row per (group, pitch type, k) with the shuffled estimates'
+    ``x`` (its value). Returns one row per (group, pitch type, k) with the shuffled estimates'
     mean, sd, 2.5/97.5 percentiles, the number of shuffles that produced an estimate, and (when ``observed`` is given) the
     observed estimate with a permutation p-value. Note the placebo keeps each plate appearance's multiset of pitch types, so
     the null it tests is "the ORDER of pitch types inside a plate appearance carries no information"; with a real streak
@@ -23,6 +30,8 @@ def placebo_same_point(
 
     import numpy as np
 
+    if mode not in ("pairs", "labels"):
+        raise ValueError("mode must be pairs or labels")
     n = len(rows)
     if n == 0:
         return []
@@ -44,12 +53,13 @@ def placebo_same_point(
         change = np.ones(n, dtype=bool); change[1:] = new_pa[1:] | (shuffled[1:] != shuffled[:-1])
         start = np.maximum.accumulate(np.where(change, position, 0))
         k = np.minimum(position - start + 1, kmax)
-        keep = wanted[shuffled] & (e == 1)
+        e_s, x_s = (e[order], x[order]) if mode == "pairs" else (e, x)
+        keep = wanted[shuffled] & (e_s == 1)
         cells: dict[tuple, list[float]] = {}
         for i in np.nonzero(keep)[0]:
             key = tuple(c[i] for c in group_cols) + (labels[shuffled[i]],) + tuple(c[i] for c in strata_cols) + (int(k[i]),)
             cell = cells.setdefault(key, [0, 0.0, 0.0])
-            cell[0] += 1; cell[1] += x[i]; cell[2] += x[i] * x[i]
+            cell[0] += 1; cell[1] += x_s[i]; cell[2] += x_s[i] * x_s[i]
         cell_rows = []
         for key, (cn, sx, sxx) in cells.items():
             row = dict(zip(tuple(group_fields) + ("pitch_type",) + tuple(strata_fields) + ("k",), key))

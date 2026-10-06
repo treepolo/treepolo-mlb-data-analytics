@@ -270,13 +270,13 @@ def run_checks(*, n_pa: int = MIN_CHECK_PA, seed: int = 1, workdir: Path | None 
 
 
 def _placebo_checks(world, root: Path) -> list[dict[str, Any]]:
-    from ..analysis import AnalysisEngine, Binary, Case, Column, Filter, IsNull, Literal, NamedExpr, OrderKey, PITCH_GRAIN, Project, Sort, Source
+    from ..analysis import AnalysisEngine, Binary, Case, Column, Filter, Literal, NamedExpr, OrderKey, PITCH_GRAIN, Project, Sort, Source
     from ..analysis.pitch_table import build_pitch_table, rate_terms
     from .placebo import placebo_same_point
     from .scope import scope_filter_expr
 
     out = []
-    for name in ("T0", "T1"):
+    for name in ("T0", "T1", "T2"):
         _, db = world(name)
         _, _, same, strata = _curve(db)
         table = build_pitch_table(Filter(Source("pitches", PITCH_GRAIN), scope_filter_expr({"game_years": [2024], "game_types": ["R"]})), memory=1)
@@ -286,15 +286,23 @@ def _placebo_checks(world, root: Path) -> list[dict[str, Any]]:
                             + (NamedExpr("e", e), NamedExpr("x", Case(((Binary(e, "=", Literal(1)), x),), Literal(0)))), PITCH_GRAIN),
                     (OrderKey(Column("game_pk")), OrderKey(Column("at_bat_number")), OrderKey(Column("pitch_index_in_pa"))))
         result = AnalysisEngine(db, analytics_database_path=db.with_suffix(".duckdb"), backend="duckdb").execute(node)
-        rows = placebo_same_point(list(result.rows), group_fields=(), strata_fields=strata, pitch_types=("SL",), kmax=5, shuffles=20, seed=1,
-                                  observed={("SL", k): same[k]["estimate"] for k in same if same[k]["estimate"] is not None})
-        p2 = next(r for r in rows if r["k"] == 2)
+        rows = list(result.rows)
+        observed = {("SL", k): same[k]["estimate"] for k in same if same[k]["estimate"] is not None}
+        pairs = {r["k"]: r for r in placebo_same_point(rows, group_fields=(), strata_fields=strata, pitch_types=("SL",), kmax=5, shuffles=20, seed=1, observed=observed, mode="pairs")}
         if name == "T0":
-            out.append(_check("T0", "placebo is centred near zero", "|mean| < 0.01", p2["placebo_mean"], abs(p2["placebo_mean"]) < 0.01))
-            out.append(_check("T0", "observed k=2 lies inside the placebo band", "lo-0.01 .. hi+0.01", p2["observed"],
-                              p2["placebo_lo"] - 0.01 < p2["observed"] < p2["placebo_hi"] + 0.01))
+            out.append(_check("T0", "pairs placebo is centred near zero (k=2)", "|mean| < 0.01", pairs[2]["placebo_mean"], abs(pairs[2]["placebo_mean"]) < 0.01))
+            out.append(_check("T0", "observed k=2 lies inside the pairs placebo band", "lo-0.01 .. hi+0.01", pairs[2]["observed"],
+                              pairs[2]["placebo_lo"] - 0.01 < pairs[2]["observed"] < pairs[2]["placebo_hi"] + 0.01))
+        elif name == "T1":
+            out.append(_check("T1", "observed k=2 lies below the pairs placebo band", "< placebo_lo", pairs[2]["observed"], pairs[2]["observed"] < pairs[2]["placebo_lo"]))
         else:
-            out.append(_check("T1", "observed k=2 lies below the placebo band", "< placebo_lo", p2["observed"], p2["observed"] < p2["placebo_lo"]))
+            gap = pairs[2]["observed"] - pairs[2]["placebo_mean"]
+            out.append(_check("T2", "differing hazards: observed minus pairs placebo is about zero (k=2)", "|gap| < 0.01", gap, abs(gap) < 0.01))
+            gap3 = pairs[3]["observed"] - pairs[3]["placebo_mean"]      # observed -0.020 in the 300k world: only partly removed at k=3
+            out.append(_check("T2", "k=3: the pairs placebo removes most of the hazard bias (raw bias is about -0.044)", "gap > -0.03", gap3, gap3 > -0.03))
+            labels = {r["k"]: r for r in placebo_same_point(rows, group_fields=(), strata_fields=strata, pitch_types=("SL",), kmax=5, shuffles=20, seed=1, observed=observed, mode="labels")}
+            gap = labels[2]["observed"] - labels[2]["placebo_mean"]
+            out.append(_check("T2", "the labels placebo gives a false effect here (documented weakness)", "gap < -0.03", gap, gap < -0.03))
     return out
 
 
