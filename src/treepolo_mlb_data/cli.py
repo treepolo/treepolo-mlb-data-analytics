@@ -36,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     g = a.add_mutually_exclusive_group(required=True); g.add_argument("--enable", action="store_true"); g.add_argument("--disable", action="store_true")
     s = sub.add_parser("scheduler"); s.add_argument("--once", action="store_true")
     r = sub.add_parser("rebuild"); r.add_argument("--yes", action="store_true", help="Required: recreates normalized DB from raw snapshots")
+    research = sub.add_parser("research", help="Run, list, export and import recorded research runs")
+    from .research.cli import add_arguments as add_research_arguments
+    add_research_arguments(research)
     ui = sub.add_parser("ui", help="Open the local bilingual Windows XP/7-style analysis interface")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8765)
@@ -86,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
         result = DuckDBMirror(config.database_path, config.analytics_database_path).ensure()
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
+    if args.command == "research":
+        from .research.cli import run_command as run_research_command
+        return run_research_command(args, config)
     if args.command == "benchmark":
         from .benchmark import run_benchmark
         print(json.dumps(run_benchmark(config, year=args.year, runs=max(1, args.runs), backend=args.backend), indent=2, ensure_ascii=False))
