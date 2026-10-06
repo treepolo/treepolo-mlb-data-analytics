@@ -113,3 +113,23 @@ def test_invalid_settings_are_rejected(worlds, bad):
 def test_row_cap_is_an_error_not_a_truncation(worlds):
     with pytest.raises(ConfigError, match="max_rows"):
         worlds["T0"].run("streak_regression", {**BASE, "max_rows": 1000})
+
+
+def _gaps(service, **extra):
+    run, _ = _estimates(service, placebo_shuffles=4, **extra)
+    assert run["summary"]["section_titles"][1].startswith("Placebo")
+    return {r["term"]: r for r in service.result_page(run["id"], 1, 0, 20)["rows"]}
+
+
+def test_regression_placebo_is_centred_on_zero_without_an_effect_and_far_from_the_estimate_with_one(worlds):
+    t0, t1, t2 = _gaps(worlds["T0"]), _gaps(worlds["T1"]), _gaps(worlds["T2"])
+    assert abs(t0["k=2"]["gap"]) < 0.01 and abs(t0["k=3"]["gap"]) < 0.01                     # observed +0.0025 / -0.0008
+    assert abs(t2["k=2"]["gap"]) < 0.015 and abs(t2["k=2"]["placebo_mean"]) < 0.015           # differing hazards: still no false effect (+0.0066)
+    assert t1["k=3"]["gap"] < -0.03 and abs(t1["k=3"]["placebo_mean"]) < 0.02                  # observed gap -0.064, placebo -0.004
+
+
+def test_placebo_rejects_unsupported_specifications(worlds):
+    with pytest.raises(ConfigError, match="placebo"):
+        worlds["T0"].run("streak_regression", {**BASE, "placebo_shuffles": 2, "controls": ["count", "zone"]})
+    with pytest.raises(ConfigError, match="placebo"):
+        worlds["T0"].run("streak_regression", {**BASE, "placebo_shuffles": 2, "treatment": "prev1_pitch_type"})

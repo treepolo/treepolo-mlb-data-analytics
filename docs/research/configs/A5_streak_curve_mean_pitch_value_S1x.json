@@ -1,0 +1,38 @@
+{
+ "bootstrap_reps": 200,
+ "cluster_by": "pitcher",
+ "confidence": 0.99,
+ "hand_view": "four_groups",
+ "kind": "streak_curve",
+ "kmax": 4,
+ "pitch_types": [
+  "FF",
+  "SI",
+  "FC",
+  "SL",
+  "ST",
+  "CH",
+  "CU",
+  "FS",
+  "KC"
+ ],
+ "purpose": "tuning",
+ "rate": "mean_pitch_value",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023,
+   2024
+  ]
+ },
+ "se_method": "cluster_bootstrap",
+ "strata_fields": [
+  "pitch_index_in_pa",
+  "balls",
+  "strikes",
+  "prior_same_type_count"
+ ],
+ "study": "P5-3 streak"
+}

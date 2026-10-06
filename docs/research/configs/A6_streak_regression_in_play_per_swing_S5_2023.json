@@ -1,0 +1,41 @@
+{
+ "cluster_by": "pitcher",
+ "confidence": 0.99,
+ "controls": [
+  "count",
+  "exposure",
+  "prev1_description",
+  "zone",
+  "release_speed"
+ ],
+ "fixed_effects": [
+  "pitcher",
+  "batter"
+ ],
+ "hand_view": "four_groups",
+ "kind": "streak_regression",
+ "kmax": 4,
+ "pitch_types": [
+  "FF",
+  "SI",
+  "FC",
+  "SL",
+  "ST",
+  "CH",
+  "CU",
+  "FS",
+  "KC"
+ ],
+ "purpose": "tuning",
+ "rate": "in_play_per_swing",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023
+  ]
+ },
+ "study": "P5-3 streak",
+ "treatment": "streak_position"
+}

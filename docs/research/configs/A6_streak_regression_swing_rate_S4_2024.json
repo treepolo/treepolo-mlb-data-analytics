@@ -1,0 +1,38 @@
+{
+ "cluster_by": "pitcher",
+ "confidence": 0.99,
+ "controls": [
+  "count",
+  "exposure"
+ ],
+ "fixed_effects": [
+  "pitcher_game",
+  "batter"
+ ],
+ "hand_view": "four_groups",
+ "kind": "streak_regression",
+ "kmax": 4,
+ "pitch_types": [
+  "FF",
+  "SI",
+  "FC",
+  "SL",
+  "ST",
+  "CH",
+  "CU",
+  "FS",
+  "KC"
+ ],
+ "purpose": "tuning",
+ "rate": "swing_rate",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2024
+  ]
+ },
+ "study": "P5-3 streak",
+ "treatment": "streak_position"
+}
