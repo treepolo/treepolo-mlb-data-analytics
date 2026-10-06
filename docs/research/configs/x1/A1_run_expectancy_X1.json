@@ -1,0 +1,16 @@
+{
+ "kind": "run_expectancy",
+ "purpose": "extra_study",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023,
+   2024,
+   2025,
+   2026
+  ]
+ },
+ "study": "P5-7 extra study"
+}

@@ -1,0 +1,34 @@
+{
+ "bootstrap_reps": 200,
+ "entity_features": [
+  "pitcher",
+  "batter"
+ ],
+ "ev_check": true,
+ "groups": [
+  "RvR",
+  "RvL",
+  "LvR",
+  "LvL"
+ ],
+ "kind": "outcome_model",
+ "memory": 3,
+ "models": [
+  "logistic"
+ ],
+ "purpose": "extra_study",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023,
+   2024,
+   2025,
+   2026
+  ]
+ },
+ "sequence_ladder": true,
+ "split": "grouped_kfold",
+ "study": "P5-7 extra study"
+}
