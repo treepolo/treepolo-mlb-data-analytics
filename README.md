@@ -47,6 +47,7 @@ The canonical architecture, ten stress-test analysis requirements, completed Sta
 - Figure export to SVG and PNG, plus Copy Image where the browser supports Clipboard image writes.
 - HTML and PDF reports with bilingual labels, source/provenance/presentation metadata, responsive result tables and wide-table PDF handling.
 - Request/restore lifecycle guards for rapid Visualization source switching, stale section state and Saved Visualization restore ordering.
+- Research runs: settings-driven research methods whose runs (settings, result, data scope, code version) are recorded automatically, reused when nothing changed, grouped into studies, and exportable/importable as research bundle files (UI page, HTTP API and `research` CLI). Design: [`docs/PITCH_SEQUENCING_PLAN.md`](docs/PITCH_SEQUENCING_PLAN.md).
 - Supplemental Pitch3D and Hawk-Eye spin aggregate data-management paths kept isolated from the existing Statcast analyzer until a future explicit grain-aware multi-source design exists.
 - Unit/integration tests, known-answer numerical tests, stress-test acceptance coverage, Stage 4D regression coverage, and a live Baseball Savant smoke test in GitHub Actions.
 
