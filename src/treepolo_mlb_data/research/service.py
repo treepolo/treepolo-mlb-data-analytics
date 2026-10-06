@@ -46,11 +46,16 @@ def code_version() -> str:
         return _CODE_VERSION
 
 
-def make_run_key(kind: str, method_version: int, config: Mapping[str, Any], scope_fingerprint: str) -> str:
-    material = canonical_json({
+def make_run_key(
+    kind: str, method_version: int, config: Mapping[str, Any], scope_fingerprint: str, inputs: Mapping[str, Any] | None = None,
+) -> str:
+    body: dict[str, Any] = {
         "format": RUN_KEY_FORMAT, "kind": kind, "method_version": int(method_version),
         "config": dict(config), "scope_fingerprint": scope_fingerprint,
-    })
+    }
+    if inputs:  # keys of methods without extra inputs stay exactly as before
+        body["inputs"] = dict(inputs)
+    material = canonical_json(body)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -97,7 +102,10 @@ class ResearchService:
         fingerprint = compute_scope_fingerprint(self.config.database_path, scope)
         if scope and not fingerprint["total_rows"]:
             raise ConfigError("Scope contains no pitches / 研究範圍內沒有資料")
-        run_key = make_run_key(kind, method.version, resolved, fingerprint["scope_fingerprint"])
+        inputs = method.method_inputs(ctx, resolved)
+        if inputs:
+            fingerprint = {**fingerprint, "method_inputs": inputs}
+        run_key = make_run_key(kind, method.version, resolved, fingerprint["scope_fingerprint"], inputs)
         study = self._resolve_study(study_id, study_name)
 
         with self._lock:

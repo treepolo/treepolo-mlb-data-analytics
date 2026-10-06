@@ -64,6 +64,12 @@ class ResearchMethod:
     def validate(self, config: dict[str, Any], ctx: ResearchContext) -> None:
         """Cross-field checks. Raise ConfigError on invalid combinations."""
 
+    def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
+        """Fingerprint of data the method reads OUTSIDE the research scope (e.g. a run-expectancy scope). Goes into the run key
+        and the stored data fingerprint. Called after ``validate``; must be JSON-serializable. Empty means "none"."""
+
+        return {}
+
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         raise NotImplementedError
 
