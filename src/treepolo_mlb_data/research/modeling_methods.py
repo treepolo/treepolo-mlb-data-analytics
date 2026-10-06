@@ -278,7 +278,7 @@ class SyntheticCheckMethod(ResearchMethod):
     """Known-answer self-check of the whole pipeline on synthetic worlds (zero decay, true decay, survival bias, placebo, sequence gain)."""
 
     kind = "synthetic_check"
-    version = 1
+    version = 2  # 2: pairs placebo checks, T2 placebo checks, pitcher world support
     label_zh = "合成資料已知答案檢查"
     label_en = "Synthetic known-answer check"
     requires_scope = False
