@@ -1,0 +1,38 @@
+{
+ "cluster_by": "pitcher",
+ "confidence": 0.99,
+ "controls": [
+  "count",
+  "exposure"
+ ],
+ "fixed_effects": [
+  "pitcher",
+  "batter"
+ ],
+ "hand_view": "four_groups",
+ "kind": "streak_regression",
+ "kmax": 4,
+ "pitch_types": [
+  "FF",
+  "SI",
+  "FC",
+  "SL",
+  "ST",
+  "CH",
+  "CU",
+  "FS",
+  "KC"
+ ],
+ "purpose": "final_test",
+ "rate": "whiff_per_swing",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2026
+  ]
+ },
+ "study": "P5-6 test 2026",
+ "treatment": "streak_position"
+}

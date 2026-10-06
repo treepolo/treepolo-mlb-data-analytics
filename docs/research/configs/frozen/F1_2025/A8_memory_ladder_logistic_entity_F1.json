@@ -1,0 +1,40 @@
+{
+ "bootstrap_reps": 200,
+ "entity_features": [
+  "pitcher",
+  "batter"
+ ],
+ "ev_check": true,
+ "groups": [
+  "RvR",
+  "RvL",
+  "LvR",
+  "LvL"
+ ],
+ "kind": "outcome_model",
+ "memory": 3,
+ "models": [
+  "logistic"
+ ],
+ "purpose": "final_test",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2023,
+   2024,
+   2025
+  ]
+ },
+ "sequence_ladder": true,
+ "split": "holdout_years",
+ "study": "P5-6 test 2025",
+ "test_years": [
+  2025
+ ],
+ "train_years": [
+  2023,
+  2024
+ ]
+}

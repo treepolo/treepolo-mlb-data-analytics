@@ -1,0 +1,32 @@
+{
+ "choice_fields": [
+  "pitch_type"
+ ],
+ "kind": "outcome_table",
+ "purpose": "final_test",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2026
+  ]
+ },
+ "situation_fields": [
+  "balls",
+  "strikes"
+ ],
+ "study": "P5-6 test 2026",
+ "swing_metrics": [
+  "launch_speed",
+  "launch_angle",
+  "bat_speed",
+  "swing_length",
+  "attack_angle",
+  "attack_direction",
+  "swing_path_tilt",
+  "intercept_ball_minus_batter_pos_x_inches",
+  "intercept_ball_minus_batter_pos_y_inches",
+  "miss_distance"
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "kind": "run_expectancy",
+ "purpose": "final_test",
+ "scope": {
+  "game_types": [
+   "R"
+  ],
+  "game_years": [
+   2026
+  ]
+ },
+ "study": "P5-6 test 2026"
+}
