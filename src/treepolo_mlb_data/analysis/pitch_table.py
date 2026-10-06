@@ -185,22 +185,33 @@ def streak_cells_node(
 
 
 # ---------------------------------------------------------------------------------------------- outcome cells
-def outcome_cells_node(table, *, cell_fields: Sequence[str], cluster_fields: Sequence[str], categories: Sequence[str]):
+SWING_METRIC_FIELDS = (
+    "launch_speed", "launch_angle", "bat_speed", "swing_length", "attack_angle", "attack_direction", "swing_path_tilt",
+    "intercept_ball_minus_batter_pos_x_inches", "intercept_ball_minus_batter_pos_y_inches", "miss_distance",
+)
+
+
+def outcome_cells_node(table, *, cell_fields: Sequence[str], cluster_fields: Sequence[str], categories: Sequence[str],
+                       swing_metrics: Sequence[str] = (), with_values: bool = True):
     """Per cell: n, outcome counts c_<category>, and pitch-value sums for a cluster-robust SE of the mean value.
 
     Result columns: cell fields, n, nv (pitches with a value), sv (sum of values), ssv, snv, nnv, g (clusters with a
-    value) and c_<category> for every category. Two-level aggregate: level 1 per (cell, cluster), level 2 per cell.
+    value), c_<category> for every category, and w_<field>_n / w_<field>_s (count and sum of non-NULL values) for each swing metric. Two-level aggregate: level 1 per (cell, cluster), level 2 per cell.
     """
 
     keys = tuple(cell_fields) + tuple(cluster_fields)
+    value_metrics = (Metric("nv", "count", C("pitch_value")), Metric("sv", "sum", C("pitch_value"))) if with_values else ()
     level1 = Aggregate(table, tuple(NamedExpr(f, C(f)) for f in keys), (
-        Metric("n", "count"), Metric("nv", "count", C("pitch_value")), Metric("sv", "sum", C("pitch_value")),
-    ) + tuple(Metric(f"c_{c}", "sum", Case(((Binary(C("outcome"), "=", Literal(c)), Literal(1)),), Literal(0))) for c in categories),
+        Metric("n", "count"),) + value_metrics + (
+    ) + tuple(Metric(f"c_{c}", "sum", Case(((Binary(C("outcome"), "=", Literal(c)), Literal(1)),), Literal(0))) for c in categories)
+        + tuple(m for f in swing_metrics for m in (Metric(f"w_{f}_n", "count", C(f)), Metric(f"w_{f}_s", "sum", C(f)))),
         Grain(keys, "cell_cluster"))
-    sv0 = Case(((IsNull(C("sv"), True), C("sv")),), Literal(0.0))
+    sv0 = Case(((IsNull(C("sv"), True), C("sv")),), Literal(0.0)) if with_values else Literal(0.0)
+    nv = C("nv") if with_values else Literal(0)
     return Aggregate(level1, tuple(NamedExpr(f, C(f)) for f in cell_fields), (
-        Metric("n", "sum", C("n")), Metric("nv", "sum", C("nv")), Metric("sv", "sum", sv0),
-        Metric("ssv", "sum", Binary(sv0, "*", sv0)), Metric("snv", "sum", Binary(sv0, "*", C("nv"))),
-        Metric("nnv", "sum", Binary(C("nv"), "*", C("nv"))),
-        Metric("g", "sum", Case(((Binary(C("nv"), ">", Literal(0)), Literal(1)),), Literal(0))),
-    ) + tuple(Metric(f"c_{c}", "sum", C(f"c_{c}")) for c in categories), Grain(tuple(cell_fields), "cell"))
+        Metric("n", "sum", C("n")), Metric("nv", "sum", nv), Metric("sv", "sum", sv0),
+        Metric("ssv", "sum", Binary(sv0, "*", sv0)), Metric("snv", "sum", Binary(sv0, "*", nv)),
+        Metric("nnv", "sum", Binary(nv, "*", nv)),
+        Metric("g", "sum", Case(((Binary(nv, ">", Literal(0)), Literal(1)),), Literal(0))),
+    ) + tuple(Metric(f"c_{c}", "sum", C(f"c_{c}")) for c in categories)
+        + tuple(Metric(f"w_{f}_{k}", "sum", C(f"w_{f}_{k}")) for f in swing_metrics for k in ("n", "s")), Grain(tuple(cell_fields), "cell"))

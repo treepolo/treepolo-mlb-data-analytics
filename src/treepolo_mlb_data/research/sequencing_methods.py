@@ -11,7 +11,7 @@ from ..analysis import (
 from ..analysis.exclusions import BUNT_POLICIES
 from ..analysis.model import PITCH_GRAIN, Project, SCALAR_GRAIN
 from ..analysis.pitch_table import (
-    CELL_FIELD_CHOICES, IN_PLAY, RATE_NAMES, STRATA_FIELD_CHOICES, SWING, build_pitch_table, outcome_cells_node, pitch_table_columns,
+    CELL_FIELD_CHOICES, IN_PLAY, SWING_METRIC_FIELDS, RATE_NAMES, STRATA_FIELD_CHOICES, SWING, build_pitch_table, outcome_cells_node, pitch_table_columns,
     rate_terms, streak_cells_node,
 )
 from ..analysis.run_values import (
@@ -218,6 +218,8 @@ class OutcomeTableMethod(ResearchMethod):
                     help_zh="低於此數標示 low_n；不填補。", help_en="Cells below this are flagged low_n; never filled in."),
         ConfigField("max_cells", "int", default=20000, minimum=1, maximum=500000, label_zh="格子數上限", label_en="Maximum cells",
                     help_zh="超過就報錯（不截斷）；請減少欄位或加條件。", help_en="More cells is an error (never truncated); use fewer fields or add filters."),
+        ConfigField("swing_metrics", "str_list", default=[], label_zh="結果分項（擊球資料與球棒追蹤）", label_en="Swing and batted-ball breakdowns",
+                    help_zh="每格輸出有值球數與平均；缺值不填補、不計入。", help_en="Per cell: count and mean of non-NULL values; never imputed."),
         ConfigField("symmetry_top", "int", default=20, minimum=0, label_zh="對稱性檢查列出最差格數", label_en="Worst cells listed by the symmetry check"),
     )
 
@@ -236,6 +238,7 @@ class OutcomeTableMethod(ResearchMethod):
                 raise ConfigError("same_opposite needs location_frame=mirrored / same_opposite 需要 location_frame=mirrored")
             if config["cluster_by"] not in ("plate_appearance", "pitcher"):
                 raise ConfigError("same_opposite supports cluster_by plate_appearance or pitcher only / same_opposite 只支援以打席或投手分群")
+        _check_column_list("swing_metrics", config["swing_metrics"], SWING_METRIC_FIELDS)
         config["loc_x_edges"] = _check_edges("loc_x_edges", config["loc_x_edges"])
         config["loc_z_edges"] = _check_edges("loc_z_edges", config["loc_z_edges"])
         for name, edges in (("loc_x_bin", config["loc_x_edges"]), ("loc_z_bin", config["loc_z_edges"])):
@@ -255,11 +258,12 @@ class OutcomeTableMethod(ResearchMethod):
         table = build_pitch_table(
             ctx.source_node(), bunt_policy=config["bunt_policy"], memory=config["memory"], re_by_state=re.re_by_state if re else None,
             mirror=config["location_frame"] == "mirrored", loc_x_edges=config["loc_x_edges"] if "loc_x_bin" in fields else (),
-            loc_z_edges=config["loc_z_edges"] if "loc_z_bin" in fields else (), filters=config["filters"])
+            loc_z_edges=config["loc_z_edges"] if "loc_z_bin" in fields else (), filters=config["filters"],
+            extra_columns=config["swing_metrics"])
         keep = Filter(table, IsNull(Column("hand_group"), True))
         cell_fields = ("hand_group",) + fields
         node = Limit(outcome_cells_node(keep, cell_fields=cell_fields, cluster_fields=CLUSTER_FIELDS[config["cluster_by"]],
-                                        categories=OUTCOME_CATEGORIES), config["max_cells"] + 1)
+                                        categories=OUTCOME_CATEGORIES, swing_metrics=config["swing_metrics"], with_values=re is not None), config["max_cells"] + 1)
         result = run_checked(ctx, node)
         if len(result.rows) > config["max_cells"]:
             raise ConfigError(f"More than max_cells={config['max_cells']} cells; use fewer fields or add filters / 格子數超過 max_cells")
@@ -269,7 +273,7 @@ class OutcomeTableMethod(ResearchMethod):
         for view in config["hand_views"]:
             merged = rows if view == "four_groups" else _merge_views(rows, fields)
             cells, probabilities = _cell_rows(merged, fields, present, config, with_values=re is not None)
-            sections.append(make_section(f"Cells ({view}) 格子", _cell_columns(fields, present, re is not None), cells, ("hand_group",) + fields, result.backend))
+            sections.append(make_section(f"Cells ({view}) 格子", _cell_columns(fields, present, re is not None, config["swing_metrics"]), cells, ("hand_group",) + fields, result.backend))
             sections.append(make_section(f"Outcome probabilities ({view}) 結果機率",
                                      ("hand_group",) + fields + ("outcome", "count", "n", "p", "lo", "hi", "low_n"), probabilities,
                                      ("hand_group",) + fields + ("outcome",), result.backend))
@@ -278,6 +282,9 @@ class OutcomeTableMethod(ResearchMethod):
             "pitches": sum(int(r["n"]) for r in rows), "pitches_with_value": sum(int(r["nv"] or 0) for r in rows),
             "cluster_by": config["cluster_by"], "location_frame": config["location_frame"],
         }
+        if config["swing_metrics"]:
+            total = max(extras["pitches"], 1)
+            extras["swing_metric_coverage"] = {f: sum(int(r[f"w_{f}_n"] or 0) for r in rows) / total for f in config["swing_metrics"]}
         if "same_opposite" in config["hand_views"]:
             summary, worst = _symmetry(rows, fields, present, config)
             sections.append(make_section("Symmetry check 對稱性檢查", ("pair", "outcome", "cells_compared", "mean_z", "mean_abs_z", "share_abs_z_above_critical"),
@@ -290,7 +297,7 @@ class OutcomeTableMethod(ResearchMethod):
 def _merge_views(rows: list[dict[str, Any]], fields: Sequence[str]) -> list[dict[str, Any]]:
     """Add the four hand groups into same_side / opposite_side. Valid because every cluster belongs to one source group."""
 
-    additive = [k for k in rows[0] if k in ("n", "nv", "sv", "ssv", "snv", "nnv", "g") or k.startswith("c_")] if rows else []
+    additive = [k for k in rows[0] if k in ("n", "nv", "sv", "ssv", "snv", "nnv", "g") or k.startswith(("c_", "w_"))] if rows else []
     merged: dict[tuple, dict[str, Any]] = {}
     for row in rows:
         key = (VIEW_GROUP.get(row["hand_group"], row["hand_group"]),) + tuple(row[f] for f in fields)
@@ -303,11 +310,12 @@ def _merge_views(rows: list[dict[str, Any]], fields: Sequence[str]) -> list[dict
     return list(merged.values())
 
 
-def _cell_columns(fields: Sequence[str], present: Sequence[str], with_values: bool) -> tuple[str, ...]:
+def _cell_columns(fields: Sequence[str], present: Sequence[str], with_values: bool, swing_metrics: Sequence[str] = ()) -> tuple[str, ...]:
     columns = ["hand_group", *fields, "n", "n_swing", "swing_rate", "swing_lo", "swing_hi", "whiff_per_swing", "whiff_lo", "whiff_hi",
                "hr_n", "hr_rate", "hr_lo", "hr_hi"]
     if with_values:
         columns += ["n_value", "clusters", "mean_value", "se_value", "value_lo", "value_hi"]
+    columns += [f"{f}_{k}" for f in swing_metrics for k in ("n", "mean")]
     columns += [f"c_{c}" for c in present] + ["low_n"]
     return tuple(columns)
 
@@ -331,6 +339,10 @@ def _cell_rows(merged, fields, present, config, *, with_values):
             out.update(n_value=nv, clusters=int(row["g"] or 0), mean_value=mean, se_value=se)
             out["value_lo"], out["value_hi"] = mean_interval(mean, se, confidence)
         out.update({f"c_{c}": counts[c] for c in present})
+        for f in config["swing_metrics"]:
+            wn = int(row[f"w_{f}_n"] or 0)
+            out[f"{f}_n"] = wn
+            out[f"{f}_mean"] = float(row[f"w_{f}_s"]) / wn if wn else None
         cells.append(out)
         for c in present:
             lo, hi = wilson_interval(counts[c], n, confidence)

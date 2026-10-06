@@ -13,14 +13,18 @@ DEFAULTS: dict[str, Any] = dict(
     pitch_uid=None, game_pk=1, at_bat_number=1, pitch_number=1, game_year=2024, game_type="R", game_date="2024-05-01",
     inning="1", inning_topbot="Top", pitcher=10, batter=100, pitch_type="FF", description="ball", events=None, des=None,
     release_speed=93.0, plate_x=0.0, plate_z=2.5, zone=5, spin_axis=None, pfx_x=0.0, pfx_z=0.0, release_spin_rate=2200.0,
-    release_extension=6.5, p_throws="R", stand="R", balls=0, strikes=0,
+    release_extension=6.5, launch_speed=None, launch_angle=None, bat_speed=None, swing_length=None, attack_angle=None,
+    attack_direction=None, swing_path_tilt=None, intercept_ball_minus_batter_pos_x_inches=None,
+    intercept_ball_minus_batter_pos_y_inches=None, miss_distance=None, p_throws="R", stand="R", balls=0, strikes=0,
     outs_when_up=0, on_1b=None, on_2b=None, on_3b=None, bat_score=0, post_bat_score=0, post_home_score=0, post_away_score=0,
     delta_run_exp=None, _ingested_at=INGESTED,
 )
 COLUMNS = tuple(DEFAULTS)
 _TEXT = {"pitch_uid", "game_type", "game_date", "inning", "inning_topbot", "pitch_type", "description", "events", "des",
          "p_throws", "stand", "_ingested_at"}
-_REAL = {"release_speed", "plate_x", "plate_z", "spin_axis", "pfx_x", "pfx_z", "release_spin_rate", "release_extension", "delta_run_exp"}
+_REAL = {"release_speed", "plate_x", "plate_z", "spin_axis", "pfx_x", "pfx_z", "release_spin_rate", "release_extension", "delta_run_exp", "launch_speed", "launch_angle", "bat_speed", "swing_length",
+         "attack_angle", "attack_direction", "swing_path_tilt", "intercept_ball_minus_batter_pos_x_inches",
+         "intercept_ball_minus_batter_pos_y_inches", "miss_distance"}
 
 
 def _ddl() -> str:
