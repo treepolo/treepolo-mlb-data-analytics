@@ -33,7 +33,7 @@ def test_every_in_play_event_and_unknown_values(tmp_path):
         play("weird", "some_new_event"), play("noevent", None),
         ("bb", "blocked_ball", None, None, INGESTED), ("sb", "swinging_strike_blocked", None, None, INGESTED),
         ("tip", "foul_tip", None, None, INGESTED), ("hbp", "hit_by_pitch", None, None, INGESTED),
-        ("mb", "missed_bunt", None, None, INGESTED), ("fb", "foul_bunt", None, None, INGESTED),
+        ("mb", "missed_bunt", None, None, INGESTED), ("fb", "foul_bunt", None, None, INGESTED), ("bft", "bunt_foul_tip", None, None, INGESTED),
         ("nulldesc", None, None, None, INGESTED), ("newdesc", "something_else", None, None, INGESTED),
         play("bunt1", "single", "X bunts for a single"), play("bunt2", "field_out", "Y Bunt Pop Out"), play("bunt3", "sac_bunt_double_play"),
     ]
@@ -44,7 +44,7 @@ def test_every_in_play_event_and_unknown_values(tmp_path):
     assert {got[k] for k in ("e1", "e2", "e3")} == {"in_play_error_other"}
     assert got["weird"] == "unclassified" and got["noevent"] == "unclassified"
     assert got["bb"] == "ball" and got["sb"] == "whiff" and got["tip"] == "foul_tip" and got["hbp"] == "hit_by_pitch"
-    assert got["mb"] == "bunt" and got["fb"] == "bunt"
+    assert got["mb"] == "bunt" and got["fb"] == "bunt" and got["bft"] == "bunt"
     assert got["nulldesc"] == "unclassified" and got["newdesc"] == "unclassified"
     assert {got[k] for k in ("bunt1", "bunt2", "bunt3")} == {"bunt"}
     assert set(got.values()) <= set(OUTCOME_CATEGORIES)

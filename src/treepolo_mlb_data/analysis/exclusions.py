@@ -5,8 +5,10 @@ from typing import Iterable
 from ._keys import PA
 from .model import Binary, Boolean, Case, Column, Filter, InList, IsNull, Literal, Window, WindowField
 
-NON_PITCH_DESCRIPTIONS = ("automatic_ball", "automatic_strike", "pitchout", "intent_ball")
+NON_PITCH_DESCRIPTIONS = ("automatic_ball", "automatic_strike", "pitchout", "swinging_pitchout", "intent_ball")
 NON_PITCH_TYPES = ("PO", "IN", "AB", "AS")
+# Bunt attempts recorded in `description` (bunt_foul_tip was found in the real 2023-2026 data).
+BUNT_DESCRIPTIONS = ("foul_bunt", "missed_bunt", "bunt_foul_tip")
 BUNT_POLICIES = ("exclude_plate_appearance", "exclude_pitch", "keep")
 
 
@@ -31,7 +33,7 @@ def bunt_pitch_flag():
     """1 when this pitch row shows a bunt, else 0 (never NULL)."""
 
     return _flag(
-        InList(Column("description"), (Literal("foul_bunt"), Literal("missed_bunt"))),
+        InList(Column("description"), tuple(Literal(x) for x in BUNT_DESCRIPTIONS)),
         InList(Column("events"), (Literal("sac_bunt"), Literal("sac_bunt_double_play"))),
         Binary(Column("des"), "LIKE", Literal("%bunt%")),
         Binary(Column("des"), "LIKE", Literal("%Bunt%")),  # DuckDB LIKE is case-sensitive

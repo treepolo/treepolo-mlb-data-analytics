@@ -57,7 +57,7 @@ class DataProfileMethod(ResearchMethod):
     """Measure value ranges, field coverage, bunt share and zone definitions in the data scope."""
 
     kind = "data_profile"
-    version = 1
+    version = 2  # 2: bunt_foul_tip counted as a bunt in bunt_share
     label_zh = "資料剖析"
     label_en = "Data profile"
     requires_scope = True
@@ -119,7 +119,7 @@ class DataProfileMethod(ResearchMethod):
             conn.close()
         return ResearchResult(
             sections=tuple(sections),
-            extras={"scope": ctx.scope, "pitch_rows_in_scope": rows_in_scope, "generated_by": "data_profile v1"},
+            extras={"scope": ctx.scope, "pitch_rows_in_scope": rows_in_scope, "generated_by": "data_profile v2"},
         )
 
 

@@ -65,3 +65,16 @@ def test_bunt_plate_appearance_filter_alone(tmp_path):
     db = make_seq_db(tmp_path / "s.sqlite3")
     result = set(kept(db, exclude_bunt_plate_appearances(Source("pitches", PITCH_GRAIN))))
     assert result == ALL - {"1:3:1", "1:3:2", "1:4:1", "1:4:2", "1:5:1", "1:6:1"}
+
+
+def test_bunt_foul_tip_and_swinging_pitchout_found_in_real_data(tmp_path):
+    ddl = ("pitch_uid TEXT PRIMARY KEY, game_pk INTEGER, at_bat_number INTEGER, pitch_number INTEGER, pitch_type TEXT, "
+           "description TEXT, events TEXT, des TEXT, _ingested_at TEXT")
+    cols = ("pitch_uid", "game_pk", "at_bat_number", "pitch_number", "pitch_type", "description", "events", "des", "_ingested_at")
+    rows = [
+        ("a1", 1, 1, 1, "FF", "ball", None, None, INGESTED), ("a2", 1, 1, 2, "FF", "bunt_foul_tip", None, None, INGESTED),   # bunt PA
+        ("b1", 1, 2, 1, "FF", "ball", None, None, INGESTED), ("b2", 1, 2, 2, "FF", "swinging_pitchout", None, None, INGESTED),
+    ]
+    db = make_table_db(tmp_path / "b.sqlite3", ddl, rows, cols)
+    assert kept(db, apply_exclusions(Source("pitches", PITCH_GRAIN))) == ["b1"]
+    assert kept(db, apply_exclusions(Source("pitches", PITCH_GRAIN), bunt_policy="exclude_pitch")) == ["a1", "b1"]

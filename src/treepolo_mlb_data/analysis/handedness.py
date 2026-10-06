@@ -8,10 +8,15 @@ from .model import Binary, Boolean, Case, Column, IsNull, Literal, NamedExpr, PI
 ZONE_MIRROR = {1: 3, 3: 1, 4: 6, 6: 4, 7: 9, 9: 7, 11: 12, 12: 11, 13: 14, 14: 13}
 
 # field -> rule. "negate": x -> -x; "axis_360": x -> 360 - x (0 stays 0); "zone_map": ZONE_MIRROR; "none": unchanged.
-# Initial decided rules; the remaining candidate fields are decided from real data in task T2.8.
+# Final rules after the real-data checks of task T2.8 (see docs/PITCH_SEQUENCING_PLAN.md 2.6).
 MIRROR_RULES: dict[str, str] = {
     "plate_x": "negate", "pfx_x": "negate", "release_pos_x": "negate", "vx0": "negate", "ax": "negate",
     "spin_axis": "axis_360", "zone": "zone_map",
+    # Decided from the 2023-2026 data (P2 profile): already arm- or batter-relative, so they must NOT be mirrored.
+    "api_break_x_arm": "none", "api_break_x_batter_in": "none", "attack_direction": "none",
+    "intercept_ball_minus_batter_pos_x_inches": "none",
+    # hc_x is an absolute field coordinate; mirroring needs a verified centre point and is not implemented yet.
+    "hc_x": "none",
 }
 _VALID_RULES = {"negate", "axis_360", "zone_map", "none"}
 

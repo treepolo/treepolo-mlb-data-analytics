@@ -61,3 +61,10 @@ def test_validation():
         mirror_to_right_handed_pitcher(base, CARRY, rules={"plate_x": "flip"})
     with pytest.raises(ValueError, match="generated columns"):
         mirror_to_right_handed_pitcher(base, CARRY + ("mirrored",))
+
+
+def test_final_rule_table_matches_the_real_data_decisions():
+    assert {k for k, v in MIRROR_RULES.items() if v == "negate"} == {"plate_x", "pfx_x", "release_pos_x", "vx0", "ax"}
+    assert MIRROR_RULES["spin_axis"] == "axis_360" and MIRROR_RULES["zone"] == "zone_map"
+    assert {k for k, v in MIRROR_RULES.items() if v == "none"} == {
+        "api_break_x_arm", "api_break_x_batter_in", "attack_direction", "intercept_ball_minus_batter_pos_x_inches", "hc_x"}

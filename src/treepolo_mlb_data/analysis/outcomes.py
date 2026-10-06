@@ -43,7 +43,7 @@ def outcome_category_expr(merge: Mapping[str, str] | None = None):
         return (Boolean("and", (in_play, lit_in(e, event_values))), name(category))
 
     return Case((
-        (lit_in(d, ("foul_bunt", "missed_bunt")), name("bunt")),
+        (lit_in(d, ("foul_bunt", "missed_bunt", "bunt_foul_tip")), name("bunt")),
         (Boolean("and", (in_play, Boolean("or", (
             lit_in(e, ("sac_bunt", "sac_bunt_double_play")),
             Binary(Column("des"), "LIKE", Literal("%bunt%")),

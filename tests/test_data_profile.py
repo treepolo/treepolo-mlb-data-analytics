@@ -54,7 +54,7 @@ def test_all_sections_have_the_documented_numbers(service):
     run = service.run("data_profile", {"scope": SCOPE})["run"]
     by_name, result = sections(run, service.store)
     assert set(by_name) == set(SECTION_NAMES)
-    assert result["extras"]["pitch_rows_in_scope"] == 20 and result["extras"]["generated_by"] == "data_profile v1"
+    assert result["extras"]["pitch_rows_in_scope"] == 20 and result["extras"]["generated_by"] == "data_profile v2"
 
     assert by_name["rows_by_season"]["rows"] == [{"game_year": 2024, "game_type": "R", "rows": 20, "games": 2, "min_date": "2024-05-01", "max_date": "2024-05-01"}]
     descriptions = {r["description"]: r["rows"] for r in by_name["description_values"]["rows"]}

@@ -42,7 +42,7 @@ _OUTCOME_GROUP_SQL = (
     "WHEN description IN ('ball','blocked_ball') THEN 'ball' ELSE 'other' END"
 )
 _BUNT_SQL = (
-    "CASE WHEN description IN ('foul_bunt','missed_bunt') OR events IN ('sac_bunt','sac_bunt_double_play') "
+    "CASE WHEN description IN ('foul_bunt','missed_bunt','bunt_foul_tip') OR events IN ('sac_bunt','sac_bunt_double_play') "
     "OR des LIKE '%bunt%' THEN 1 ELSE 0 END"
 )
 
