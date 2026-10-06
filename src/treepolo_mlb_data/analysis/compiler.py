@@ -10,7 +10,7 @@ from .model import (
 )
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_BINARY_OPS = {"=", "!=", "<>", ">", ">=", "<", "<=", "+", "-", "*", "/", "%"}
+_BINARY_OPS = {"=", "!=", "<>", ">", ">=", "<", "<=", "+", "-", "*", "/", "%", "LIKE", "||"}
 _AGGREGATE_SQL_FUNCTIONS = {
     "count": "COUNT",
     "sum": "SUM",
