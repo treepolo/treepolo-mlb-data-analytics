@@ -93,7 +93,9 @@ def scope_filter_expr(scope: Mapping[str, Any]) -> Expr | None:
     return Boolean("and", tuple(terms))
 
 
-def _scope_where(scope: Mapping[str, Any]) -> tuple[str, list[Any]]:
+def scope_where_sql(scope: Mapping[str, Any]) -> tuple[str, list[Any]]:
+    """SQL WHERE clause (and parameters) for a normalized scope."""
+
     clauses: list[str] = []
     params: list[Any] = []
     if "game_years" in scope:
@@ -138,7 +140,7 @@ def compute_scope_fingerprint(database_path: Path, scope: Mapping[str, Any]) -> 
         missing = [name for name in _REQUIRED_COLUMNS if name not in columns]
         if missing:
             raise ConfigError(f"pitches is missing columns {missing} / 資料表缺少欄位 {missing}")
-        where, params = _scope_where(scope)
+        where, params = scope_where_sql(scope)
         rows = conn.execute(
             "SELECT game_year, game_type, COUNT(*), MIN(game_date), MAX(game_date), MAX(_ingested_at) "
             f"FROM pitches WHERE {where} GROUP BY game_year, game_type ORDER BY game_year, game_type",
