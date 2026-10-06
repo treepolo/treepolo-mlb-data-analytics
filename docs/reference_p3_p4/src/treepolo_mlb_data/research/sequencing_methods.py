@@ -213,7 +213,7 @@ class OutcomeTableMethod(ResearchMethod):
                     help_zh="raw：原樣；mirrored：左投手資料鏡像成右投手視角（same_opposite 必須用）。", help_en="mirrored: left-handed pitchers flipped (required for same_opposite)."),
         ConfigField("loc_x_edges", "json", default=[-0.83, -0.28, 0.28, 0.83], label_zh="水平位置分箱邊界（英尺）", label_en="Horizontal location bin edges (ft)"),
         ConfigField("loc_z_edges", "json", default=[1.5, 2.0, 2.5, 3.0, 3.5], label_zh="垂直位置分箱邊界（英尺）", label_en="Vertical location bin edges (ft)"),
-        ConfigField("cluster_by", "choice", default="plate_appearance", choices=tuple(CLUSTER_FIELDS), label_zh="標準誤的分群單位", label_en="Cluster unit for standard errors"),
+        ConfigField("cluster_by", "choice", default="pitcher", choices=tuple(CLUSTER_FIELDS), label_zh="標準誤的分群單位", label_en="Cluster unit for standard errors"),
         ConfigField("min_samples", "int", default=100, minimum=1, label_zh="最小樣本數", label_en="Minimum pitches per cell",
                     help_zh="低於此數標示 low_n；不填補。", help_en="Cells below this are flagged low_n; never filled in."),
         ConfigField("max_cells", "int", default=20000, minimum=1, maximum=500000, label_zh="格子數上限", label_en="Maximum cells",

@@ -22,7 +22,7 @@
 **P3（直接數次數系統）**：得分期望值表與結果價值（`run_expectancy`）、情境×配球選擇的結果機率表（`outcome_table`）、連投曲線與「走到同一點再比較」（`streak_curve`）。
 **P4（模型與驗證）**：多類別結果模型與序列增益（`outcome_model`）、合成資料已知答案自我檢查（`synthetic_check`）。
 
-**非目標**：網頁表單與圖表（結果用既有「研究紀錄」頁與 CLI 看）、球棒追蹤欄位（見第 9 節）、多球往後看（P6）、研究本身（P5）。
+**非目標**：網頁表單與圖表（結果用既有「研究紀錄」頁與 CLI 看；圖表排在 P5 的第一步，使用者 2026-10-06 決定）、多球往後看（P6）、研究本身（P5）。球棒追蹤與擊球資料**不是**非目標：作為結果分項放進 `outcome_table`（T3.4b）。
 
 ---
 
@@ -34,8 +34,8 @@
 | RE 表來源固定 | 由 `re_scope`（預設 2023–2024 例行賽）計算，**不隨分析範圍變**；`re_scope` 的資料指紋進入 run key（`ResearchMethod.method_inputs` 新鉤子），所以建模期資料改變時舊結果不會被誤用 |
 | 「同一點」 | 同一組分層（預設：打席內第幾球、好球數、壞球數）內，比較連投第 k 顆與第 1 顆的比率差，各層權重 n_k·n_1/(n_k+n_1)，每層每個 k 至少 30 球；不能比的（沒有同時含 k 與 1 的層）回報「沒有數字」而不是假數字。分層欄位不可用描述前一球的欄位（`prev*`、`history_key`、`streak_pos`），否則 k=1 與 k≥2 永遠不在同一層 |
 | 殘餘偏誤與對策 | 不同球種的揮空危險率不同時，基本分層仍有偏誤（合成世界 T2 實測 −0.043，真值 0）。加分層欄位 `prior_same_type_count`（本打席更早的同球種球數）可消除，代價是可比較的球減少（覆蓋率 99.5% → 33%）。兩者並列顯示，覆蓋率永遠一併輸出 |
-| 標準誤 | 比例用 Wilson；平均價值用**分群穩健標準誤**（預設以打席分群，可改投手／打者／比賽），以兩層彙總的和計算；連投差預設解析式 SE，可選以投手（等）分群的 Poisson bootstrap |
-| 左右手 | 基礎永遠四組分開。`same_opposite` 是衍生檢視：左投手資料鏡像（`location_frame=mirrored`），**在 Python 把四組的和相加**（分群單位為打席或投手時才成立，否則拒絕），並輸出對稱性檢查（RvR vs LvL、RvL vs LvR 逐格 z 檢定） |
+| 標準誤 | 比例用 Wilson；平均價值用**分群穩健標準誤**（預設以**投手**分群（使用者 2026-10-06 決定；可改打席／打者／比賽）），以兩層彙總的和計算；連投差預設解析式 SE，可選以投手（等）分群的 Poisson bootstrap |
+| 左右手 | **P5 與之後的正式結果一律四組分開，不鏡像、不合併**（使用者 2026-10-06 決定；原因：鏡像後座標方向正確，但左右打者的行為與判決不同，同一格的結果不同）。`same_opposite` 保留為預設關閉的選項，不使用。基礎永遠四組分開。`same_opposite` 是衍生檢視：左投手資料鏡像（`location_frame=mirrored`），**在 Python 把四組的和相加**（分群單位為打席或投手時才成立，否則拒絕），並輸出對稱性檢查（RvR vs LvL、RvL vs LvR 逐格 z 檢定） |
 | 用途護欄 `purpose` | `tuning`（預設）：範圍不得含 2025、2026；`final_test`：範圍只能是 2025／2026（模型：訓練球季不得含、留出球季必須是保留球季，且 `split=holdout_years`）；`extra_study`：任意範圍（模型只能 `grouped_kfold`，因為沒有乾淨檢驗集）。`re_scope` 除 `extra_study` 外不得含 2025、2026。`purpose` 在 config 內，所以進入 run key 且在紀錄中可見 |
 | 模型 | 每個左右手組各自擬合；多類別邏輯迴歸與 HistGradientBoosting；預設 8 類（含全壘打獨立一類）；切分為 `holdout_years`（預設訓練 2023、留出 2024）或依比賽分組的 `grouped_kfold`；特徵組 `base`（無前球資訊）對 `full`（加序列特徵），**序列增益 ＝ 留出資料上 logloss(base) − logloss(full)，附依比賽重抽的 Poisson bootstrap 區間**（正值＝序列資訊有用）|
 | 不做 | 收縮、反事實、兩階段殘差（規劃文件 4、2.3）；模型存檔（P6 再決定，現只在 holdout 時輸出邏輯迴歸係數）；網頁表單 |
@@ -111,6 +111,16 @@ Commit：`Add method_inputs hook, purpose guards and checked query runner (T3.3)
 測試：`pytest tests/test_sequencing_methods.py`（22 個）。涵蓋：已知答案（每個狀態 RE＝1.0、SE＝1.0）、重用與等價 `re_scope` 寫法共用 key、**範圍外的 RE 資料改變就不重用**、用途護欄、非法設定、`max_cells` 報錯不截斷、RE 範圍缺狀態報錯、SQLite 專用設定可跑、DuckDB 靜默退回即報錯、`streak_curve` 經服務執行（含 bootstrap、安慰劑、`rerun` 得 `reproduced=True`）。
 Commit：`Add run_expectancy, outcome_table and streak_curve research methods (T3.4)`。
 
+### T3.4b 結果分項：擊球資料與球棒追蹤（**無參考實作，依下列規格自行寫並加測試**）
+
+使用者 2026-10-06 決定要放。兩組欄位，各自標示覆蓋率，**缺值不填補、不計入**：
+- 擊球資料：`launch_speed`、`launch_angle`（界外與界內球有；擦棒沒有）。
+- 球棒追蹤：`bat_speed`、`swing_length`、`attack_angle`、`attack_direction`、`swing_path_tilt`、`intercept_ball_minus_batter_pos_x_inches`、`intercept_ball_minus_batter_pos_y_inches`、`miss_distance`（只有揮空有）。2023-07-14 之前整段缺，是結構性缺失。
+
+做法：`outcome_table` 新增設定 `swing_metrics`（`str_list`，預設 `[]`，只能是上列欄位，否則 `ConfigError`）。對每個欄位，`outcome_cells_node` 的兩層彙總各加 `count(欄位)`（有值球數）與 `sum(欄位)`；Cells 節多 `<欄位>_n`、`<欄位>_mean` 兩欄（`n`＝0 時 mean 為 `None`）。欄位不要鏡像（`MIRROR_RULES` 皆為 none）。`extras` 記錄各欄位整體有值比例。需要把欄位加進 `build_pitch_table` 的 `extra_columns`。
+測試（`tests/test_swing_metrics.py`）：用 `make_row` 造 4 球（兩球有 `launch_angle`、一球 NULL、一球另一欄位有值），核對 `_n`、`_mean`、NULL 不計入、未知欄位報錯、兩個後端一致。
+Commit：`Add swing and batted-ball breakdowns to outcome_table (T3.4b)`。
+
 ### T3.5 P3 真實資料驗收
 
 見第 7.1 節。把「P3 acceptance」研究專案匯出成研究檔告知使用者。
@@ -147,7 +157,7 @@ Commit：`Add outcome_model and synthetic_check research methods (T4.2)`。
 
 **`run_expectancy`**（`requires_scope=True`）：`confidence`、`bunt_policy`、`min_state_n`(30)、`outcome_values`、`savant_comparison`。節：①`Run expectancy by state`（288 列：狀態、n、半局數、re、se、區間、`low_n`）；②`Outcome values by state`（各狀態×結果的 n、平均價值、標準差）；③`Comparison with Savant delta_run_exp`（各 `description` 的我方平均、Savant 平均、差）。`extras` 含相關係數。
 
-**`outcome_table`**：`re_scope`、`use_values`、`bunt_policy`、`memory`(2)、`situation_fields`(`balls`,`strikes`)、`choice_fields`(`pitch_type`)、`hand_views`(`four_groups`)、`location_frame`(`raw`)、`loc_x_edges`、`loc_z_edges`、`filters`、`cluster_by`(`plate_appearance`)、`min_samples`(100)、`max_cells`(20000)、`symmetry_top`。可用欄位見 `pitch_table.CELL_FIELD_CHOICES`。節：每個檢視一組「Cells」（n、揮棒率、揮空率／揮棒、全壘打率各附 Wilson 區間、平均價值與分群 SE、各類別次數、`low_n`）與「Outcome probabilities」（長表：每格×每類別的次數、機率、區間）；`same_opposite` 另有兩個對稱性檢查節。
+**`outcome_table`**：`re_scope`、`use_values`、`bunt_policy`、`memory`(2)、`situation_fields`(`balls`,`strikes`)、`choice_fields`(`pitch_type`)、`hand_views`(`four_groups`)、`location_frame`(`raw`)、`loc_x_edges`、`loc_z_edges`、`filters`、`cluster_by`(`pitcher`)、`min_samples`(100)、`max_cells`(20000)、`symmetry_top`。可用欄位見 `pitch_table.CELL_FIELD_CHOICES`。節：每個檢視一組「Cells」（n、揮棒率、揮空率／揮棒、全壘打率各附 Wilson 區間、平均價值與分群 SE、各類別次數、`low_n`）與「Outcome probabilities」（長表：每格×每類別的次數、機率、區間）；`same_opposite` 另有兩個對稱性檢查節。
 `filters`：`[{"field":"pitcher","op":"eq","value":543037}]`，在序列欄位算完之後才篩選（連投以完整打席計算）。
 
 **`streak_curve`**：`rate`（`whiff_per_swing` 預設；另有 `swing_rate`、`called_strike_per_take`、`foul_per_swing`、`in_play_per_swing`、`hr_per_pitch`、`hr_per_in_play`、`mean_pitch_value`）、`foul_tip_is_whiff`、`pitch_types`（空＝全部）、`min_type_pitches`(5000)、`kmax`(5，代表「5 顆以上」；**只對 k=2、3 下結論**，更高的 k 樣本太薄)、`strata_fields`、`hand_view`(`four_groups`｜`same_opposite`｜`pooled`)、`min_stratum_n`(30)、`se_method`(`analytic`｜`cluster_bootstrap`)、`cluster_by`(`pitcher`)、`bootstrap_reps`、`seed`、`placebo_shuffles`(0＝不做)。節：原始曲線（含存活偏誤，標題已註明）、同一點比較（估計、SE、區間、使用層數、覆蓋率、可選 bootstrap 欄）、可選安慰劑。
@@ -186,7 +196,7 @@ Commit：`Add outcome_model and synthetic_check research methods (T4.2)`。
 
 ### 7.3 回報內容
 
-資料量與耗時、每個方法的驗收數字與預期的差異、`synthetic_check` 結果、第 3 節末尾三個試跑現象（原樣轉告）、第 9 節的決定事項、任何偏離本文件的地方。
+資料量與耗時、每個方法的驗收數字與預期的差異、`synthetic_check` 結果、第 3 節末尾三個試跑現象（原樣轉告）、任何偏離本文件的地方。
 
 ---
 
@@ -200,13 +210,10 @@ Commit：`Add outcome_model and synthetic_check research methods (T4.2)`。
 
 ---
 
-## 9. 待使用者決定（請在回報時一併詢問；開發不必等待）
+## 9. 使用者已決定（2026-10-06）與尚待討論
 
-1. **球棒追蹤欄位**（規劃文件 11.3）：P3、P4 的預設與選項**完全不使用**這些欄位（只有 2023-07-14 起有）。建議維持：之後若要用，另開階段，並以範圍 `date_from` 限定。是否同意？
-2. **圖表**（規劃文件 11.5）：本階段只有表格。建議放在 P5 研究需要時再做，優先「連投曲線（含安慰劑帶）」與「前一球→下一球結果熱圖」。何時做？
-3. **左右手檢視**：對稱性檢查顯示合併檢視不太對稱，建議 P5 一律用四組，合併檢視僅作輔助。同意嗎？
-4. **分群預設**：價值的 SE 預設以打席分群；P5 的最終數字建議改以投手分群（較保守）。要不要把預設改成投手？
-5. **安慰劑的讀法**（第 3 節 #8）與**連投需控制投手／打者**（試跑現象 a）：P5 研究計畫會以此為起點，是否有其他想先看的控制方式？
+已決定：①球棒追蹤與擊球資料作為結果分項放進 P3（T3.4b），模型不使用；②圖表在 P3、P4 開發完後、P5 研究開始前做（P5 第一步）；③四組分開、不鏡像不合併；④標準誤預設以投手分群；⑤連投比較要控制投手（寫進 P5 研究計畫，程式已支援 `strata_fields` 加 `pitcher`）。
+尚待討論：無。
 
 ---
 
