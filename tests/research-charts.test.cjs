@@ -54,6 +54,10 @@ const hidden = charts.build("heatmap", [{ r: "a", c: "x", v: 1, low: 0 }, { r: "
 assert.equal(cls(hidden, "rc-cell").length, 1); assert.ok(find(hidden, t => t.tag === "text" && t.text === "b").length === 0);
 assert.ok(find(heat, t => t.tag === "title" && t.text.includes("n=500")).length === 1);
 
+// duplicate cells in one panel are reported instead of silently overwritten
+const dup = charts.build("heatmap", [{ r: "a", c: "x", v: 1 }, { r: "a", c: "x", v: 2 }], { row: "r", col: "c", value: "v" }, {});
+assert.ok(find(dup, t => t.tag === "text" && t.text && t.text.includes("1 格有重複資料")).length === 1);
+
 // location heatmap puts the highest bin on top (reverseRows)
 const loc = charts.build("heatmap", [
   { loc_x_bin: 0, loc_z_bin: 0, hr_rate: 0.01 }, { loc_x_bin: 0, loc_z_bin: 3, hr_rate: 0.02 }], { row: "loc_z_bin", col: "loc_x_bin", value: "hr_rate" }, { reverseRows: true });

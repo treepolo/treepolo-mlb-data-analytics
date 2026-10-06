@@ -1,0 +1,1 @@
+{"scope":{"game_years":[2023,2024],"game_types":["R"]},"purpose":"tuning","situation_fields":[],"choice_fields":["prev1_pitch_type","pitch_type"],"memory":1,"min_samples":300}

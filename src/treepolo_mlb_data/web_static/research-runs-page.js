@@ -3,7 +3,7 @@
 
   const PANEL_ID = "research-runs-panel";
   const ROUTE = "research-runs";
-  const state = { studies: [], runs: [], studyId: null, runId: null, detail: null, section: 0, offset: 0, page: null, chart: { preset: null, mapping: {}, rows: null, rowsKey: null, svg: null } };
+  const state = { studies: [], runs: [], studyId: null, runId: null, detail: null, section: 0, offset: 0, page: null, chart: { preset: null, mapping: {}, rows: null, rowsKey: null, svg: null, filterColumn: "", filterValue: "" } };
   const PAGE_SIZE = 200;
 
   function el(tag, props = {}, ...children) {
@@ -211,7 +211,9 @@
       }
       const mapping = { ...state.chart.mapping };
       Object.keys(mapping).forEach(k => { if (!mapping[k]) delete mapping[k]; });
-      const tree = charts.build(preset.type, state.chart.rows, mapping, { ...(preset.options || {}), title: `${preset.label} — ${section.title || ""}`, categoricalX: columns.length && mapping.x === "term" });
+      let rows = state.chart.rows;
+      if (state.chart.filterColumn && state.chart.filterValue !== "") rows = rows.filter(r => String(r[state.chart.filterColumn]) === state.chart.filterValue);
+      const tree = charts.build(preset.type, rows, mapping, { ...(preset.options || {}), title: `${preset.label} — ${section.title || ""}`, categoricalX: columns.length && mapping.x === "term" });
       state.chart.svg = charts.toSvgString(tree);
       view.replaceChildren(charts.toDom(tree, document)); setStatus("");
     });
@@ -227,7 +229,20 @@
         select.value = state.chart.mapping[role] || "";
         return el("label", { class: "rr-chart-role" }, `${role} `, select);
       });
-      controls.replaceChildren(...roles, el("button", { type: "button", text: "畫圖 Draw", onclick: draw }),
+      const valueSelect = el("select", { onchange: event => { state.chart.filterValue = event.target.value; } }, el("option", { value: "", text: "（全部）" }));
+      const fillValues = () => {
+        valueSelect.replaceChildren(el("option", { value: "", text: "（全部）" }));
+        if (state.chart.filterColumn && state.chart.rows) [...new Set(state.chart.rows.map(r => String(r[state.chart.filterColumn])))].sort().slice(0, 200).forEach(v => valueSelect.append(el("option", { value: v, text: v })));
+        valueSelect.value = state.chart.filterValue;
+      };
+      const filterColumn = el("select", { onchange: event => {
+        state.chart.filterColumn = event.target.value; state.chart.filterValue = "";
+        const load = state.chart.rows ? Promise.resolve() : guarded(async () => { state.chart.rows = await loadAllRows(state.runId, state.section, state.page.total); state.chart.rowsKey = `${state.runId}:${state.section}`; });
+        load.then(fillValues);
+      } }, el("option", { value: "", text: "（無）" }), ...columns.map(c => el("option", { value: c, text: c })));
+      filterColumn.value = state.chart.filterColumn; fillValues();
+      controls.replaceChildren(...roles, el("label", { class: "rr-chart-role" }, "篩選欄位 filter ", filterColumn), el("label", { class: "rr-chart-role" }, "值 value ", valueSelect),
+        el("button", { type: "button", text: "畫圖 Draw", onclick: draw }),
         el("button", { type: "button", text: "下載 SVG Download", onclick: () => {
           if (!state.chart.svg) return;
           const link = el("a", { href: URL.createObjectURL(new Blob([state.chart.svg], { type: "image/svg+xml" })), download: "research-chart.svg" });

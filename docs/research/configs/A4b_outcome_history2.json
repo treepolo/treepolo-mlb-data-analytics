@@ -1,0 +1,1 @@
+{"scope":{"game_years":[2023,2024],"game_types":["R"]},"purpose":"tuning","situation_fields":[],"choice_fields":["history_key","pitch_type"],"memory":2,"min_samples":300,"max_cells":100000}

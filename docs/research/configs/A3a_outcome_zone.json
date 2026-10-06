@@ -1,0 +1,1 @@
+{"scope":{"game_years":[2023,2024],"game_types":["R"]},"purpose":"tuning","situation_fields":["balls","strikes"],"choice_fields":["pitch_type","zone"],"max_cells":100000}

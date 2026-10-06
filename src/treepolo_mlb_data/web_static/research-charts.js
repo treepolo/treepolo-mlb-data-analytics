@@ -136,13 +136,17 @@
     const panels = [...groupBy(rows, mapping.facet).keys()];
     const cw = 40, ch = 22;
     const dim = { width: PANEL.left + colLabels.length * cw + PANEL.right, height: PANEL.top + rowLabels.length * ch + 14 };
+    let collisions = 0;
     const built = panels.map(panelName => {
       const mine = rows.filter(r => (mapping.facet ? String(r[mapping.facet]) : "") === panelName), parts = [];
+      const seenCells = new Set();
       colLabels.forEach((c, ci) => parts.push(node("text", { x: PANEL.left + ci * cw + cw / 2, y: PANEL.top - 4, "text-anchor": "middle", "font-size": 10, fill: MUTED }, [], String(c))));
       rowLabels.forEach((r, ri) => parts.push(node("text", { x: PANEL.left - 4, y: PANEL.top + ri * ch + ch / 2 + 3, "text-anchor": "end", "font-size": 10, fill: MUTED }, [], String(r))));
       mine.forEach(r => {
         const ci = colLabels.indexOf(r[mapping.col]), ri = rowLabels.indexOf(r[mapping.row]), v = num(r[mapping.value]);
         if (ci < 0 || ri < 0 || v === null) return;
+        const cellKey = `${ci}|${ri}`;
+        if (seenCells.has(cellKey)) collisions += 1; seenCells.add(cellKey);
         const faded = mapping.low && Number(r[mapping.low]) === 1;
         const tip = `${r[mapping.row]} → ${r[mapping.col]}: ${fmt(v)}${mapping.n && r[mapping.n] != null ? ` (n=${r[mapping.n]})` : ""}`;
         parts.push(node("rect", { x: PANEL.left + ci * cw, y: PANEL.top + ri * ch, width: cw - 1, height: ch - 1, fill: heatColor(v, lo, hi, diverging), "fill-opacity": faded ? 0.35 : 1, class: faded ? "rc-cell rc-low" : "rc-cell" }, [node("title", {}, [], tip)]));
@@ -150,7 +154,7 @@
       });
       return panelFrame(panelName, dim.width, dim.height, parts);
     });
-    return assemble(built, panels, [], options, `${mapping.value}: ${fmt(lo)} … ${fmt(hi)}（滑過格子看 n；淡色＝樣本不足 faded = low n）`, dim);
+    return assemble(built, panels, [], options, `${mapping.value}: ${fmt(lo)} … ${fmt(hi)}（滑過格子看 n；淡色＝樣本不足 faded = low n）${collisions ? `　⚠ ${collisions} 格有重複資料，只顯示最後一筆，請用篩選器選定一組 ${collisions} cells have several rows; filter to one group` : ""}`, dim);
   }
 
   // ---- scatter with error bars ---------------------------------------------------------------------------------------
