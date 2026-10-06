@@ -234,3 +234,14 @@ Commit：`Add outcome_model and synthetic_check research methods (T4.2)`。
 - 288 狀態 fixture（`tests/state_fixtures.py`）：每狀態兩個半局、得分 0 與 2 → 每個 RE＝1.0、n＝2、分群 SE＝1.0、每球價值 ±1.0。
 - 合成世界：`T0` 零衰減（原始曲線 k=1 減 k=4 > 0.15；同一點 |估計| < 0.02）、`T1` 真衰減 0.03（k=2 在 [−0.045, −0.020]、k=3 在 [−0.080, −0.040]）、`T2` 零衰減但球種危險率不同（基本分層偏誤 < −0.03，加 `prior_same_type_count` 後 |k=2| < 0.02）、`T3`、`impossible`（只投滑球的投手 → 全部「沒有數字」）、安慰劑（T0 觀察值在帶內、T1 在帶外）、序列增益（M0 零、M1 真衰減 0.04：下界 > 0.0005）。AST 彙總出的格子與 numpy 手寫預言**逐格相同**。
 - 容許誤差是以固定種子在 30 萬打席下實測後設定；`n_pa` 不得低於 30 萬。
+
+## 附錄 C：P3、P4 完成紀錄（2026-10-06）
+
+與本文件原先寫法不同、或實作時才發現的事：
+
+1. **T3.1 與 T3.2 合併為一個 commit**：`test_pitch_table` 需要 `research/stats.py`，文件把兩者切開是錯的。
+2. **T3.4b 已實作**（`outcome_table` 的 `swing_metrics`，`tests/test_swing_metrics.py`）。實作時發現參考實作有一個漏洞：`use_values=false` 時表中沒有 `pitch_value`，`outcome_cells_node` 會報錯；已加 `with_values` 參數修正並有測試。
+3. `outcome_table` 的 `cluster_by` 預設為 `pitcher`（使用者決定）。
+4. 全套測試：**408 passed, 2 deselected**（約 5.6 分鐘）。`docs/reference_p3_p4/` 已刪除。
+5. 真實資料驗收（2023–2024 例行賽）：`run_expectancy` 8.6 秒、`outcome_table` 預設 8.6 秒（同設定再跑 `reused: true`）、加 `zone` 的 93,340 列結果 5.6 秒、`streak_curve` 1.4 秒、加投手分層與 bootstrap 與安慰劑 31 秒；`rerun` 皆 `reproduced: true`；`purpose` 護欄對 2025 範圍正確報錯；`synthetic_check` 全部通過（153 秒）；`outcome_model` 四組全跑 242 秒（比預估的 12 分鐘快）。
+6. **`outcome_model` 實測要注意**：邏輯迴歸四組的序列增益為 RvR +0.0006、RvL +0.0007、LvR −0.0002、LvL −0.0017（都很小）。**HistGradientBoosting 的結果很不穩定**：同一組加不加序列特徵，logloss 可以差 0.1（LvR：base 1.104、full 1.216；RvL 則 full 較好），而邏輯迴歸只差千分之一。這是提升樹的早停（內部隨機切驗證集）與資料量小造成的敏感性，不是程式錯誤的證據，但 P5 不可把提升樹的序列增益當結論，應固定 `hgb_max_iter` 或比較多個種子。
