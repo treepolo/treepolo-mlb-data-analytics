@@ -76,7 +76,7 @@ def test_all_sections_have_the_documented_numbers(service):
 
     zone = by_name["strike_zone_definition"]["rows"][0]
     assert zone["batters"] == 7 and zone["pct_batters_constant_sz_top"] == pytest.approx(85.71, abs=0.01)
-    assert zone["median_distinct_sz_top"] == 1 and zone["ratio_min"] == pytest.approx(3.4 / 1.77, abs=1e-3) and zone["ratio_max"] == pytest.approx(3.5 / 1.77, abs=1e-3)
+    assert zone["median_distinct_sz_top"] == 1 and zone["ratio_min"] == pytest.approx(((3.4 + 6 * 3.5) / 7) / 1.77, abs=1e-3)  # batter 101: one 3.4 and six 3.5 and zone["ratio_max"] == pytest.approx(3.5 / 1.77, abs=1e-3)
     assert {(r["p_throws"], r["stand"], r["rows"]) for r in by_name["handedness_groups"]["rows"]} == {("R", "R", 20)}
 
 
