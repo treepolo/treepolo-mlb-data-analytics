@@ -3,7 +3,7 @@
 
   const PANEL_ID = "research-runs-panel";
   const ROUTE = "research-runs";
-  const state = { studies: [], runs: [], studyId: null, runId: null, detail: null, section: 0, offset: 0, page: null };
+  const state = { studies: [], runs: [], studyId: null, runId: null, detail: null, section: 0, offset: 0, page: null, chart: { preset: null, mapping: {}, rows: null, rowsKey: null, svg: null } };
   const PAGE_SIZE = 200;
 
   function el(tag, props = {}, ...children) {
@@ -50,6 +50,10 @@
       .rr-detail pre { max-height:220px; overflow:auto; background:#f4f6f9; padding:6px; margin:4px 0; }
       .rr-detail textarea { width:100%; min-height:70px; box-sizing:border-box; }
       .rr-result { overflow:auto; max-height:360px; }
+      .rr-chart-panel { margin-top:10px; border-top:1px solid #adb8c7; padding-top:6px; }
+      .rr-chart-controls { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; font-size:12px; }
+      .rr-chart-view { overflow:auto; max-width:100%; }
+      .rr-chart-view svg { max-width:100%; height:auto; background:#fff; }
       .rr-status { margin-top:6px; color:#505b68; font-size:12px; min-height:16px; }
       @media (max-width:900px) { .rr-layout { grid-template-columns:1fr; } }
     `;
@@ -171,7 +175,68 @@
     const tabs = el("div", { class: "button-row" }, ...Array.from({ length: page.section_count }, (_, index) =>
       el("button", { type: "button", text: `結果 ${index + 1}`, ...(index === state.section ? { class: "primary" } : {}),
         onclick: () => guarded(() => { state.section = index; state.offset = 0; return showRun(state.runId, false); }) })));
-    return [el("div", { text: `結果 Result：${section.title || ""}` }), page.section_count > 1 ? tabs : null, el("div", { class: "rr-result" }, table), nav];
+    return [el("div", { text: `結果 Result：${section.title || ""}` }), page.section_count > 1 ? tabs : null, el("div", { class: "rr-result" }, table), nav, renderChartPanel(section)];
+  }
+
+  const CHART_PAGE = 1000, CHART_MAX_ROWS = 200000;
+  const ROLES = {
+    line: ["x", "y", "lo", "hi", "series", "facet"], heatmap: ["row", "col", "value", "n", "low", "facet"],
+    scatter: ["x", "y", "xlo", "xhi", "ylo", "yhi", "color", "low", "facet"],
+  };
+
+  async function loadAllRows(runId, sectionIndex, total) {
+    if (total > CHART_MAX_ROWS) throw new Error(`此結果有 ${total} 列，超過圖表上限 ${CHART_MAX_ROWS} This section has too many rows for a chart; narrow the study`);
+    const rows = [];
+    for (let offset = 0; offset < total; offset += CHART_PAGE) {
+      const part = await api(`/api/research/runs/${runId}/result?section=${sectionIndex}&offset=${offset}&limit=${CHART_PAGE}`);
+      rows.push(...part.rows);
+    }
+    return rows;
+  }
+
+  function renderChartPanel(section) {
+    const charts = window.TreepoloResearchCharts;
+    const host = el("div", { class: "rr-chart-panel" }, el("div", { text: "圖表 Charts（歷史結果，不是改投別的球會怎樣）" }));
+    if (!charts) { host.append(el("div", { class: "hint", text: "圖表模組未載入 Chart module not loaded" })); return host; }
+    const columns = section.columns || [];
+    const view = el("div", { class: "rr-chart-view" });
+    const controls = el("div", { class: "rr-chart-controls" });
+    const draw = () => guarded(async () => {
+      const preset = charts.PRESETS[state.chart.preset];
+      if (!preset) throw new Error("請先選擇圖型 Choose a chart first");
+      const key = `${state.runId}:${state.section}`;
+      if (state.chart.rowsKey !== key) {
+        setStatus("取回結果資料 Loading rows…");
+        state.chart.rows = await loadAllRows(state.runId, state.section, state.page.total); state.chart.rowsKey = key;
+      }
+      const mapping = { ...state.chart.mapping };
+      Object.keys(mapping).forEach(k => { if (!mapping[k]) delete mapping[k]; });
+      const tree = charts.build(preset.type, state.chart.rows, mapping, { ...(preset.options || {}), title: `${preset.label} — ${section.title || ""}`, categoricalX: columns.length && mapping.x === "term" });
+      state.chart.svg = charts.toSvgString(tree);
+      view.replaceChildren(charts.toDom(tree, document)); setStatus("");
+    });
+    const buttons = Object.entries(charts.PRESETS).map(([id, preset]) => el("button", { type: "button", text: preset.label, onclick: () => {
+      state.chart.preset = id; state.chart.mapping = preset.guess(columns); renderRoles();
+    } }));
+    function renderRoles() {
+      const preset = charts.PRESETS[state.chart.preset];
+      if (!preset) return;
+      const roles = ROLES[preset.type].map(role => {
+        const select = el("select", { onchange: event => { state.chart.mapping[role] = event.target.value || null; } },
+          el("option", { value: "", text: "（無）" }), ...columns.map(c => el("option", { value: c, text: c })));
+        select.value = state.chart.mapping[role] || "";
+        return el("label", { class: "rr-chart-role" }, `${role} `, select);
+      });
+      controls.replaceChildren(...roles, el("button", { type: "button", text: "畫圖 Draw", onclick: draw }),
+        el("button", { type: "button", text: "下載 SVG Download", onclick: () => {
+          if (!state.chart.svg) return;
+          const link = el("a", { href: URL.createObjectURL(new Blob([state.chart.svg], { type: "image/svg+xml" })), download: "research-chart.svg" });
+          document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+        } }));
+    }
+    host.append(el("div", { class: "button-row" }, ...buttons), controls, view);
+    renderRoles();
+    return host;
   }
 
   async function exportBundle(selection) {
