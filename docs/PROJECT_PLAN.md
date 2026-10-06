@@ -321,6 +321,10 @@ Typed numerical boundary、clustering、regression、bootstrap、Multi-stage Clu
 - 真實 Savant historical revision → SQLite update → DuckDB refresh 驗證。
 - raw snapshot retention / compaction 僅在量測後設計。
 
+### 配球序列研究系統
+
+已規劃、尚未開發，設計與階段（P0–P6）見 [`docs/PITCH_SEQUENCING_PLAN.md`](PITCH_SEQUENCING_PLAN.md)。它不屬於 Stage 4，也不改變「目前沒有已定義的下一個編號階段」的現況。
+
 ### 多資料源分析候選
 
 若未來真的需要，再設計：
