@@ -87,7 +87,8 @@ WORLDS: dict[str, dict] = {
 }
 
 
-def simulate(n_pa=300_000, decay=0.0, start_strikes=0, w_sl=(0.45, 0.15), w_ff=(0.45, 0.15), p_sl=0.5, swing=0.5, seed=1, max_steps=25):
+def simulate(n_pa=300_000, decay=0.0, start_strikes=0, w_sl=(0.45, 0.15), w_ff=(0.45, 0.15), p_sl=0.5, swing=0.5, seed=1, max_steps=25,
+             pitcher_mix=None):
     """Per-pitch arrays for ``n_pa`` plate appearances against two latent batter types (A whiffy, B not).
 
     The whiff probability per swing for pitch type T and batter type b at streak position k is
@@ -99,6 +100,9 @@ def simulate(n_pa=300_000, decay=0.0, start_strikes=0, w_sl=(0.45, 0.15), w_ff=(
 
     rng = np.random.default_rng(seed)
     btype = (rng.random(n_pa) < 0.5).astype(int)
+    # pitcher_mix = ((p_sl, whiff A, whiff B), ...) gives each pitcher his own slider share and whiff level for every pitch type
+    # (decay still applies on top); None means a single pitcher with the global settings.
+    pitcher = rng.integers(0, len(pitcher_mix), size=n_pa) if pitcher_mix else np.zeros(n_pa, dtype=int)
     balls = np.zeros(n_pa, int); strikes = np.full(n_pa, start_strikes, dtype=int)
     alive = np.ones(n_pa, bool); prev = np.full(n_pa, -1); streak = np.zeros(n_pa, int); cnt = np.zeros((n_pa, 2), int)
     rows = []
@@ -106,9 +110,13 @@ def simulate(n_pa=300_000, decay=0.0, start_strikes=0, w_sl=(0.45, 0.15), w_ff=(
         idx = np.nonzero(alive)[0]
         if idx.size == 0:
             break
-        t = (rng.random(idx.size) < p_sl).astype(int)
+        psl = np.array([m[0] for m in pitcher_mix])[pitcher[idx]] if pitcher_mix else p_sl
+        t = (rng.random(idx.size) < psl).astype(int)
         k = np.where(t == prev[idx], streak[idx] + 1, 1)
         base = np.where(t == 1, np.where(btype[idx] == 0, w_sl[0], w_sl[1]), np.where(btype[idx] == 0, w_ff[0], w_ff[1]))
+        if pitcher_mix:
+            mix = np.array([(m[1], m[2]) for m in pitcher_mix])[pitcher[idx]]
+            base = np.where(btype[idx] == 0, mix[:, 0], mix[:, 1])
         w = np.clip(base - decay * (k - 1), 0.01, 0.99)
         sw = rng.random(idx.size) < swing
         u = rng.random(idx.size)
@@ -124,12 +132,12 @@ def simulate(n_pa=300_000, decay=0.0, start_strikes=0, w_sl=(0.45, 0.15), w_ff=(
         b_new = balls[idx] + (out == 0)
         done = (s_new >= 3) | (b_new >= 4) | (out == 4)
         rows.append((idx.copy(), np.full(idx.size, step), balls[idx].copy(), strikes[idx].copy(), t, k, out, btype[idx].copy(),
-                     cnt[idx, t].copy(), done.copy(), s_new.copy(), b_new.copy()))
+                     cnt[idx, t].copy(), done.copy(), s_new.copy(), b_new.copy(), pitcher[idx].copy()))
         cnt[idx, t] += 1
         strikes[idx] = s_new; balls[idx] = b_new
         prev[idx] = t; streak[idx] = k
         alive[idx[done]] = False
-    names = ("pa", "j", "balls", "strikes", "t", "k", "out", "btype", "nsame", "last", "s_after", "b_after")
+    names = ("pa", "j", "balls", "strikes", "t", "k", "out", "btype", "nsame", "last", "s_after", "b_after", "pitcher")
     return {name: np.concatenate([r[i] for r in rows]) for i, name in enumerate(names)}
 
 
@@ -145,7 +153,7 @@ def world_rows(d, *, year=2024, pa_offset=0):
         yield make_row(
             pitch_uid=f"{pa}:{j}", game_pk=pa + 1, at_bat_number=1, pitch_number=j, game_year=year, game_date=f"{year}-05-01",
             pitch_type="SL" if d["t"][i] == 1 else "FF", description=OUT_DESCRIPTION[out], events=events,
-            release_speed=85.0 if d["t"][i] == 1 else 94.0, batter=100 + int(d["btype"][i]),
+            release_speed=85.0 if d["t"][i] == 1 else 94.0, batter=100 + int(d["btype"][i]), pitcher=10 + int(d["pitcher"][i]),
             balls=int(d["balls"][i]), strikes=int(d["strikes"][i]),
         )
 

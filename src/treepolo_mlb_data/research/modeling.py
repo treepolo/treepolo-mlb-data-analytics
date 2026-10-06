@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from .stats import z_value
@@ -55,6 +55,8 @@ class Design:
 
     numeric: list[str]
     categorical: list[str]
+    entities: list[str] = field(default_factory=list)     # high-cardinality ids (pitcher, batter): sparse one-hot, rare ids pooled into OTHER
+    entity_min_count: int = 200
 
     def fit(self, rows: Sequence[dict[str, Any]]) -> "Design":
         import numpy as np
@@ -67,9 +69,17 @@ class Design:
             std = float(np.nanstd(x)) if ok.any() else 1.0
             self.stats[name] = (mean, std or 1.0, bool((~ok).any()))
         self.levels = {name: sorted({MISSING if r[name] is None else str(r[name]) for r in rows}) for name in self.categorical}
+        self.entity_levels = {}
+        for name in self.entities:
+            counts: dict[str, int] = {}
+            for r in rows:
+                key = MISSING if r[name] is None else str(r[name])
+                counts[key] = counts.get(key, 0) + 1
+            self.entity_levels[name] = sorted(k for k, c in counts.items() if c >= self.entity_min_count)
         self.columns = (
             [f"num:{n}" for n in self.numeric] + [f"missing:{n}" for n in self.numeric if self.stats[n][2]]
             + [f"cat:{n}={v}" for n in self.categorical for v in self.levels[n]]
+            + [f"ent:{n}={v}" for n in self.entities for v in self.entity_levels[n] + ["OTHER"]]
         )
         return self
 
@@ -94,7 +104,18 @@ class Design:
             raw = np.array([MISSING if r[name] is None else str(r[name]) for r in rows], dtype=object)
             for level in self.levels[name]:
                 columns.append((raw == level).astype(np.float64))
-        return np.column_stack(columns).astype(np.float32) if columns else np.zeros((len(rows), 0), dtype=np.float32)
+        dense = np.column_stack(columns).astype(np.float32) if columns else np.zeros((len(rows), 0), dtype=np.float32)
+        if not self.entities:
+            return dense
+        from scipy import sparse
+
+        blocks = [sparse.csr_matrix(dense)]
+        for name in self.entities:
+            levels = self.entity_levels[name] + ["OTHER"]
+            index = {v: i for i, v in enumerate(levels)}
+            cols = np.array([index.get(MISSING if r[name] is None else str(r[name]), len(levels) - 1) for r in rows])
+            blocks.append(sparse.csr_matrix((np.ones(len(rows), dtype=np.float32), (np.arange(len(rows)), cols)), shape=(len(rows), len(levels))))
+        return sparse.hstack(blocks, format="csr")
 
 
 def make_model(name: str, params: Mapping[str, Any]):
@@ -107,7 +128,8 @@ def make_model(name: str, params: Mapping[str, Any]):
 
         return HistGradientBoostingClassifier(
             max_iter=params["hgb_max_iter"], learning_rate=params["hgb_learning_rate"], max_depth=params["hgb_max_depth"],
-            min_samples_leaf=params["hgb_min_samples_leaf"], random_state=params["seed"])
+            min_samples_leaf=params["hgb_min_samples_leaf"], random_state=params["seed"],
+            early_stopping=params.get("hgb_early_stopping", "auto"))
     raise ValueError(f"unknown model {name!r}")
 
 

@@ -26,7 +26,7 @@ class OutcomeModelMethod(ResearchMethod):
     """Multinomial outcome models (logistic / gradient boosting) per handedness group with held-out evaluation and sequence gain."""
 
     kind = "outcome_model"
-    version = 1
+    version = 2  # 2: entity_features, hgb_early_stopping (default off), memory 0
     label_zh = "結果機率模型與序列增益"
     label_en = "Outcome model and sequence gain"
     requires_scope = True
@@ -41,7 +41,13 @@ class OutcomeModelMethod(ResearchMethod):
         ConfigField("base_categorical", "str_list", default=["pitch_type", "zone", "count_state", "bases"], label_zh="基本類別特徵", label_en="Base categorical features"),
         ConfigField("sequence_numeric", "str_list", default=["speed_diff_prev1", "dx_prev1", "dz_prev1"], label_zh="序列數值特徵", label_en="Sequence numeric features"),
         ConfigField("sequence_categorical", "str_list", default=["prev1_pitch_type", "prev2_pitch_type", "prev1_description", "streak_cap"], label_zh="序列類別特徵", label_en="Sequence categorical features"),
-        ConfigField("memory", "int", default=2, minimum=1, maximum=5, label_zh="序列記憶長度", label_en="Sequence memory"),
+        ConfigField("memory", "int", default=2, minimum=0, maximum=5, label_zh="序列記憶長度", label_en="Sequence memory",
+                    help_zh="0＝完全不用前球資訊（只剩 base，沒有序列增益）。", help_en="0 = no previous-pitch information at all (base only, no sequence gain)."),
+        ConfigField("entity_features", "str_list", default=[], label_zh="個體效應（投手、打者）", label_en="Entity effects",
+                    help_zh="可含 pitcher、batter；只對 logistic 生效（稀疏單熱編碼，不足 entity_min_count 球的個體併入 OTHER）。", help_en="pitcher and/or batter; logistic only."),
+        ConfigField("entity_min_count", "int", default=200, minimum=1, label_zh="個體最小訓練球數", label_en="Minimum training pitches per entity"),
+        ConfigField("hgb_early_stopping", "bool", default=False, label_zh="提升樹早停", label_en="Boosting early stopping",
+                    help_zh="預設關閉：早停用隨機驗證集，是提升樹結果不穩定的主因。", help_en="Off by default: its random validation split made boosting results unstable."),
         ConfigField("streak_cap", "int", default=4, minimum=2, maximum=10, label_zh="連投顆數上限（特徵）", label_en="Streak cap (feature)"),
         ConfigField("class_merge", "json", default=md.DEFAULT_CLASS_MERGE, label_zh="結果類別對照", label_en="Outcome class map",
                     help_zh="結果類別 → 模型類別；未列出的類別（短打、unclassified）排除並計數。", help_en="Unlisted categories are dropped and counted."),
@@ -82,9 +88,15 @@ class OutcomeModelMethod(ResearchMethod):
             if bad:
                 raise ConfigError(f"{key} has unknown features {bad}; allowed {list(allowed)} / {key} 含未知特徵 {bad}")
         num_f, cat_f = self._split_features(config, "full"); needed = set(md.source_columns(num_f + cat_f))
-        available = pitch_table_columns(memory=config["memory"], with_value=config["ev_check"], mirror=True, extra_columns=EXTRA_RAW)
+        available = pitch_table_columns(memory=max(config["memory"], 1), with_value=config["ev_check"], mirror=True, extra_columns=EXTRA_RAW)
         if needed - available:
             raise ConfigError(f"features need columns the pitch table does not have (memory too small?): {sorted(needed - available)} / 特徵需要的欄位不存在（memory 太小？）")
+        if set(config["entity_features"]) - {"pitcher", "batter"} or len(set(config["entity_features"])) != len(config["entity_features"]):
+            raise ConfigError("entity_features must be distinct values of pitcher, batter / entity_features 只能是 pitcher、batter")
+        if config["entity_features"] and "hgb" in config["models"]:
+            raise ConfigError("entity_features need models=['logistic']: boosting would memorize individuals / entity_features 只能搭配 logistic")
+        if config["memory"] == 0:   # normalized in place so the stored settings say what was really run
+            config["variants"] = ["base"]; config["sequence_numeric"] = []; config["sequence_categorical"] = []
         mapping = config["class_merge"]
         if not isinstance(mapping, dict) or not mapping or not all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
             raise ConfigError("class_merge must be a non-empty object of strings / class_merge 必須是非空的字串對照")
@@ -125,8 +137,9 @@ class OutcomeModelMethod(ResearchMethod):
             columns += md.source_columns(v[0] + v[1])
         if re:
             columns += ["state_code", "pitch_value"]
+        columns += list(config["entity_features"])
         columns = list(dict.fromkeys(columns))
-        table = build_pitch_table(ctx.source_node(), bunt_policy=config["bunt_policy"], memory=config["memory"],
+        table = build_pitch_table(ctx.source_node(), bunt_policy=config["bunt_policy"], memory=max(config["memory"], 1),
                                   re_by_state=re.re_by_state if re else None, mirror=mirror, extra_columns=EXTRA_RAW, filters=config["filters"])
         fit_rows, gain_rows, class_rows, cal_rows, cons_rows, ev_rows, coef_rows = [], [], [], [], [], [], []
         z = z_value(config["confidence"]); backend = "duckdb"
@@ -168,7 +181,7 @@ class OutcomeModelMethod(ResearchMethod):
                     table_v, class_mean = md.value_table(y[tr], [rows[i]["state_code"] for i in tr], [rows[i]["pitch_value"] for i in tr], len(classes), config["min_value_cell_n"])
                 for variant, (num, cat) in all_feats.items():
                     tr_rows = [rows[i] for i in tr]; te_rows = [rows[i] for i in te]
-                    design = md.Design(num, cat).fit(tr_rows)
+                    design = md.Design(num, cat, list(config["entity_features"]), config["entity_min_count"]).fit(tr_rows)
                     xtr, xte = design.transform(tr_rows), design.transform(te_rows)
                     nfeat[variant] = len(design.columns)
                     for model in config["models"]:
@@ -183,6 +196,8 @@ class OutcomeModelMethod(ResearchMethod):
                         if model == "logistic" and len(folds) == 1:
                             for ci, cname in enumerate(classes):
                                 for fname, coef in zip(design.columns, fitted.coef_[ci]):
+                                    if fname.startswith("ent:"):
+                                        continue
                                     coef_rows.append({"group": group, "variant": variant, "class": cname, "feature": fname, "coef": float(coef)})
             y_eval = y[eval_index]; games_eval = games[eval_index]
             realized = np.array([np.nan if rows[i]["pitch_value"] is None else rows[i]["pitch_value"] for i in eval_index]) if re else None
