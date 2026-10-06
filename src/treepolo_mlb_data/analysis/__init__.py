@@ -1,5 +1,12 @@
 from .builders import arsenal_table, empirical_percentile, pitch_usage, rank_pitch_roles
 from .codec import node_from_dict, node_to_dict
+from .exclusions import (
+    NON_PITCH_DESCRIPTIONS, NON_PITCH_TYPES, apply_exclusions, bunt_pitch_flag, exclude_bunt_plate_appearances,
+    exclude_non_pitch_rows,
+)
+from .handedness import MIRROR_RULES, ZONE_MIRROR, mirror_to_right_handed_pitcher
+from .outcomes import OUTCOME_CATEGORIES, outcome_category_expr
+from .sequence import sequence_features
 from .engine import AnalysisEngine, AnalysisResult, ExecutionPlan, ExecutionPlanner
 from .model import (
     Aggregate, Binary, Boolean, Case, CollectSet, Column, EventPattern, Filter,
@@ -22,6 +29,9 @@ from .workflow import (
 install_auto_cluster()
 
 __all__ = [
+    "MIRROR_RULES", "NON_PITCH_DESCRIPTIONS", "NON_PITCH_TYPES", "OUTCOME_CATEGORIES", "ZONE_MIRROR", "apply_exclusions",
+    "bunt_pitch_flag", "exclude_bunt_plate_appearances", "exclude_non_pitch_rows", "mirror_to_right_handed_pitcher",
+    "outcome_category_expr", "sequence_features",
     "Aggregate", "AggregateStage", "AnalysisEngine", "AnalysisResult", "Binary", "Boolean",
     "BootstrapSpec", "Case", "ClusteringOutput", "ClusteringSpec", "CollectSet", "Column",
     "DerivedStage", "EventPattern", "ExecutionPlan", "ExecutionPlanner", "Filter", "FilterStage",
