@@ -1098,3 +1098,18 @@ def mirror_to_right_handed_pitcher(source, carry_fields, *, negate_fields=NEGATE
 | CLI 子指令定義與 `main` | `src/treepolo_mlb_data/cli.py` |
 | 前端新增頁面的範例 | `src/treepolo_mlb_data/web_static/cluster-comparison-page.js`、`panel-activation.js` |
 | 測試寫法範例（含 DuckDB 後端） | `tests/test_analysis_state.py`、`tests/test_duckdb_backend.py`、`tests/test_analysis_engine.py` |
+
+---
+
+## 附錄 E：P2 完成紀錄（2026-10-06）
+
+與本文件原先寫法不同、或實作時才發現的事：
+
+1. **短打與非投球的描述值**：真實資料出現兩個文件沒預料到的值。`bunt_foul_tip`（短打擦棒）已加入短打規則（`BUNT_DESCRIPTIONS`）；`swinging_pitchout` 已加入非投球清單。兩者都落在使用者已決定的「排除所有短打、排除 pitchout」範圍內，未涉及新的決策。
+2. **`data_profile` 方法版本升為 2**：因為短打規則改變了 `bunt_share` 的結果。版本號在 `run_key` 內，所以舊結果不會被重用——這也驗證了「方法邏輯改變就要升版本」的規則。
+3. **鏡像判定準則微調**：文件 T2.8 第 5 點用「兩種慣用手合併後的平均」判定，遇到平均值接近 0 的欄位（`plate_x`）與站位比例不同的欄位（`api_break_x_batter_in`）會誤判為「要問使用者」。改用更直接的檢查：鏡像後「右投對右打 ≈ −左投對左打」「右投對左打 ≈ −左投對右打」。結果與原先已決定的規則一致，並得出其餘欄位的規則（規劃文件 2.6）。
+4. **`LIKE` 在兩個後端的差異**已寫成測試（`tests/test_analysis_string_ops.py`）：SQLite 不分大小寫、DuckDB 分，所以規則同時列 `%bunt%` 與 `%Bunt%`。
+5. **兩個後端的 NULL 排序位置不同**（SQLite 最前、DuckDB 最後）。測試與結果比較都用明確的排序鍵。
+6. **DuckDB 測試必須斷言 `result.backend == "duckdb"`**，因為鏡像建立失敗時引擎會靜默退回 SQLite（`tests/seq_fixtures.py` 的 `run_both` 已內建）。
+7. `research/scope.py` 的 `scope_where_sql` 公開（`data_profile` 使用）。
+8. **未做**：`hc_x` 的鏡像（需先確認中心點）；網頁介面不提供逐球視窗操作（P3 的方法頁面直接在後端使用建構函式）。
