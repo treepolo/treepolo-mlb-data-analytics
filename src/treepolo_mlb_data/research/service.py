@@ -14,6 +14,7 @@ from ..config import AppConfig
 from . import builtin_methods  # noqa: F401  (registers built-in methods)
 from . import sequencing_methods  # noqa: F401  (registers the P3 methods)
 from . import modeling_methods  # noqa: F401  (registers the P4 methods)
+from . import regression_methods  # noqa: F401  (registers streak_regression)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
