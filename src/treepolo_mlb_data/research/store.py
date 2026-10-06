@@ -497,3 +497,81 @@ class ResearchStore:
             self._collect_garbage_locked()
             self.conn.commit()
             return cur.rowcount > 0
+
+    # ----------------------------------------------------------------- import
+    def import_records(self, *, bundle_uid: str, studies: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        """Insert imported studies and runs in ONE transaction (all or nothing).
+
+        ``studies``: dicts with study_uid, name, purpose, insight_markdown, created_at, updated_at, run_keys.
+        ``runs``: run dicts as written by the bundle exporter (with ``artifacts``).
+        Blobs must already be stored.
+        """
+
+        report = {"bundle_uid": bundle_uid, "studies_added": 0, "studies_merged": 0, "runs_added": 0,
+                  "runs_skipped_duplicate": 0, "warnings": []}
+        with self._lock:
+            try:
+                run_ids: dict[str, int] = {}
+                for run in runs:
+                    existing = self.conn.execute(
+                        "SELECT id, result_hash FROM research_runs WHERE run_key=?", (run["run_key"],)
+                    ).fetchone()
+                    if existing is not None:
+                        run_ids[run["run_key"]] = existing["id"]
+                        report["runs_skipped_duplicate"] += 1
+                        if existing["result_hash"] != run["result_hash"]:
+                            report["warnings"].append(
+                                f"Run {run['run_key'][:12]} already exists locally with a different result; kept the local one"
+                            )
+                        continue
+                    cur = self.conn.execute(
+                        """
+                        INSERT INTO research_runs(run_key,kind,method_version,config_json,scope_json,data_fingerprint_json,status,error,
+                            summary_json,result_hash,result_bytes,duration_seconds,code_version,origin,imported_bundle_uid,parent_run_id,
+                            created_at,finished_at)
+                        VALUES(?,?,?,?,?,?,'success',NULL,?,?,?,?,?,'imported',?,NULL,?,?)
+                        """,
+                        (run["run_key"], run["kind"], int(run["method_version"]), canonical_json(run["config"]),
+                         canonical_json(run["scope"]), canonical_json(run["data_fingerprint"]), canonical_json(run.get("summary", {})),
+                         run["result_hash"], run.get("result_bytes"), run.get("duration_seconds"), run["code_version"],
+                         bundle_uid, run["created_at"], run.get("finished_at")),
+                    )
+                    run_id = int(cur.lastrowid)
+                    run_ids[run["run_key"]] = run_id
+                    for artifact in run.get("artifacts", []):
+                        self.conn.execute(
+                            "INSERT INTO run_artifacts(run_id,name,description,columns_json,row_count,blob_hash,blob_bytes) VALUES(?,?,?,?,?,?,?)",
+                            (run_id, artifact["name"], artifact.get("description", ""), canonical_json(artifact["columns"]),
+                             int(artifact["row_count"]), artifact["blob_hash"], int(artifact["blob_bytes"])),
+                        )
+                    report["runs_added"] += 1
+                for study in studies:
+                    row = self.conn.execute("SELECT id FROM studies WHERE study_uid=?", (study["study_uid"],)).fetchone()
+                    if row is not None:
+                        study_id = row["id"]
+                        report["studies_merged"] += 1
+                    else:
+                        name = str(study["name"]).strip() or "imported"
+                        candidate, number = name, 1
+                        while self.conn.execute("SELECT 1 FROM studies WHERE origin='imported' AND name=?", (candidate,)).fetchone():
+                            number += 1
+                            candidate = f"{name} (imported)" if number == 2 else f"{name} (imported {number - 1})"
+                        cur = self.conn.execute(
+                            "INSERT INTO studies(study_uid,name,purpose,insight_markdown,origin,created_at,updated_at) VALUES(?,?,?,?,'imported',?,?)",
+                            (study["study_uid"], candidate, study.get("purpose", ""), study.get("insight_markdown", ""),
+                             study.get("created_at") or _now(), study.get("updated_at") or _now()),
+                        )
+                        study_id = int(cur.lastrowid)
+                        report["studies_added"] += 1
+                    for run_key in study.get("run_keys", []):
+                        if run_key in run_ids:
+                            self.conn.execute(
+                                "INSERT OR IGNORE INTO study_runs(study_id,run_id,added_at) VALUES(?,?,?)",
+                                (study_id, run_ids[run_key], _now()),
+                            )
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
+        return report
+
