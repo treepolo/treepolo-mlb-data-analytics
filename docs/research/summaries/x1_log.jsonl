@@ -7,3 +7,4 @@
 {"config": "A6_streak_regression_mean_pitch_value_S3_X1", "run_id": null, "run_key": null, "reused": false, "seconds": 19.4, "error": "ConfigError: More than max_rows=2000000 pitch rows; narrow the scope, pitch types or filters / 逐球列數超過 max_rows"}
 {"config": "A6_streak_regression_swing_rate_S3_X1", "run_id": null, "run_key": null, "reused": false, "seconds": 14.9, "error": "ConfigError: More than max_rows=2000000 pitch rows; narrow the scope, pitch types or filters / 逐球列數超過 max_rows"}
 {"config": "A6_streak_regression_whiff_per_swing_S3_X1", "run_id": 188, "run_key": "d1369e7b6b80", "reused": false, "seconds": 67.1, "error": null}
+{"config": "A6_streak_regression_hr_per_pitch_S3_X1", "run_id": 190, "run_key": "138d17848166", "reused": false, "seconds": 332.9, "error": null}
