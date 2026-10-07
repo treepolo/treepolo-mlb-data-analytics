@@ -1,0 +1,9 @@
+{"config": "A1_run_expectancy_X1", "run_id": 180, "run_key": "670380f95ec9", "reused": false, "seconds": 15.3, "error": null}
+{"config": "A2_outcome_count_type_X1", "run_id": 181, "run_key": "4eccaa265bd7", "reused": false, "seconds": 11.4, "error": null}
+{"config": "A6_streak_regression_called_strike_per_take_S3_X1", "run_id": 182, "run_key": "b7ec031c1e46", "reused": false, "seconds": 64.0, "error": null}
+{"config": "A6_streak_regression_foul_per_swing_S3_X1", "run_id": 183, "run_key": "197c852e8501", "reused": false, "seconds": 65.8, "error": null}
+{"config": "A6_streak_regression_hr_per_pitch_S3_X1", "run_id": null, "run_key": null, "reused": false, "seconds": 14.5, "error": "ConfigError: More than max_rows=2000000 pitch rows; narrow the scope, pitch types or filters / 逐球列數超過 max_rows"}
+{"config": "A6_streak_regression_in_play_per_swing_S3_X1", "run_id": 185, "run_key": "bc94f47a36d7", "reused": false, "seconds": 66.3, "error": null}
+{"config": "A6_streak_regression_mean_pitch_value_S3_X1", "run_id": null, "run_key": null, "reused": false, "seconds": 19.4, "error": "ConfigError: More than max_rows=2000000 pitch rows; narrow the scope, pitch types or filters / 逐球列數超過 max_rows"}
+{"config": "A6_streak_regression_swing_rate_S3_X1", "run_id": null, "run_key": null, "reused": false, "seconds": 14.9, "error": "ConfigError: More than max_rows=2000000 pitch rows; narrow the scope, pitch types or filters / 逐球列數超過 max_rows"}
+{"config": "A6_streak_regression_whiff_per_swing_S3_X1", "run_id": 188, "run_key": "d1369e7b6b80", "reused": false, "seconds": 67.1, "error": null}

@@ -10,6 +10,8 @@ for name in sources:
     cfg.setdefault("kind", {"A1_run_expectancy": "run_expectancy", "A2_outcome_count_type": "outcome_table"}.get(name))
     cfg["study"] = "P5-7 extra study"; cfg["purpose"] = "extra_study"
     cfg["scope"] = {"game_years": [2023, 2024, 2025, 2026], "game_types": ["R"]}
+    if cfg["kind"] == "streak_regression" and cfg["rate"] in ("hr_per_pitch", "mean_pitch_value", "swing_rate"):
+        cfg["max_rows"] = 3_500_000  # four seasons of all pitches exceed the 2M default cap
     if cfg["kind"] == "outcome_model":
         cfg["split"] = "grouped_kfold"; cfg.pop("train_years", None); cfg.pop("test_years", None)
     (OUT / (name.replace("_2023-24", "") + "_X1.json")).write_text(json.dumps(cfg, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
