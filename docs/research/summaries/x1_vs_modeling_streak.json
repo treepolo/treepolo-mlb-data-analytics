@@ -1,0 +1,79 @@
+[
+ {
+  "rate": "whiff_per_swing",
+  "cells": 52,
+  "same_sign": 48,
+  "ci99_excl0_modeling": 15,
+  "ci99_excl0_X1": 23,
+  "mean_abs_est_modeling": 0.0291,
+  "mean_abs_est_X1": 0.0269,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.73
+ },
+ {
+  "rate": "swing_rate",
+  "cells": 60,
+  "same_sign": 49,
+  "ci99_excl0_modeling": 8,
+  "ci99_excl0_X1": 13,
+  "mean_abs_est_modeling": 0.016,
+  "mean_abs_est_X1": 0.015,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.73
+ },
+ {
+  "rate": "called_strike_per_take",
+  "cells": 56,
+  "same_sign": 51,
+  "ci99_excl0_modeling": 15,
+  "ci99_excl0_X1": 21,
+  "mean_abs_est_modeling": 0.0288,
+  "mean_abs_est_X1": 0.0207,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.72
+ },
+ {
+  "rate": "foul_per_swing",
+  "cells": 52,
+  "same_sign": 44,
+  "ci99_excl0_modeling": 1,
+  "ci99_excl0_X1": 7,
+  "mean_abs_est_modeling": 0.0178,
+  "mean_abs_est_X1": 0.0137,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.72
+ },
+ {
+  "rate": "in_play_per_swing",
+  "cells": 52,
+  "same_sign": 47,
+  "ci99_excl0_modeling": 17,
+  "ci99_excl0_X1": 25,
+  "mean_abs_est_modeling": 0.0298,
+  "mean_abs_est_X1": 0.0276,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.72
+ },
+ {
+  "rate": "hr_per_pitch",
+  "cells": 60,
+  "same_sign": 51,
+  "ci99_excl0_modeling": 3,
+  "ci99_excl0_X1": 7,
+  "mean_abs_est_modeling": 0.003,
+  "mean_abs_est_X1": 0.0025,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.71
+ },
+ {
+  "rate": "mean_pitch_value",
+  "cells": 60,
+  "same_sign": 53,
+  "ci99_excl0_modeling": 8,
+  "ci99_excl0_X1": 11,
+  "mean_abs_est_modeling": 0.0114,
+  "mean_abs_est_X1": 0.0089,
+  "share_abs_z_gt2": 0.0,
+  "mean_se_ratio_X1_over_model": 0.71
+ }
+]
