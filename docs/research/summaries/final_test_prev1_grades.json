@@ -1,0 +1,44 @@
+{
+ "whiff_per_swing 2025": {
+  "detected_modeling": 36,
+  "same sign, interval has 0": 16,
+  "opposite sign": 3,
+  "same sign & interval excludes 0": 14,
+  "no data": 3
+ },
+ "whiff_per_swing 2026": {
+  "detected_modeling": 36,
+  "opposite sign": 3,
+  "same sign, interval has 0": 15,
+  "same sign & interval excludes 0": 13,
+  "no data": 5
+ },
+ "swing_rate 2025": {
+  "detected_modeling": 26,
+  "same sign, interval has 0": 14,
+  "no data": 2,
+  "same sign & interval excludes 0": 6,
+  "opposite sign": 4
+ },
+ "swing_rate 2026": {
+  "detected_modeling": 26,
+  "same sign, interval has 0": 15,
+  "no data": 2,
+  "same sign & interval excludes 0": 7,
+  "opposite sign": 2
+ },
+ "mean_pitch_value 2025": {
+  "detected_modeling": 20,
+  "opposite sign": 5,
+  "same sign, interval has 0": 12,
+  "no data": 1,
+  "same sign & interval excludes 0": 2
+ },
+ "mean_pitch_value 2026": {
+  "detected_modeling": 20,
+  "same sign, interval has 0": 14,
+  "no data": 1,
+  "opposite sign": 4,
+  "same sign & interval excludes 0": 1
+ }
+}
