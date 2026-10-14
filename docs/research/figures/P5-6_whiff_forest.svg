@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="518" font-family="sans-serif" font-size="12"><rect width="100%" height="100%" fill="#fff"/>
+<text x="12" y="22" font-size="15" font-weight="600" fill="#222">Whiff-per-swing change at the k-th same-type pitch (S3, 99% CI), cells detected in 2023-24</text>
+<text x="12" y="40" fill="#555">Percentage points vs 1st pitch of the streak. Blue = modeling 2023-24, orange = 2025 test, green = 2026 test.</text>
+<line x1="212.2390891840607" x2="212.2390891840607" y1="58" y2="484" stroke="#ddd"/><text x="212.2390891840607" y="500" text-anchor="middle" fill="#555">-12</text>
+<line x1="266.88804554079695" x2="266.88804554079695" y1="58" y2="484" stroke="#ddd"/><text x="266.88804554079695" y="500" text-anchor="middle" fill="#555">-10</text>
+<line x1="321.5370018975332" x2="321.5370018975332" y1="58" y2="484" stroke="#ddd"/><text x="321.5370018975332" y="500" text-anchor="middle" fill="#555">-8</text>
+<line x1="376.1859582542694" x2="376.1859582542694" y1="58" y2="484" stroke="#ddd"/><text x="376.1859582542694" y="500" text-anchor="middle" fill="#555">-6</text>
+<line x1="430.83491461100573" x2="430.83491461100573" y1="58" y2="484" stroke="#ddd"/><text x="430.83491461100573" y="500" text-anchor="middle" fill="#555">-4</text>
+<line x1="485.48387096774195" x2="485.48387096774195" y1="58" y2="484" stroke="#ddd"/><text x="485.48387096774195" y="500" text-anchor="middle" fill="#555">-2</text>
+<line x1="540.1328273244782" x2="540.1328273244782" y1="58" y2="484" stroke="#444"/><text x="540.1328273244782" y="500" text-anchor="middle" fill="#555">0</text>
+<line x1="594.7817836812144" x2="594.7817836812144" y1="58" y2="484" stroke="#ddd"/><text x="594.7817836812144" y="500" text-anchor="middle" fill="#555">2</text>
+<line x1="649.4307400379507" x2="649.4307400379507" y1="58" y2="484" stroke="#ddd"/><text x="649.4307400379507" y="500" text-anchor="middle" fill="#555">4</text>
+<line x1="704.0796963946868" x2="704.0796963946868" y1="58" y2="484" stroke="#ddd"/><text x="704.0796963946868" y="500" text-anchor="middle" fill="#555">6</text>
+<line x1="758.7286527514232" x2="758.7286527514232" y1="58" y2="484" stroke="#ddd"/><text x="758.7286527514232" y="500" text-anchor="middle" fill="#555">8</text>
+<line x1="813.3776091081594" x2="813.3776091081594" y1="58" y2="484" stroke="#ddd"/><text x="813.3776091081594" y="500" text-anchor="middle" fill="#555">10</text>
+<line x1="868.0265654648956" x2="868.0265654648956" y1="58" y2="484" stroke="#ddd"/><text x="868.0265654648956" y="500" text-anchor="middle" fill="#555">12</text>
+<line x1="922.6755218216318" x2="922.6755218216318" y1="58" y2="484" stroke="#ddd"/><text x="922.6755218216318" y="500" text-anchor="middle" fill="#555">14</text>
+<text x="220" y="86" text-anchor="end" fill="#222">LvR SL k=3</text>
+<line x1="616.9146110056926" x2="875.9506641366223" y1="74" y2="74" stroke="#4C6A92" stroke-width="2"/><circle cx="746.4326375711574" cy="74" r="3.5" fill="#4C6A92"/>
+<line x1="494.2277039848197" x2="922.6755218216318" y1="82" y2="82" stroke="#C4701A" stroke-width="2"/><circle cx="708.4516129032257" cy="82" r="3.5" fill="#C4701A"/>
+<line x1="257.3244781783681" x2="787.9658444022771" y1="90" y2="90" stroke="#2E8B57" stroke-width="2"/><circle cx="522.6451612903224" cy="90" r="3.5" fill="#2E8B57"/>
+<text x="220" y="120" text-anchor="end" fill="#222">RvR ST k=3</text>
+<line x1="616.3681214421252" x2="848.3529411764705" y1="108" y2="108" stroke="#4C6A92" stroke-width="2"/><circle cx="732.4971537001898" cy="108" r="3.5" fill="#4C6A92"/>
+<line x1="568.550284629981" x2="893.7115749525616" y1="116" y2="116" stroke="#C4701A" stroke-width="2"/><circle cx="731.1309297912712" cy="116" r="3.5" fill="#C4701A"/>
+<line x1="563.0853889943073" x2="920.7628083491461" y1="124" y2="124" stroke="#2E8B57" stroke-width="2"/><circle cx="742.0607210626185" cy="124" r="3.5" fill="#2E8B57"/>
+<text x="220" y="154" text-anchor="end" fill="#222">RvL CH k=3</text>
+<line x1="582.7590132827324" x2="821.5749525616698" y1="142" y2="142" stroke="#4C6A92" stroke-width="2"/><circle cx="702.1669829222011" cy="142" r="3.5" fill="#4C6A92"/>
+<line x1="547.7836812144212" x2="842.6148007590133" y1="150" y2="150" stroke="#C4701A" stroke-width="2"/><circle cx="695.3358633776091" cy="150" r="3.5" fill="#C4701A"/>
+<line x1="566.9108159392789" x2="875.9506641366223" y1="158" y2="158" stroke="#2E8B57" stroke-width="2"/><circle cx="721.5673624288424" cy="158" r="3.5" fill="#2E8B57"/>
+<text x="220" y="188" text-anchor="end" fill="#222">LvR SL k=2</text>
+<line x1="607.3510436432637" x2="781.954459203036" y1="176" y2="176" stroke="#4C6A92" stroke-width="2"/><circle cx="694.516129032258" cy="176" r="3.5" fill="#4C6A92"/>
+<line x1="499.146110056926" x2="730.8576850094876" y1="184" y2="184" stroke="#C4701A" stroke-width="2"/><circle cx="615.0018975332068" cy="184" r="3.5" fill="#C4701A"/>
+<line x1="471.54838709677415" x2="712.2770398481973" y1="192" y2="192" stroke="#2E8B57" stroke-width="2"/><circle cx="592.0493358633776" cy="192" r="3.5" fill="#2E8B57"/>
+<text x="220" y="222" text-anchor="end" fill="#222">RvR SL k=3</text>
+<line x1="612.5426944971537" x2="773.7571157495256" y1="210" y2="210" stroke="#4C6A92" stroke-width="2"/><circle cx="693.1499051233396" cy="210" r="3.5" fill="#4C6A92"/>
+<line x1="560.8994307400379" x2="798.3491461100568" y1="218" y2="218" stroke="#C4701A" stroke-width="2"/><circle cx="679.4876660341556" cy="218" r="3.5" fill="#C4701A"/>
+<line x1="478.6527514231499" x2="757.9089184060721" y1="226" y2="226" stroke="#2E8B57" stroke-width="2"/><circle cx="618.280834914611" cy="226" r="3.5" fill="#2E8B57"/>
+<text x="220" y="256" text-anchor="end" fill="#222">RvR ST k=2</text>
+<line x1="626.4781783681215" x2="757.9089184060721" y1="244" y2="244" stroke="#4C6A92" stroke-width="2"/><circle cx="692.0569259962049" cy="244" r="3.5" fill="#4C6A92"/>
+<line x1="575.381404174573" x2="752.9905123339659" y1="252" y2="252" stroke="#C4701A" stroke-width="2"/><circle cx="664.1859582542695" cy="252" r="3.5" fill="#C4701A"/>
+<line x1="544.5047438330171" x2="732.7703984819734" y1="260" y2="260" stroke="#2E8B57" stroke-width="2"/><circle cx="638.5009487666034" cy="260" r="3.5" fill="#2E8B57"/>
+<text x="220" y="290" text-anchor="end" fill="#222">RvL SL k=2</text>
+<line x1="580.8462998102466" x2="693.4231499051234" y1="278" y2="278" stroke="#4C6A92" stroke-width="2"/><circle cx="637.134724857685" cy="278" r="3.5" fill="#4C6A92"/>
+<line x1="524.831119544592" x2="715.8292220113852" y1="286" y2="286" stroke="#C4701A" stroke-width="2"/><circle cx="620.4667931688805" cy="286" r="3.5" fill="#C4701A"/>
+<line x1="504.06451612903226" x2="679.7609108159393" y1="294" y2="294" stroke="#2E8B57" stroke-width="2"/><circle cx="592.0493358633776" cy="294" r="3.5" fill="#2E8B57"/>
+<text x="220" y="324" text-anchor="end" fill="#222">RvL CH k=2</text>
+<line x1="577.0208728652751" x2="693.9696394686907" y1="312" y2="312" stroke="#4C6A92" stroke-width="2"/><circle cx="635.4952561669829" cy="312" r="3.5" fill="#4C6A92"/>
+<line x1="542.865275142315" x2="698.888045540797" y1="320" y2="320" stroke="#C4701A" stroke-width="2"/><circle cx="621.0132827324478" cy="320" r="3.5" fill="#C4701A"/>
+<line x1="570.189753320683" x2="714.7362428842504" y1="328" y2="328" stroke="#2E8B57" stroke-width="2"/><circle cx="642.3263757115749" cy="328" r="3.5" fill="#2E8B57"/>
+<text x="220" y="358" text-anchor="end" fill="#222">RvL FF k=2</text>
+<line x1="587.6774193548388" x2="652.7096774193549" y1="346" y2="346" stroke="#4C6A92" stroke-width="2"/><circle cx="620.1935483870967" cy="346" r="3.5" fill="#4C6A92"/>
+<line x1="572.6489563567362" x2="662.2732447817837" y1="354" y2="354" stroke="#C4701A" stroke-width="2"/><circle cx="617.46110056926" cy="354" r="3.5" fill="#C4701A"/>
+<line x1="545.324478178368" x2="627.8444022770398" y1="362" y2="362" stroke="#2E8B57" stroke-width="2"/><circle cx="586.5844402277039" cy="362" r="3.5" fill="#2E8B57"/>
+<text x="220" y="392" text-anchor="end" fill="#222">LvR FF k=2</text>
+<line x1="576.7476280834915" x2="661.1802656546489" y1="380" y2="380" stroke="#4C6A92" stroke-width="2"/><circle cx="619.100569259962" cy="380" r="3.5" fill="#4C6A92"/>
+<line x1="557.3472485768501" x2="671.5635673624288" y1="388" y2="388" stroke="#C4701A" stroke-width="2"/><circle cx="614.4554079696395" cy="388" r="3.5" fill="#C4701A"/>
+<line x1="570.189753320683" x2="671.2903225806451" y1="396" y2="396" stroke="#2E8B57" stroke-width="2"/><circle cx="620.7400379506641" cy="396" r="3.5" fill="#2E8B57"/>
+<text x="220" y="426" text-anchor="end" fill="#222">RvR SL k=2</text>
+<line x1="573.741935483871" x2="661.1802656546489" y1="414" y2="414" stroke="#4C6A92" stroke-width="2"/><circle cx="617.46110056926" cy="414" r="3.5" fill="#4C6A92"/>
+<line x1="515.5407969639468" x2="659.8140417457305" y1="422" y2="422" stroke="#C4701A" stroke-width="2"/><circle cx="587.6774193548388" cy="422" r="3.5" fill="#C4701A"/>
+<line x1="565.5445920303605" x2="744.246679316888" y1="430" y2="430" stroke="#2E8B57" stroke-width="2"/><circle cx="654.8956356736243" cy="430" r="3.5" fill="#2E8B57"/>
+<text x="220" y="460" text-anchor="end" fill="#222">RvR FF k=2</text>
+<line x1="571.5559772296015" x2="635.7685009487666" y1="448" y2="448" stroke="#4C6A92" stroke-width="2"/><circle cx="603.5256166982922" cy="448" r="3.5" fill="#4C6A92"/>
+<line x1="545.324478178368" x2="638.7741935483871" y1="456" y2="456" stroke="#C4701A" stroke-width="2"/><circle cx="592.0493358633776" cy="456" r="3.5" fill="#C4701A"/>
+<line x1="508.16318785578744" x2="610.9032258064515" y1="464" y2="464" stroke="#2E8B57" stroke-width="2"/><circle cx="559.5332068311195" cy="464" r="3.5" fill="#2E8B57"/>
+</svg>
