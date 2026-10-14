@@ -59,7 +59,7 @@ def test_p7_gates_pass_on_unseen_players(p7):
 def test_p0_gates_do_not_pass(p0):
     run = run_backend(p0, "xgboost" if HAS_XGB else "hgb", device="cpu", min_gain=0.003)
     gates = sections(p0, run, "Gates")
-    assert gates and all(g["passed"] == 0 for g in gates)
+    assert gates and all(g["passed"] == 0 for g in gates if g["gate"] in ("G1a", "G1b"))
 
 
 def test_same_settings_reuse_the_stored_run(p7):

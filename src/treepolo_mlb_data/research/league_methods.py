@@ -46,23 +46,24 @@ FETCH = ("pitch_uid", "game_pk", "game_year", "game_date", "pitcher", "batter", 
 STRING_COLUMNS = ("hand_group", "pitch_type", "outcome", "prev1_pitch_type")
 
 
-def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years) -> dict[str, np.ndarray]:
+def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, re_by_state=None) -> dict[str, np.ndarray]:
     """Pitch-table rows of ``groups`` as columnar arrays, one (group, season) query at a time so the peak memory stays low.
 
     The pitch table (bunt policy, sequence columns, filters) is the same one P3-P5 use; ``group`` and ``game_order`` are added here."""
 
-    table = build_pitch_table(ctx.source_node(), bunt_policy=config["bunt_policy"], memory=1, re_by_state=None, mirror=False, extra_columns=EXTRA_RAW,
+    table = build_pitch_table(ctx.source_node(), bunt_policy=config["bunt_policy"], memory=1, re_by_state=re_by_state, mirror=False, extra_columns=EXTRA_RAW,
                               filters=config["filters"])
-    chunks: dict[str, list[np.ndarray]] = {c: [] for c in FETCH}
+    fetch = FETCH + (("pitch_value", "state_code") if re_by_state is not None else ())        # run values need the run-expectancy table
+    chunks: dict[str, list[np.ndarray]] = {c: [] for c in fetch}
     for group in groups:
         for year in years:
             cond = Boolean("and", (Binary(Column("hand_group"), "=", Literal(group)), Binary(Column("game_year"), "=", Literal(int(year)))))
-            node = Limit(Sort(Project(Filter(table, cond), tuple(NamedExpr(c, Column(c)) for c in FETCH), PITCH_GRAIN),
+            node = Limit(Sort(Project(Filter(table, cond), tuple(NamedExpr(c, Column(c)) for c in fetch), PITCH_GRAIN),
                               (OrderKey(Column("game_pk")), OrderKey(Column("pitch_uid")))), config["max_rows"] + 1)
             result = run_checked(ctx, node)
             if len(result.rows) > config["max_rows"]:
                 raise ConfigError(f"Group {group} {year} has more than max_rows rows / 分組 {group} {year} 的列數超過上限")
-            for c in FETCH:
+            for c in fetch:
                 values = [r[c] for r in result.rows]
                 if c in STRING_COLUMNS:
                     chunks[c].append(np.array(["" if v is None else str(v) for v in values]))
@@ -322,6 +323,9 @@ class LeagueModelMethod(ResearchMethod):
                 c = next((r for r in res["contrast"] if r["mode"] == mode and r["side"] == side and r["comparison"] == f"L0→{lv}"), None)
                 if c is not None:
                     out.append({"group": group, "side": f"{side}:{lv}", "gate": "G1b", "mode": mode, "value": c["gain"], "lo": c["lo"], "passed": int(c["lo"] > 0)})
+                u = next((r for r in res["contrast"] if r["mode"] == "season_unseen" and r["side"] == side and r["comparison"] == f"L0→{lv}"), None)
+                if u is not None:       # players of the held-out season that the training season never saw: reference only (few players), passed = -1 means "not a gate"
+                    out.append({"group": group, "side": f"{side}:{lv}", "gate": "G1b_ref", "mode": "season_unseen", "value": u["gain"], "lo": u["lo"], "passed": -1})
         return out
 
     @staticmethod

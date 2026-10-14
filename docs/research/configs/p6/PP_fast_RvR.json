@@ -1,0 +1,34 @@
+{
+ "kind": "pitch_policy",
+ "study": "P6",
+ "scope": {
+  "game_years": [
+   2023,
+   2024
+  ],
+  "game_types": [
+   "R"
+  ]
+ },
+ "re_scope": {
+  "game_years": [
+   2023,
+   2024
+  ],
+  "game_types": [
+   "R"
+  ]
+ },
+ "purpose": "tuning",
+ "groups": [
+  "RvR"
+ ],
+ "members": 5,
+ "cross_members": 3,
+ "backend": "xgboost",
+ "device": "auto",
+ "max_depth": 4,
+ "min_leaf": 1000,
+ "max_iter": 150,
+ "max_rows": 3500000
+}

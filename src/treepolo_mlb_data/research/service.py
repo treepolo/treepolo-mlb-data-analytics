@@ -17,6 +17,7 @@ from . import modeling_methods  # noqa: F401  (registers the P4 methods)
 from . import regression_methods  # noqa: F401  (registers streak_regression)
 from . import compare_methods  # noqa: F401  (registers run_compare)
 from . import league_methods  # noqa: F401  (registers player_profiles and league_model)
+from . import policy_methods  # noqa: F401  (registers pitch_policy)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
