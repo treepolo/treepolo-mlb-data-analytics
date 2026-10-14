@@ -92,3 +92,11 @@ def test_memory_ladder_reports_cumulative_and_marginal_gains(service):
     assert [r["variant"] for r in fit] == ["base", "m1", "m2"] and fit[2]["n_features"] > fit[1]["n_features"] > fit[0]["n_features"]
     with pytest.raises(ConfigError, match="memory"):
         service.run("outcome_model", {**BASE, "memory": 0, "sequence_ladder": True})
+
+
+def test_decision_time_feature_set_is_the_documented_preset(service):
+    run = service.run("outcome_model", {**BASE, "feature_set": "decision_time", "memory": 1})["run"]
+    same = service.run("outcome_model", {**BASE, "memory": 1, "base_numeric": ["outs_when_up", "pitch_index_in_pa"],
+                                         "base_categorical": ["pitch_type", "count_state", "bases"]})["run"]
+    a = service.result_page(run["id"], 0, 0, 10)["rows"]; b = service.result_page(same["id"], 0, 0, 10)["rows"]
+    assert [r["n_features"] for r in a] == [r["n_features"] for r in b] and [r["logloss"] for r in a] == [r["logloss"] for r in b]

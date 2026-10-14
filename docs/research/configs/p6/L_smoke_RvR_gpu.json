@@ -1,0 +1,43 @@
+{
+ "kind": "league_model",
+ "study": "P6",
+ "scope": {
+  "game_years": [
+   2023,
+   2024
+  ],
+  "game_types": [
+   "R"
+  ]
+ },
+ "groups": [
+  "RvR"
+ ],
+ "levels": [
+  "L0",
+  "L1",
+  "L2",
+  "L3"
+ ],
+ "purpose": "tuning",
+ "split": "holdout_years",
+ "train_years": [
+  2023
+ ],
+ "test_years": [
+  2024
+ ],
+ "cold_by": [
+  "pitcher",
+  "batter"
+ ],
+ "cold_folds": 3,
+ "bootstrap_reps": 100,
+ "backend": "xgboost",
+ "device": "auto",
+ "max_rows": 3500000,
+ "max_iter": 60,
+ "max_depth": 5,
+ "min_leaf": 200,
+ "bagging_reps": 1
+}

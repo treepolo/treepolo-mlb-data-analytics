@@ -26,7 +26,7 @@ class OutcomeModelMethod(ResearchMethod):
     """Multinomial outcome models (logistic / gradient boosting) per handedness group with held-out evaluation and sequence gain."""
 
     kind = "outcome_model"
-    version = 3  # 2: entity_features, hgb_early_stopping (default off), memory 0; 3: sequence_ladder
+    version = 4  # 2: entity_features, hgb_early_stopping (default off), memory 0; 3: sequence_ladder; 4: feature_set decision_time
     label_zh = "結果機率模型與序列增益"
     label_en = "Outcome model and sequence gain"
     requires_scope = True
@@ -47,6 +47,9 @@ class OutcomeModelMethod(ResearchMethod):
                     help_zh="true：變體 base、m1…m{memory}（m_j 含前 j 球的球種、前一球結果、連投顆數與數值差），輸出各 m 相對 base 與相對前一個 m 的邊際增益。", help_en="Fits base, m1..m{memory}; reports cumulative and marginal gains."),
         ConfigField("entity_features", "str_list", default=[], label_zh="個體效應（投手、打者）", label_en="Entity effects",
                     help_zh="可含 pitcher、batter；只對 logistic 生效（稀疏單熱編碼，不足 entity_min_count 球的個體併入 OTHER）。", help_en="pitcher and/or batter; logistic only."),
+        ConfigField("feature_set", "choice", default="custom", choices=["custom", "decision_time"], label_zh="特徵集", label_en="Feature set",
+                    help_zh="decision_time：只用投球前已知的資訊（局勢、球種、前球球種與結果），不含本球的速度、位置、位移。custom 沿用 P5 的設定。",
+                    help_en="decision_time: only what is known before the pitch (situation, pitch type, previous types/outcomes), no current speed/location/movement. custom keeps P5's settings."),
         ConfigField("entity_min_count", "int", default=200, minimum=1, label_zh="個體最小訓練球數", label_en="Minimum training pitches per entity"),
         ConfigField("hgb_early_stopping", "bool", default=False, label_zh="提升樹早停", label_en="Boosting early stopping",
                     help_zh="預設關閉：早停用隨機驗證集，是提升樹結果不穩定的主因。", help_en="Off by default: its random validation split made boosting results unstable."),
@@ -82,6 +85,9 @@ class OutcomeModelMethod(ResearchMethod):
             raise ConfigError(f"groups must be a non-empty subset of {list(GROUPS)} / groups 必須是 {list(GROUPS)} 的非空子集")
         if not config["models"] or set(config["models"]) - set(md.MODEL_NAMES):
             raise ConfigError(f"models must be a non-empty subset of {list(md.MODEL_NAMES)} / models 必須是 {list(md.MODEL_NAMES)} 的非空子集")
+        if config["feature_set"] == "decision_time":
+            config["base_numeric"] = ["outs_when_up", "pitch_index_in_pa"]; config["base_categorical"] = ["pitch_type", "count_state", "bases"]
+            config["sequence_numeric"] = []
         if config["sequence_ladder"]:
             if config["memory"] < 1:
                 raise ConfigError("sequence_ladder needs memory >= 1 / sequence_ladder 需要 memory >= 1")

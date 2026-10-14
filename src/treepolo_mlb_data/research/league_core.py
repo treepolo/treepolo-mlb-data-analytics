@@ -198,7 +198,7 @@ def _pitch_filter(cols: Mapping[str, np.ndarray]) -> np.ndarray:
 
 def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str, np.ndarray] | None, *, profile: ProfileModel, target: str = "outcome",
                    levels: Sequence[str] = LEVELS, backend: str = "hgb", device: str = "cpu", params: Mapping[str, Any] | None = None,
-                   reps: int = 1, seed: int = 0, merge: Mapping[str, str] | None = None, bootstrap_reps: int = 200, cold_by: Sequence[str] = (),
+                   reps: int = 1, reps_by_level: Mapping[str, int] | None = None, seed: int = 0, merge: Mapping[str, str] | None = None, bootstrap_reps: int = 200, cold_by: Sequence[str] = (),
                    cold_folds: int = 5, calibrate: bool = False, min_cell_swings: float = 30.0, confidence: float = 0.95) -> dict[str, Any]:
     """Fit every ladder level on ``cols_train`` and score it on the held-out season (``cols_test``) and/or on unseen players (``cold_by``).
 
@@ -240,7 +240,7 @@ def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str,
             if lv == "L0":
                 continue
             row = {"mode": f"cold_{by}", "comparison": f"L0→{lv}", "n_eval": len(eval_idx),
-                   **level_gain(losses["L0"], losses[lv], games_tr[eval_idx], reps=bootstrap_reps, seed=seed, confidence=confidence)}
+                   **level_gain(losses["L0"], losses[lv], ids[eval_idx], reps=bootstrap_reps, seed=seed, confidence=confidence)}   # resample PLAYERS: that is the unit of independence
             out["gain"].append(row)
             if target == "outcome" and "whiff" in classes and (lv in ("L1", "L3") and by == "pitcher" or lv in ("L2", "L3") and by == "batter"):
                 c = type_contrast_gain(ids[eval_idx], np.asarray(ctr["pitch_type"])[eval_idx], ytr[eval_idx], classes, oof[(by, "L0")], oof[(by, lv)],
@@ -256,7 +256,7 @@ def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str,
         prior_te = -np.log(np.clip(prior_proba(ytr, len(yte), n_classes)[np.arange(len(yte)), yte], md.EPS, 1.0))
         losses_te = {}; probas_te = {}
         for lv in levels:
-            fit = fit_predict_level(backend, device, params, xtr[lv][0], ytr, games_tr, xte[lv], n_classes, reps=reps, seed=seed, y_eval=yte)
+            fit = fit_predict_level(backend, device, params, xtr[lv][0], ytr, games_tr, xte[lv], n_classes, reps=(reps_by_level or {}).get(lv, reps), seed=seed, y_eval=yte)
             proba = fit.proba
             if calibrate and ("pitcher" in oof_rows or "batter" in oof_rows):
                 by = "pitcher" if "pitcher" in oof_rows else "batter"

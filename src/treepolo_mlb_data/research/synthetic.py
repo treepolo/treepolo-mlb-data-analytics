@@ -13,7 +13,7 @@ DEFAULTS: dict[str, Any] = dict(
     pitch_uid=None, game_pk=1, at_bat_number=1, pitch_number=1, game_year=2024, game_type="R", game_date="2024-05-01",
     inning="1", inning_topbot="Top", pitcher=10, batter=100, pitch_type="FF", description="ball", events=None, des=None,
     release_speed=93.0, plate_x=0.0, plate_z=2.5, zone=5, spin_axis=None, pfx_x=0.0, pfx_z=0.0, release_spin_rate=2200.0,
-    release_extension=6.5, launch_speed=None, launch_angle=None, bat_speed=None, swing_length=None, attack_angle=None,
+    release_extension=6.5, release_pos_x=None, release_pos_z=None, arm_angle=None, launch_speed=None, launch_angle=None, bat_speed=None, swing_length=None, attack_angle=None,
     attack_direction=None, swing_path_tilt=None, intercept_ball_minus_batter_pos_x_inches=None,
     intercept_ball_minus_batter_pos_y_inches=None, miss_distance=None, p_throws="R", stand="R", balls=0, strikes=0,
     outs_when_up=0, on_1b=None, on_2b=None, on_3b=None, bat_score=0, post_bat_score=0, post_home_score=0, post_away_score=0,
@@ -22,7 +22,7 @@ DEFAULTS: dict[str, Any] = dict(
 COLUMNS = tuple(DEFAULTS)
 _TEXT = {"pitch_uid", "game_type", "game_date", "inning", "inning_topbot", "pitch_type", "description", "events", "des",
          "p_throws", "stand", "_ingested_at"}
-_REAL = {"release_speed", "plate_x", "plate_z", "spin_axis", "pfx_x", "pfx_z", "release_spin_rate", "release_extension", "delta_run_exp", "launch_speed", "launch_angle", "bat_speed", "swing_length",
+_REAL = {"release_speed", "plate_x", "plate_z", "spin_axis", "pfx_x", "pfx_z", "release_spin_rate", "release_extension", "release_pos_x", "release_pos_z", "arm_angle", "delta_run_exp", "launch_speed", "launch_angle", "bat_speed", "swing_length",
          "attack_angle", "attack_direction", "swing_path_tilt", "intercept_ball_minus_batter_pos_x_inches",
          "intercept_ball_minus_batter_pos_y_inches", "miss_distance"}
 
@@ -430,3 +430,39 @@ def simulate_players(kind: str, *, n_pitchers: int = 60, n_batters: int = 120, n
     )
     cols["velocity_truth"] = velo[pit]
     return cols
+
+
+_DESCRIPTION_OF = {"ball": "ball", "called_strike": "called_strike", "whiff": "swinging_strike", "foul": "foul", "in_play_out": "hit_into_play",
+                   "in_play_home_run": "hit_into_play", "hit_by_pitch": "hit_by_pitch"}
+
+
+def player_world_rows(d: dict[str, np.ndarray], *, pa_offset: int = 0):
+    """pitches rows for a ``simulate_players`` world. Every pitch is its own plate appearance and half-inning (no sequence or run context)."""
+
+    import datetime
+
+    order = np.lexsort((np.arange(len(d["game_pk"])), d["game_pk"]))
+    seen: dict[int, int] = {}
+    base = datetime.date(2023, 4, 1)
+    for i in order:
+        game = int(d["game_pk"][i]); k = seen.get(game, 0) + 1; seen[game] = k
+        year = int(d["game_year"][i]); day = (base + datetime.timedelta(days=(game // 12) % 170)).replace(year=year).isoformat()
+        outcome = str(d["outcome"][i]); events = d["events"][i]
+        group = str(d["group"][i]); bases = int(d["bases"][i])
+        yield make_row(
+            pitch_uid=f"{game + pa_offset}:{k}", game_pk=game + pa_offset, at_bat_number=k, pitch_number=1, game_year=year, game_date=day, inning=str(k), inning_topbot="Top",
+            pitcher=int(d["pitcher"][i]), batter=int(d["batter"][i]), pitch_type=str(d["pitch_type"][i]), description=_DESCRIPTION_OF[outcome], events=events,
+            release_speed=float(d["release_speed"][i]), release_spin_rate=float(d["release_spin_rate"][i]), spin_axis=float(d["spin_axis"][i]), pfx_x=float(d["pfx_x"][i]),
+            pfx_z=float(d["pfx_z"][i]), release_extension=float(d["release_extension"][i]), release_pos_x=float(d["release_pos_x"][i]),
+            release_pos_z=float(d["release_pos_z"][i]), arm_angle=float(d["arm_angle"][i]), plate_x=float(d["plate_x"][i]), plate_z=float(d["plate_z"][i]), zone=int(d["zone"][i]),
+            p_throws=group[0], stand=group[2], balls=int(d["balls"][i]), strikes=int(d["strikes"][i]), outs_when_up=int(d["outs_when_up"][i]),
+            on_1b=1 if bases & 1 else None, on_2b=1 if bases & 2 else None, on_3b=1 if bases & 4 else None,
+        )
+
+
+def write_player_world_db(path: Path, d: dict[str, np.ndarray], *, append: bool = False, pa_offset: int = 0) -> int:
+    conn = create_pitches_db(path, append=append)
+    rows = list(player_world_rows(d, pa_offset=pa_offset))
+    insert_rows(conn, rows)
+    conn.commit(); conn.close()
+    return len(rows)
