@@ -114,3 +114,10 @@ def test_sum_table_before_matches_brute_force():
         m = (ent == qe[i]) & (order < qo[i])
         assert np.allclose(got[i], v[m].sum(axis=0) if m.any() else 0.0)
     assert np.allclose(table.get([qe], None, history=False)[1], v[ent == 3].sum(axis=0))
+
+
+def test_unlisted_pitch_types_fall_back_to_the_league_mean(world):
+    """Real data has pitch types outside the frozen list (and empty strings); transform must not fail on them."""
+    model = ProfileModel().fit(world)
+    odd = dict(world); pt = np.asarray(world["pitch_type"]).astype(object).copy(); pt[::7] = ""; pt[3::11] = "EP"; odd["pitch_type"] = pt.astype(str)
+    assert np.isfinite(model.transform(odd, "pitcher", history=True)).all()

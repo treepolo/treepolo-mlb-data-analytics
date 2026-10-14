@@ -256,6 +256,7 @@ class ProfileModel:
         for t in self.pitch_types:
             for hand in ("R", "L"):
                 self.league_arsenal[(t, hand)] = self._mean_vector(av[a_mask & (ptype == t) & (throws == hand)])
+        self.league_any = {hand: self._mean_vector(av[a_mask & (throws == hand)]) for hand in ("R", "L")}   # pitch types outside the frozen list ('', EP, ...)
         for c in range(3):
             for hand in ("R", "L"):
                 self.league_category[(c, hand)] = self._mean_vector(av[a_mask & (category == c) & (throws == hand)])
@@ -341,7 +342,7 @@ class ProfileModel:
                 usage[:, ti] = (num_grp + self.k_usage * r_all) / (n_grp + self.k_usage)
             return np.column_stack([rates, usage, fb[:, q["release_speed"]], fb[:, q["pfx_x"]], fb[:, q["pfx_z"]], np.log1p(np.maximum(n_pitches, 0))])
         pt = a["pt"].get([pitcher, ptype], order, history)
-        means = self._shrunk_means(pt, hand, lambda k, h: self.league_arsenal[(str(k), h)], ptype)
+        means = self._shrunk_means(pt, hand, lambda k, h: self.league_arsenal.get((str(k), h), self.league_any[h]), ptype)
         gaps = [means[:, q["release_speed"]] - fb[:, q["release_speed"]], means[:, q["pfx_x"]] - fb[:, q["pfx_x"]], means[:, q["pfx_z"]] - fb[:, q["pfx_z"]]]
         num_grp = a["ptg"].get([pitcher, ptype, group], order, history)[:, 0]
         mu = np.array([self.league_share.get((t, h), 1.0 / len(self.pitch_types)) for t, h in zip(ptype, hand)])
