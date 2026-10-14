@@ -2,8 +2,10 @@
 
 Everything here works on a *columnar* pitch table (``dict[str, numpy.ndarray]``), never on per-row dicts, so a league
 (1.4M+ pitches) fits in a few hundred MB. A descriptor is a shrunken (empirical-Bayes) average of what a player did in
-OTHER games: for rows the model is trained on, the row's own game is subtracted ("leave-game-out"), so the descriptor
-never contains the pitch it is meant to predict. Rows from a held-out period are described from the training period only.
+EARLIER games: a training row is described from the games that were played before its own game ("history" mode), so the
+descriptor can never contain the pitch it is meant to predict. (Subtracting only the row's own game, "leave-game-out", was tried first:
+a flexible model recovers a player's total from the other descriptor columns and decodes his current-game outcomes from the difference, which showed up
+as a false gain in the pure-noise world P0.) Rows from a held-out period are described from the whole training period.
 
 What is deliberately NOT used: bat tracking, batted-ball data, the current pitch's speed/location/movement, player ids and age.
 Pitcher descriptors come from the pitcher's *typical* pitch of each type (his arsenal), not from the pitch being predicted.
@@ -37,7 +39,7 @@ BATTER_RATES = (
 # continuous quantities averaged over a pitcher's pitches of one type
 ARSENAL_MEANS = ("release_speed", "release_spin_rate", "axis_sin", "axis_cos", "pfx_x", "pfx_z", "release_pos_x", "release_pos_z",
                  "release_extension", "arm_angle", "plate_x", "plate_z")
-RAW_COLUMNS = ("game_pk", "pitcher", "batter", "group", "pitch_type", "outcome", "zone", "pitch_index_in_pa", "events", "release_speed",
+RAW_COLUMNS = ("game_pk", "game_order", "pitcher", "batter", "group", "pitch_type", "outcome", "zone", "pitch_index_in_pa", "events", "release_speed",
                "release_spin_rate", "spin_axis", "pfx_x", "pfx_z", "release_pos_x", "release_pos_z", "release_extension", "arm_angle",
                "plate_x", "plate_z")
 
@@ -81,6 +83,47 @@ class KeyedSums:
 
     def group_sums(self) -> np.ndarray:
         return self.sums
+
+
+class SumTable:
+    """Totals and 'strictly earlier games only' sums of a value matrix over composite keys.
+
+    ``game_order`` is any increasing number per game (chronological rank); rows with the same key and an order below the query's are summed."""
+
+    def fit(self, keys: Sequence[np.ndarray], order: np.ndarray, values: np.ndarray) -> "SumTable":
+        self.total = KeyedSums().fit(keys, values)
+        composite, valid = self.total._encode(keys)
+        order = np.asarray(order, dtype=np.int64)
+        self.span = int(order.max()) + 2 if len(order) else 2
+        full = composite[valid] * self.span + (order[valid] + 1)
+        values = np.asarray(values, dtype=np.float64)[valid]
+        uniq, inv = np.unique(full, return_inverse=True)
+        sums = np.zeros((len(uniq), values.shape[1]))
+        for c in range(values.shape[1]):
+            sums[:, c] = np.bincount(inv, weights=values[:, c], minlength=len(uniq))
+        entity = uniq // self.span
+        cum = np.cumsum(sums, axis=0)
+        if len(uniq):
+            block_start = np.searchsorted(entity, entity, side="left")
+            before = np.zeros_like(cum); has = block_start > 0
+            before[has] = cum[block_start[has] - 1]
+            cum = cum - before
+        self.full_keys, self.entity, self.cum = uniq, entity, cum
+        return self
+
+    def get(self, keys: Sequence[np.ndarray], order: np.ndarray | None, history: bool) -> np.ndarray:
+        if not history:
+            return self.total.lookup(keys)
+        composite, valid = self.total._encode(keys)
+        order = np.asarray(order, dtype=np.int64)
+        query = composite * self.span + (order + 1)
+        pos = np.searchsorted(self.full_keys, query, side="left") - 1
+        ok = valid & (pos >= 0)
+        pos_c = np.maximum(pos, 0)
+        ok &= self.entity[pos_c] == composite
+        out = np.zeros((len(composite), self.cum.shape[1]))
+        out[ok] = self.cum[pos_c[ok]]
+        return out
 
 
 # --------------------------------------------------------------------------------------------- shrinkage constants
@@ -162,10 +205,12 @@ def _squares(values: np.ndarray) -> np.ndarray:
 
 @dataclass
 class ProfileModel:
-    """Fitted descriptor tables. ``transform`` returns a feature matrix for any columnar rows (see module docstring)."""
+    """Fitted descriptor tables. ``transform(cols, side, history=...)`` returns a feature matrix for columnar rows.
+
+    ``history=True``: each row is described from games played strictly before its own game (use for the rows the model is trained on);
+    ``history=False``: from the whole fitted period (use for rows of a later, held-out period)."""
 
     pitch_types: tuple[str, ...] = PITCH_TYPES
-    min_pitches_prior: int = 1
     fitted: dict[str, Any] = field(default_factory=dict)
 
     # ----------------------------------------------------------------------------------------------- fit
@@ -175,69 +220,55 @@ class ProfileModel:
         ind_matrix = np.column_stack([ind[n] for n in names])
         col = {n: i for i, n in enumerate(names)}
         self.col = col
-        game = np.asarray(cols["game_pk"]); pitcher = np.asarray(cols["pitcher"]); batter = np.asarray(cols["batter"])
+        order = _order(cols)
+        pitcher = np.asarray(cols["pitcher"]); batter = np.asarray(cols["batter"])
         group = np.asarray(cols["group"]).astype(str); ptype = np.asarray(cols["pitch_type"]).astype(str)
         throws = np.array([g[0] for g in group])
-        self.league = {name: float(ind_matrix[:, col[num]].sum() / max(ind_matrix[:, col[den]].sum(), 1.0))
-                       for name, num, den in PITCHER_RATES + BATTER_RATES}
-        self.league_group = {}
-        for g in np.unique(group):
-            m = group == g
-            for name, num, den in PITCHER_RATES + BATTER_RATES:
-                self.league_group[(name, str(g))] = float(ind_matrix[m, col[num]].sum() / max(ind_matrix[m, col[den]].sum(), 1.0))
-        # keyed sums: entity / (entity, group) with and without the game
+        rates = PITCHER_RATES + BATTER_RATES
+        self.league = {name: float(ind_matrix[:, col[num]].sum() / max(ind_matrix[:, col[den]].sum(), 1.0)) for name, num, den in rates}
         self.t = {
-            "p": KeyedSums().fit([pitcher], ind_matrix), "pg": KeyedSums().fit([pitcher, group], ind_matrix),
-            "pG": KeyedSums().fit([pitcher, game], ind_matrix), "pgG": KeyedSums().fit([pitcher, group, game], ind_matrix),
-            "b": KeyedSums().fit([batter], ind_matrix), "bg": KeyedSums().fit([batter, group], ind_matrix),
-            "bG": KeyedSums().fit([batter, game], ind_matrix), "bgG": KeyedSums().fit([batter, group, game], ind_matrix),
+            "p": SumTable().fit([pitcher], order, ind_matrix), "pg": SumTable().fit([pitcher, group], order, ind_matrix),
+            "b": SumTable().fit([batter], order, ind_matrix), "bg": SumTable().fit([batter, group], order, ind_matrix),
         }
-        # prior strengths (pseudo-trials) per rate metric and level
         self.k_all: dict[str, float] = {}; self.k_group: dict[str, float] = {}
         for name, num, den in PITCHER_RATES:
-            self.k_all[name] = icc_strength_rate(self.t["p"].sums[:, col[num]], self.t["p"].sums[:, col[den]])
-            self.k_group[name] = icc_strength_rate(self.t["pg"].sums[:, col[num]], self.t["pg"].sums[:, col[den]])
+            self.k_all[name] = icc_strength_rate(self.t["p"].total.sums[:, col[num]], self.t["p"].total.sums[:, col[den]])
+            self.k_group[name] = icc_strength_rate(self.t["pg"].total.sums[:, col[num]], self.t["pg"].total.sums[:, col[den]])
         for name, num, den in BATTER_RATES:
-            self.k_all[name] = icc_strength_rate(self.t["b"].sums[:, col[num]], self.t["b"].sums[:, col[den]])
-            self.k_group[name] = icc_strength_rate(self.t["bg"].sums[:, col[num]], self.t["bg"].sums[:, col[den]])
-        # arsenal: restrict to the analysed pitch types
-        in_types = np.isin(ptype, self.pitch_types)
+            self.k_all[name] = icc_strength_rate(self.t["b"].total.sums[:, col[num]], self.t["b"].total.sums[:, col[den]])
+            self.k_group[name] = icc_strength_rate(self.t["bg"].total.sums[:, col[num]], self.t["bg"].total.sums[:, col[den]])
+        # arsenal: restricted to the analysed pitch types
+        a_mask = np.isin(ptype, self.pitch_types)
         av = _arsenal_values(cols)
         category = np.array([CATEGORY_OF.get(t, -1) for t in ptype])
-        counts = np.column_stack([np.ones(len(ptype))])
-        sq = _squares(av)
-        arsenal = np.column_stack([av, sq, counts])   # [value,present]*q, value^2 * q, one
+        arsenal = np.column_stack([av, _squares(av), np.ones(len(ptype))])   # [value, present] * q, value^2 * q, one
+        one = arsenal[:, -1:]
         self.q = len(ARSENAL_MEANS)
-        a_mask = in_types
+        sel = lambda *arrays: [x[a_mask] for x in arrays]
         self.a = {
-            "pt": KeyedSums().fit([pitcher[a_mask], ptype[a_mask]], arsenal[a_mask]),
-            "ptG": KeyedSums().fit([pitcher[a_mask], ptype[a_mask], game[a_mask]], arsenal[a_mask]),
-            "pc": KeyedSums().fit([pitcher[a_mask], category[a_mask]], arsenal[a_mask]),
-            "pcG": KeyedSums().fit([pitcher[a_mask], category[a_mask], game[a_mask]], arsenal[a_mask]),
-            "ptg": KeyedSums().fit([pitcher[a_mask], ptype[a_mask], group[a_mask]], arsenal[a_mask][:, -1:]),
-            "ptgG": KeyedSums().fit([pitcher[a_mask], ptype[a_mask], group[a_mask], game[a_mask]], arsenal[a_mask][:, -1:]),
-            "pgn": KeyedSums().fit([pitcher[a_mask], group[a_mask]], arsenal[a_mask][:, -1:]),
-            "pgnG": KeyedSums().fit([pitcher[a_mask], group[a_mask], game[a_mask]], arsenal[a_mask][:, -1:]),
-            "pn": KeyedSums().fit([pitcher[a_mask]], arsenal[a_mask][:, -1:]),
-            "pnG": KeyedSums().fit([pitcher[a_mask], game[a_mask]], arsenal[a_mask][:, -1:]),
+            "pt": SumTable().fit(sel(pitcher, ptype), order[a_mask], arsenal[a_mask]),
+            "pc": SumTable().fit(sel(pitcher, category), order[a_mask], arsenal[a_mask]),
+            "ptg": SumTable().fit(sel(pitcher, ptype, group), order[a_mask], one[a_mask]),
+            "pgn": SumTable().fit(sel(pitcher, group), order[a_mask], one[a_mask]),
+            "pn": SumTable().fit(sel(pitcher), order[a_mask], one[a_mask]),
         }
-        # league means of the arsenal quantities per (type, throwing hand) and per (category, hand); prior strengths
         self.league_arsenal: dict[tuple[str, str], np.ndarray] = {}; self.league_category: dict[tuple[int, str], np.ndarray] = {}
         for t in self.pitch_types:
             for hand in ("R", "L"):
-                m = a_mask & (ptype == t) & (throws == hand)
-                self.league_arsenal[(t, hand)] = self._mean_vector(av[m])
+                self.league_arsenal[(t, hand)] = self._mean_vector(av[a_mask & (ptype == t) & (throws == hand)])
         for c in range(3):
             for hand in ("R", "L"):
-                m = a_mask & (category == c) & (throws == hand)
-                self.league_category[(c, hand)] = self._mean_vector(av[m])
-        pt = self.a["pt"].sums
-        self.k_arsenal = np.zeros(self.q)
-        for j in range(self.q):
-            self.k_arsenal[j] = icc_strength_mean(pt[:, 2 * j], pt[:, 2 * self.q + j], pt[:, 2 * j + 1])
-        # usage share strength: a pitcher's share of one type is a rate over his pitches (fixed pseudo-count; shares are noisy for thin types)
-        self.k_usage = 30.0
-        self.n_rows = len(game)
+                self.league_category[(c, hand)] = self._mean_vector(av[a_mask & (category == c) & (throws == hand)])
+        pt = self.a["pt"].total.sums
+        self.k_arsenal = np.array([icc_strength_mean(pt[:, 2 * j], pt[:, 2 * self.q + j], pt[:, 2 * j + 1]) for j in range(self.q)])
+        self.k_usage = 30.0   # a pitcher's share of one type is a rate over his pitches; fixed pseudo-count (shares of thin types are noisy)
+        counts = {}
+        for hand in ("R", "L"):
+            m = a_mask & (throws == hand)
+            c = {t: float((ptype[m] == t).sum()) for t in self.pitch_types}; tot = sum(c.values()) or 1.0
+            counts.update({(t, hand): v / tot for t, v in c.items()})
+        self.league_share = counts
+        self.n_rows = len(pitcher)
         return self
 
     def _mean_vector(self, v: np.ndarray) -> np.ndarray:
@@ -255,122 +286,76 @@ class ProfileModel:
         if side == "batter":
             return [n for n, _, _ in BATTER_RATES] + ["n_batter_pitches"]
         if side == "repertoire":
-            return ([n for n, _, _ in PITCHER_RATES] + [f"usage_{t}" for t in self.pitch_types] + ["fb_speed", "fb_pfx_x", "fb_pfx_z", "n_pitcher_pitches"])
+            return [n for n, _, _ in PITCHER_RATES] + [f"usage_{t}" for t in self.pitch_types] + ["fb_speed", "fb_pfx_x", "fb_pfx_z", "n_pitcher_pitches"]
         raise ValueError(side)
 
-    def transform(self, cols: Mapping[str, np.ndarray], side: str, *, leave_game_out: bool) -> np.ndarray:
-        game = np.asarray(cols["game_pk"]); group = np.asarray(cols["group"]).astype(str)
+    def transform(self, cols: Mapping[str, np.ndarray], side: str, *, history: bool) -> np.ndarray:
+        order = _order(cols) if history else None
+        group = np.asarray(cols["group"]).astype(str)
         if side in ("pitcher", "repertoire"):
-            return self._pitcher_features(cols, game, group, leave_game_out, repertoire=(side == "repertoire"))
+            return self._pitcher_features(cols, order, group, history, repertoire=(side == "repertoire"))
         if side == "batter":
-            return self._batter_features(cols, game, group, leave_game_out)
+            return self._batter_features(cols, order, group, history)
         raise ValueError(side)
 
-    def _rates(self, entity: np.ndarray, game: np.ndarray, group: np.ndarray, metrics, level_all: str, level_group: str, lgo: bool):
-        all_sums = self.t[level_all].lookup([entity]); grp_sums = self.t[level_group].lookup([entity, group])
-        if lgo:
-            all_sums = all_sums - self.t[level_all + "G"].lookup([entity, game])
-            grp_sums = grp_sums - self.t[level_group + "G"].lookup([entity, group, game])
-        out = np.zeros((len(entity), len(metrics))); n_all = None
+    def _rates(self, entity, order, group, metrics, level_all: str, level_group: str, history: bool):
+        all_sums = self.t[level_all].get([entity], order, history); grp_sums = self.t[level_group].get([entity, group], order, history)
+        out = np.zeros((len(entity), len(metrics)))
         for j, (name, num, den) in enumerate(metrics):
             mu = self.league[name]
-            xa, na = all_sums[:, self.col[num]], all_sums[:, self.col[den]]
-            r_all = (xa + self.k_all[name] * mu) / (na + self.k_all[name])
-            xg, ng = grp_sums[:, self.col[num]], grp_sums[:, self.col[den]]
-            out[:, j] = (xg + self.k_group[name] * r_all) / (ng + self.k_group[name])
+            r_all = (all_sums[:, self.col[num]] + self.k_all[name] * mu) / (all_sums[:, self.col[den]] + self.k_all[name])
+            out[:, j] = (grp_sums[:, self.col[num]] + self.k_group[name] * r_all) / (grp_sums[:, self.col[den]] + self.k_group[name])
         return out, all_sums[:, self.col["one"]]
 
-    def _batter_features(self, cols, game, group, lgo):
-        rates, n_pitches = self._rates(np.asarray(cols["batter"]), game, group, BATTER_RATES, "b", "bg", lgo)
+    def _batter_features(self, cols, order, group, history):
+        rates, n_pitches = self._rates(np.asarray(cols["batter"]), order, group, BATTER_RATES, "b", "bg", history)
         return np.column_stack([rates, np.log1p(np.maximum(n_pitches, 0))])
 
-    def _arsenal_block(self, pitcher, ptype, category, game, lgo):
-        a = self.a
-        pt = a["pt"].lookup([pitcher, ptype]); pc = a["pc"].lookup([pitcher, category])
-        if lgo:
-            pt = pt - a["ptG"].lookup([pitcher, ptype, game]); pc = pc - a["pcG"].lookup([pitcher, category, game])
-        return pt, pc
-
-    def _shrunk_means(self, sums: np.ndarray, hand: np.ndarray, prior_lookup, key_of: np.ndarray) -> np.ndarray:
-        q = self.q; out = np.zeros((len(sums), q))
-        mu = np.zeros((len(sums), q))
+    def _shrunk_means(self, sums: np.ndarray, hand: np.ndarray, prior_of, key_of: np.ndarray) -> np.ndarray:
+        mu = np.zeros((len(sums), self.q))
         for hand_value in ("R", "L"):
             m = hand == hand_value
-            if m.any():
-                for key in np.unique(key_of[m]):
-                    mm = m & (key_of == key)
-                    mu[mm] = prior_lookup(key, hand_value)
-        for j in range(q):
-            n = sums[:, 2 * j + 1]
-            out[:, j] = (sums[:, 2 * j] + self.k_arsenal[j] * mu[:, j]) / (n + self.k_arsenal[j])
+            for key in np.unique(key_of[m]) if m.any() else ():
+                mu[m & (key_of == key)] = prior_of(key, hand_value)
+        out = np.zeros((len(sums), self.q))
+        for j in range(self.q):
+            out[:, j] = (sums[:, 2 * j] + self.k_arsenal[j] * mu[:, j]) / (sums[:, 2 * j + 1] + self.k_arsenal[j])
         return out
 
-    def _pitcher_features(self, cols, game, group, lgo, *, repertoire):
+    def _pitcher_features(self, cols, order, group, history, *, repertoire):
         pitcher = np.asarray(cols["pitcher"]); ptype = np.asarray(cols["pitch_type"]).astype(str)
         category = np.array([CATEGORY_OF.get(t, -1) for t in ptype]); hand = np.array([g[0] for g in group])
-        rates, n_pitches = self._rates(pitcher, game, group, PITCHER_RATES, "p", "pg", lgo)
+        rates, n_pitches = self._rates(pitcher, order, group, PITCHER_RATES, "p", "pg", history)
         a = self.a
-        n_all_a = a["pn"].lookup([pitcher])[:, 0]; n_grp_a = a["pgn"].lookup([pitcher, group])[:, 0]
-        if lgo:
-            n_all_a = n_all_a - a["pnG"].lookup([pitcher, game])[:, 0]; n_grp_a = n_grp_a - a["pgnG"].lookup([pitcher, group, game])[:, 0]
-        # fastball reference (category 0) of the same pitcher
+        n_all = a["pn"].get([pitcher], order, history)[:, 0]; n_grp = a["pgn"].get([pitcher, group], order, history)[:, 0]
         fb_key = np.zeros(len(pitcher), dtype=int)
-        pc_fb = a["pc"].lookup([pitcher, fb_key])
-        if lgo:
-            pc_fb = pc_fb - a["pcG"].lookup([pitcher, fb_key, game])
-        fb_mean = self._shrunk_means(pc_fb, hand, lambda k, h: self.league_category[(0, h)], fb_key)
+        fb = self._shrunk_means(a["pc"].get([pitcher, fb_key], order, history), hand, lambda k, h: self.league_category[(0, h)], fb_key)
+        q = {n: i for i, n in enumerate(ARSENAL_MEANS)}
         if repertoire:
             usage = np.zeros((len(pitcher), len(self.pitch_types)))
-            for t_index, t in enumerate(self.pitch_types):
+            for ti, t in enumerate(self.pitch_types):
                 tt = np.full(len(pitcher), t)
-                share_all_num = a["pt"].lookup([pitcher, tt])[:, -1]; share_grp_num = a["ptg"].lookup([pitcher, tt, group])[:, 0]
-                if lgo:
-                    share_all_num = share_all_num - a["ptG"].lookup([pitcher, tt, game])[:, -1]
-                    share_grp_num = share_grp_num - a["ptgG"].lookup([pitcher, tt, group, game])[:, 0]
-                mu = np.array([self._league_share(t, h) for h in hand])
-                r_all = (share_all_num + self.k_usage * mu) / (n_all_a + self.k_usage)
-                usage[:, t_index] = (share_grp_num + self.k_usage * r_all) / (n_grp_a + self.k_usage)
-            q = {n: i for i, n in enumerate(ARSENAL_MEANS)}
-            return np.column_stack([rates, usage, fb_mean[:, q["release_speed"]], fb_mean[:, q["pfx_x"]], fb_mean[:, q["pfx_z"]], np.log1p(np.maximum(n_pitches, 0))])
-        pt, _ = self._arsenal_block(pitcher, ptype, category, game, lgo)
+                num_all = a["pt"].get([pitcher, tt], order, history)[:, -1]; num_grp = a["ptg"].get([pitcher, tt, group], order, history)[:, 0]
+                mu = np.array([self.league_share.get((t, h), 1.0 / len(self.pitch_types)) for h in hand])
+                r_all = (num_all + self.k_usage * mu) / (n_all + self.k_usage)
+                usage[:, ti] = (num_grp + self.k_usage * r_all) / (n_grp + self.k_usage)
+            return np.column_stack([rates, usage, fb[:, q["release_speed"]], fb[:, q["pfx_x"]], fb[:, q["pfx_z"]], np.log1p(np.maximum(n_pitches, 0))])
+        pt = a["pt"].get([pitcher, ptype], order, history)
         means = self._shrunk_means(pt, hand, lambda k, h: self.league_arsenal[(str(k), h)], ptype)
-        q = {n: i for i, n in enumerate(ARSENAL_MEANS)}
-        speed_gap = means[:, q["release_speed"]] - fb_mean[:, q["release_speed"]]
-        x_gap = means[:, q["pfx_x"]] - fb_mean[:, q["pfx_x"]]; z_gap = means[:, q["pfx_z"]] - fb_mean[:, q["pfx_z"]]
-        share_all_num = pt[:, -1]
-        share_grp_num = a["ptg"].lookup([pitcher, ptype, group])[:, 0]
-        if lgo:
-            share_grp_num = share_grp_num - a["ptgG"].lookup([pitcher, ptype, group, game])[:, 0]
-        mu = np.array([self._league_share(t, h) for t, h in zip(ptype, hand)])
-        r_all = (share_all_num + self.k_usage * mu) / (n_all_a + self.k_usage)
-        r_grp = (share_grp_num + self.k_usage * r_all) / (n_grp_a + self.k_usage)
-        return np.column_stack([rates, means, speed_gap, x_gap, z_gap, r_all, r_grp, np.log1p(np.maximum(n_pitches, 0)), np.log1p(np.maximum(pt[:, -1], 0))])
+        gaps = [means[:, q["release_speed"]] - fb[:, q["release_speed"]], means[:, q["pfx_x"]] - fb[:, q["pfx_x"]], means[:, q["pfx_z"]] - fb[:, q["pfx_z"]]]
+        num_grp = a["ptg"].get([pitcher, ptype, group], order, history)[:, 0]
+        mu = np.array([self.league_share.get((t, h), 1.0 / len(self.pitch_types)) for t, h in zip(ptype, hand)])
+        r_all = (pt[:, -1] + self.k_usage * mu) / (n_all + self.k_usage)
+        r_grp = (num_grp + self.k_usage * r_all) / (n_grp + self.k_usage)
+        return np.column_stack([rates, means, *gaps, r_all, r_grp, np.log1p(np.maximum(n_pitches, 0)), np.log1p(np.maximum(pt[:, -1], 0))])
 
-    def _league_share(self, ptype: str, hand: str) -> float:
-        cache = self.fitted.setdefault("league_share", {})
-        if not cache:
-            totals = {}
-            for h in ("R", "L"):
-                counts = {t: float(self._league_count(t, h)) for t in self.pitch_types}
-                s = sum(counts.values()) or 1.0
-                for t, c in counts.items():
-                    cache[(t, h)] = c / s
-        return cache.get((ptype, hand), 1.0 / len(self.pitch_types))
 
-    def _league_count(self, ptype: str, hand: str) -> float:
-        # sum the (pitcher, type, group) counts over pitchers whose group starts with the throwing hand
-        t = self.a["ptg"]; types = t.vocab[1]; groups = t.vocab[2]
-        if ptype not in types:
-            return 0.0
-        ti = int(np.searchsorted(types, ptype)) + 1
-        total = 0.0
-        stride = t.stride
-        comp = t.keys
-        # decode composite keys
-        tcode = (comp // stride[1]) % (len(types) + 1)
-        gcode = (comp // stride[2]) % (len(groups) + 1)
-        gmask = np.array([groups[c - 1][0] == hand if c > 0 else False for c in gcode])
-        return float(t.sums[(tcode == ti) & gmask, 0].sum())
+def _order(cols: Mapping[str, np.ndarray]) -> np.ndarray:
+    """Chronological rank of each row's game (``game_order`` when given, else the game id, which grows with time)."""
+
+    key = np.asarray(cols["game_order"] if "game_order" in cols else cols["game_pk"], dtype=np.float64)
+    uniq = np.unique(key)
+    return np.searchsorted(uniq, key).astype(np.int64)
 
 
 def columns_from_rows(rows: Sequence[Mapping[str, Any]], *, group_field: str = "hand_group") -> dict[str, np.ndarray]:
@@ -380,8 +365,8 @@ def columns_from_rows(rows: Sequence[Mapping[str, Any]], *, group_field: str = "
     for name in RAW_COLUMNS:
         source = group_field if name == "group" else name
         values = [r.get(source) for r in rows]
-        if name in ("game_pk", "pitcher", "batter"):
-            out[name] = np.array([int(v) for v in values], dtype=np.int64)
+        if name in ("game_pk", "game_order", "pitcher", "batter"):
+            out[name] = np.array([0 if v is None else int(v) for v in values], dtype=np.int64)
         elif name in ("group", "pitch_type", "outcome"):
             out[name] = np.array([str(v) for v in values])
         elif name == "events":

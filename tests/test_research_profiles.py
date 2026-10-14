@@ -1,4 +1,4 @@
-"""Player descriptors: lookup correctness, leave-game-out (no leakage of the row's own game), shrinkage, cold start."""
+"""Player descriptors: lookup correctness, history mode (a row is described from earlier games only), shrinkage, cold start."""
 from __future__ import annotations
 
 import numpy as np
@@ -36,58 +36,54 @@ def test_prior_strengths_are_sensible():
     assert 0.5 < icc_strength_mean(x, x2, cells) < 30     # within sd 3, between sd 2 -> k about 9/4
 
 
-@pytest.mark.parametrize("side", ["pitcher", "batter", "repertoire"])
-def test_leave_game_out_ignores_the_rows_own_game(world, side):
+def test_history_descriptor_equals_a_brute_force_computation_from_earlier_games_only(world):
     model = ProfileModel().fit(world)
-    base = model.transform(world, side, leave_game_out=True)
-    game = 17
-    changed = {k: v.copy() for k, v in world.items()}
-    mask = changed["game_pk"] == game
-    changed["outcome"][mask] = np.where(changed["outcome"][mask] == "whiff", "ball", "whiff")
-    changed["release_speed"][mask] += 25.0
-    # the model is refit on the modified world; rows of `game` must see the same descriptors as before
-    model2 = ProfileModel().fit(changed)
-    after = model2.transform(changed, side, leave_game_out=True)
-    # constants (prior strengths) move a little when the data changes; compare the rows of the edited game with a tolerance that
-    # would still catch a leak (a leak shifts a rate by ~ 1 / n of a thousand-pitch player, i.e. far above this)
-    other = ~mask
-    assert np.abs(after[mask] - base[mask]).max() < 0.02
-    assert np.abs(after[other] - base[other]).max() > np.abs(after[mask] - base[mask]).max()
+    out_p = model.transform(world, "pitcher", history=True); out_b = model.transform(world, "batter", history=True)
+    jp = model.feature_names("pitcher").index("p_whiff_per_swing"); jb = model.feature_names("batter").index("b_swing_rate")
+    swing = np.isin(world["outcome"], ["whiff", "foul", "in_play_out", "in_play_home_run"]).astype(float); whiff = (world["outcome"] == "whiff").astype(float)
+    order = np.searchsorted(np.unique(world["game_pk"]), world["game_pk"])
+    rng = np.random.default_rng(0)
+    for i in rng.choice(len(order), 40, replace=False):
+        for entity, metric_num, metric_den, name, col, out in (("pitcher", whiff, swing, "p_whiff_per_swing", jp, out_p), ("batter", swing, np.ones_like(swing), "b_swing_rate", jb, out_b)):
+            same = (world[entity] == world[entity][i]) & (order < order[i])
+            grp = same & (world["group"] == world["group"][i])
+            r_all = (metric_num[same].sum() + model.k_all[name] * model.league[name]) / (metric_den[same].sum() + model.k_all[name])
+            expected = (metric_num[grp].sum() + model.k_group[name] * r_all) / (metric_den[grp].sum() + model.k_group[name])
+            assert out[i, col] == pytest.approx(expected, rel=1e-9, abs=1e-12)
 
 
-def test_without_leave_game_out_the_descriptor_contains_the_target():
-    """The reason for leave-game-out: in a world where outcomes are pure noise, a descriptor that includes the pitch's own game
-    correlates with the outcome, one that excludes it does not."""
+def test_whole_period_descriptor_contains_the_target_but_history_does_not():
+    """Why history mode exists: in a world where outcomes are pure noise, a batter descriptor that includes the pitch's own game correlates with
+    the outcome; one built from earlier games does not."""
 
-    d = simulate_players("P0", n_pitchers=20, n_batters=40, n_games=400, pitches_per_game=40, seed=5)
+    d = simulate_players("P0", n_pitchers=40, n_batters=60, n_games=800, pitches_per_game=40, seed=5)
     model = ProfileModel().fit(d)
-    whiff = (d["outcome"] == "whiff").astype(float)
-    swing = np.isin(d["outcome"], ["whiff", "foul", "in_play_out", "in_play_home_run"])
-    names = model.feature_names("pitcher")
-    j = names.index("p_whiff_per_swing")
-    leaky = model.transform(d, "pitcher", leave_game_out=False)[:, j]; clean = model.transform(d, "pitcher", leave_game_out=True)[:, j]
-    c_leaky = np.corrcoef(leaky[swing], whiff[swing])[0, 1]; c_clean = np.corrcoef(clean[swing], whiff[swing])[0, 1]
-    assert c_leaky > 0.02 and abs(c_clean) < 0.015 < c_leaky
+    swing = np.isin(d["outcome"], ["whiff", "foul", "in_play_out", "in_play_home_run"]).astype(float)
+    j = model.feature_names("batter").index("b_swing_rate")
+    leaky = model.transform(d, "batter", history=False)[:, j]; clean = model.transform(d, "batter", history=True)[:, j]
+    late = d["game_pk"] > 400      # early games have little history: the descriptor is mostly the league average there
+    c_leaky = np.corrcoef(leaky[late], swing[late])[0, 1]; c_clean = np.corrcoef(clean[late], swing[late])[0, 1]
+    assert c_leaky > 0.04 and abs(c_clean) < 0.015
 
 
 def test_unseen_player_gets_the_league_average(world):
     model = ProfileModel().fit(world)
     stranger = {k: v[:5].copy() for k, v in world.items()}
     stranger["pitcher"][:] = 999_999; stranger["batter"][:] = 888_888
-    pit = model.transform(stranger, "pitcher", leave_game_out=False)
+    pit = model.transform(stranger, "pitcher", history=False)
     names = model.feature_names("pitcher")
     for j, name in enumerate(names):
         if name in model.league:
             assert pit[0, j] == pytest.approx(model.league[name], rel=1e-9)
     assert pit[0, names.index("n_pitcher_pitches")] == 0
-    bat = model.transform(stranger, "batter", leave_game_out=False)
+    bat = model.transform(stranger, "batter", history=False)
     assert bat[0, 0] == pytest.approx(model.league["b_swing_rate"], rel=1e-9)
 
 
 def test_thin_players_are_shrunk_toward_the_league(world):
     model = ProfileModel().fit(world)
     j = model.feature_names("batter").index("b_swing_rate")
-    est = model.transform(world, "batter", leave_game_out=False)[:, j]
+    est = model.transform(world, "batter", history=False)[:, j]
     batter = world["batter"]; swing = np.isin(world["outcome"], ["whiff", "foul", "in_play_out", "in_play_home_run"]).astype(float)
     league = swing.mean()
     counts = {b: int((batter == b).sum()) for b in np.unique(batter)}
@@ -100,7 +96,21 @@ def test_thin_players_are_shrunk_toward_the_league(world):
 def test_arsenal_descriptor_tracks_the_pitchers_velocity(world):
     model = ProfileModel().fit(world)
     names = model.feature_names("pitcher"); j = names.index("a_release_speed")
-    est = model.transform(world, "pitcher", leave_game_out=True)[:, j]
+    est = model.transform(world, "pitcher", history=True)[:, j]
     fastball = world["pitch_type"] == "FF"
     truth = world["velocity_truth"][fastball]
     assert np.corrcoef(est[fastball], truth)[0, 1] > 0.95
+
+
+def test_sum_table_before_matches_brute_force():
+    from treepolo_mlb_data.research.profiles import SumTable
+
+    rng = np.random.default_rng(2)
+    ent = rng.integers(0, 6, 500); order = rng.integers(0, 30, 500); v = rng.standard_normal((500, 2))
+    table = SumTable().fit([ent], order, v)
+    qe = np.array([0, 3, 5, 9]); qo = np.array([0, 10, 29, 5])
+    got = table.get([qe], qo, history=True)
+    for i in range(4):
+        m = (ent == qe[i]) & (order < qo[i])
+        assert np.allclose(got[i], v[m].sum(axis=0) if m.any() else 0.0)
+    assert np.allclose(table.get([qe], None, history=False)[1], v[ent == 3].sum(axis=0))

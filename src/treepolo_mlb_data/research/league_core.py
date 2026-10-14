@@ -38,7 +38,7 @@ def situation_features(cols: Mapping[str, np.ndarray], *, with_action: bool) -> 
     return np.column_stack(parts).astype(np.float32), names
 
 
-def level_matrix(profile: ProfileModel, cols: Mapping[str, np.ndarray], level: str, target: str, *, leave_game_out: bool):
+def level_matrix(profile: ProfileModel, cols: Mapping[str, np.ndarray], level: str, target: str, *, history: bool):
     """Feature matrix of one ladder level. L0 situation (+ action); L1 + pitcher descriptors; L2 + batter descriptors; L3 both."""
 
     if level not in LEVELS:
@@ -47,9 +47,9 @@ def level_matrix(profile: ProfileModel, cols: Mapping[str, np.ndarray], level: s
     blocks = [x]
     if level in ("L1", "L3"):
         side = "pitcher" if target == "outcome" else "repertoire"
-        blocks.append(profile.transform(cols, side, leave_game_out=leave_game_out).astype(np.float32)); names += [f"P:{n}" for n in profile.feature_names(side)]
+        blocks.append(profile.transform(cols, side, history=history).astype(np.float32)); names += [f"P:{n}" for n in profile.feature_names(side)]
     if level in ("L2", "L3"):
-        blocks.append(profile.transform(cols, "batter", leave_game_out=leave_game_out).astype(np.float32)); names += [f"B:{n}" for n in profile.feature_names("batter")]
+        blocks.append(profile.transform(cols, "batter", history=history).astype(np.float32)); names += [f"B:{n}" for n in profile.feature_names("batter")]
     return np.hstack(blocks), names
 
 
@@ -179,3 +179,115 @@ def type_contrast_gain(unit: np.ndarray, ptype: np.ndarray, y: np.ndarray, class
     lo_q, hi_q = (1 - confidence) / 2 * 100, (1 + confidence) / 2 * 100
     return {"mse_base": float(err_b.sum() / total), "mse_other": float(err_o.sum() / total), "gain": float(num_u.sum() / total),
             "lo": float(np.percentile(boot, lo_q)), "hi": float(np.percentile(boot, hi_q)), "units": int(usable_unit.sum())}
+
+
+# ------------------------------------------------------------------------------------------------ one group, end to end
+def take(cols: Mapping[str, np.ndarray], idx: np.ndarray) -> dict[str, np.ndarray]:
+    return {k: v[idx] for k, v in cols.items()}
+
+
+def _targets(cols: Mapping[str, np.ndarray], target: str, merge: Mapping[str, str] | None):
+    if target == "usage":
+        return encode_usage(cols["pitch_type"])
+    return encode_outcome(cols["outcome"], merge)
+
+
+def _pitch_filter(cols: Mapping[str, np.ndarray]) -> np.ndarray:
+    return np.isin(np.asarray(cols["pitch_type"]).astype(str), PITCH_TYPES)
+
+
+def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str, np.ndarray] | None, *, profile: ProfileModel, target: str = "outcome",
+                   levels: Sequence[str] = LEVELS, backend: str = "hgb", device: str = "cpu", params: Mapping[str, Any] | None = None,
+                   reps: int = 1, seed: int = 0, merge: Mapping[str, str] | None = None, bootstrap_reps: int = 200, cold_by: Sequence[str] = (),
+                   cold_folds: int = 5, calibrate: bool = False, min_cell_swings: float = 30.0, confidence: float = 0.95) -> dict[str, Any]:
+    """Fit every ladder level on ``cols_train`` and score it on the held-out season (``cols_test``) and/or on unseen players (``cold_by``).
+
+    Descriptors of training rows come from EARLIER games only (history mode); those of ``cols_test`` from ``profile`` as fitted (the whole training period).
+    Returns row lists: ``fit``, ``gain`` (level vs L0, paired game bootstrap), ``contrast`` (G1b), ``calibration``."""
+
+    params = dict(params or {})
+    from .modeling import calibration_rows
+
+    keep_tr = _pitch_filter(cols_train) if target == "usage" else np.ones(len(cols_train["game_pk"]), dtype=bool)
+    ytr_all, classes, ok_tr = _targets(cols_train, target, merge)
+    keep_tr = keep_tr & ok_tr
+    ctr = take(cols_train, np.nonzero(keep_tr)[0]); ytr = ytr_all[keep_tr]
+    n_classes = len(classes)
+    out: dict[str, Any] = {"fit": [], "gain": [], "contrast": [], "calibration": [], "classes": classes, "models": {}}
+    games_tr = np.asarray(ctr["game_pk"])
+    xtr = {lv: level_matrix(profile, ctr, lv, target, history=True) for lv in levels}
+    oof: dict[tuple[str, str], np.ndarray] = {}; oof_rows: dict[str, np.ndarray] = {}
+    # ---- cold start: held-out PLAYERS inside the training period
+    for by in cold_by:
+        ids = np.asarray(ctr[by]); folds = unit_folds(ids, cold_folds, seed)
+        eval_idx = np.concatenate([te for _, te in folds]); oof_rows[by] = eval_idx
+        losses = {}
+        for lv in levels:
+            proba = np.zeros((len(eval_idx), n_classes)); pos = {int(i): k for k, i in enumerate(eval_idx)}
+            secs = 0.0
+            for tr, te in folds:
+                fit = fit_predict_level(backend, device, params, xtr[lv][0][tr], ytr[tr], games_tr[tr], xtr[lv][0][te], n_classes, reps=1, seed=seed, y_eval=ytr[te])
+                proba[[pos[int(i)] for i in te]] = fit.proba; secs += fit.seconds
+            oof[(by, lv)] = proba
+            losses[lv] = md.row_logloss(ytr[eval_idx], proba)
+            out["fit"].append({"mode": f"cold_{by}", "level": lv, "n_train": int(np.mean([len(t) for t, _ in folds])), "n_eval": len(eval_idx), "logloss": float(losses[lv].mean()),
+                               "brier": float(md.multiclass_brier_rows(ytr[eval_idx], proba).mean()), "fit_seconds": secs, "n_iter": float("nan"), "backend": backend})
+        prior = np.zeros(len(eval_idx)); position = {int(i): k for k, i in enumerate(eval_idx)}
+        for tr, te in folds:
+            pr = np.bincount(ytr[tr], minlength=n_classes) / len(tr)
+            prior[[position[int(i)] for i in te]] = -np.log(np.clip(pr[ytr[te]], md.EPS, 1.0))
+        for lv in levels:
+            if lv == "L0":
+                continue
+            row = {"mode": f"cold_{by}", "comparison": f"L0→{lv}", "n_eval": len(eval_idx),
+                   **level_gain(losses["L0"], losses[lv], games_tr[eval_idx], reps=bootstrap_reps, seed=seed, confidence=confidence)}
+            out["gain"].append(row)
+            if target == "outcome" and "whiff" in classes and (lv in ("L1", "L3") and by == "pitcher" or lv in ("L2", "L3") and by == "batter"):
+                c = type_contrast_gain(ids[eval_idx], np.asarray(ctr["pitch_type"])[eval_idx], ytr[eval_idx], classes, oof[(by, "L0")], oof[(by, lv)],
+                                       min_cell_swings=min_cell_swings, reps=bootstrap_reps, seed=seed, confidence=confidence)
+                out["contrast"].append({"mode": f"cold_{by}", "side": by, "comparison": f"L0→{lv}", **c})
+    # ---- held-out season
+    if cols_test is not None:
+        keep_te = _pitch_filter(cols_test) if target == "usage" else np.ones(len(cols_test["game_pk"]), dtype=bool)
+        yte_all, _, ok_te = _targets(cols_test, target, merge)
+        keep_te = keep_te & ok_te
+        cte = take(cols_test, np.nonzero(keep_te)[0]); yte = yte_all[keep_te]; games_te = np.asarray(cte["game_pk"])
+        xte = {lv: level_matrix(profile, cte, lv, target, history=False)[0] for lv in levels}
+        prior_te = -np.log(np.clip(prior_proba(ytr, len(yte), n_classes)[np.arange(len(yte)), yte], md.EPS, 1.0))
+        losses_te = {}; probas_te = {}
+        for lv in levels:
+            fit = fit_predict_level(backend, device, params, xtr[lv][0], ytr, games_tr, xte[lv], n_classes, reps=reps, seed=seed, y_eval=yte)
+            proba = fit.proba
+            if calibrate and ("pitcher" in oof_rows or "batter" in oof_rows):
+                by = "pitcher" if "pitcher" in oof_rows else "batter"
+                from .gbm import apply_isotonic, fit_isotonic
+
+                cal = fit_isotonic(oof[(by, lv)], ytr[oof_rows[by]])
+                raw_loss = float(md.row_logloss(yte, proba).mean()); proba = apply_isotonic(cal, proba)
+                out["fit"].append({"mode": "season_calibrated", "level": lv, "n_train": len(ytr), "n_eval": len(yte), "logloss": float(md.row_logloss(yte, proba).mean()),
+                                   "raw_logloss": raw_loss, "brier": float(md.multiclass_brier_rows(yte, proba).mean()), "fit_seconds": 0.0, "n_iter": fit.n_iter, "backend": backend})
+            probas_te[lv] = proba; losses_te[lv] = md.row_logloss(yte, proba)
+            out["fit"].append({"mode": "season", "level": lv, "n_train": len(ytr), "n_eval": len(yte), "logloss": float(losses_te[lv].mean()),
+                               "brier": float(md.multiclass_brier_rows(yte, proba).mean()), "prior_logloss": float(prior_te.mean()), "fit_seconds": fit.seconds,
+                               "n_iter": fit.n_iter, "member_logloss_sd": float(np.std(fit.member_loss)) if len(fit.member_loss) > 1 else 0.0, "backend": backend})
+            for r in calibration_rows(yte, proba, classes, 10):
+                out["calibration"].append({"mode": "season", "level": lv, **r})
+            out["models"][lv] = fit.members
+        for lv in levels:
+            if lv == "L0":
+                continue
+            out["gain"].append({"mode": "season", "comparison": f"L0→{lv}", "n_eval": len(yte), **level_gain(losses_te["L0"], losses_te[lv], games_te, reps=bootstrap_reps, seed=seed, confidence=confidence)})
+            if target == "outcome" and "whiff" in classes:
+                for by in ("pitcher", "batter"):
+                    if lv in (("L1", "L3") if by == "pitcher" else ("L2", "L3")):
+                        c = type_contrast_gain(np.asarray(cte[by]), np.asarray(cte["pitch_type"]), yte, classes, probas_te["L0"], probas_te[lv],
+                                               min_cell_swings=min_cell_swings, reps=bootstrap_reps, seed=seed, confidence=confidence)
+                        out["contrast"].append({"mode": "season", "side": by, "comparison": f"L0→{lv}", **c})
+                        # A pitcher or batter seen in training can be recognised by his descriptors, so the model may simply remember his own
+                        # type effects; only the players NEW in the held-out season show whether the descriptors generalise.
+                        fresh = ~np.isin(np.asarray(cte[by]), np.asarray(ctr[by]))
+                        if fresh.sum() > 0:
+                            c2 = type_contrast_gain(np.asarray(cte[by])[fresh], np.asarray(cte["pitch_type"])[fresh], yte[fresh], classes, probas_te["L0"][fresh],
+                                                    probas_te[lv][fresh], min_cell_swings=min_cell_swings, reps=bootstrap_reps, seed=seed, confidence=confidence)
+                            out["contrast"].append({"mode": "season_unseen", "side": by, "comparison": f"L0→{lv}", **c2})
+    return out

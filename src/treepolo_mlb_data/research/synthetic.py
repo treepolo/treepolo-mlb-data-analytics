@@ -349,7 +349,7 @@ _CATEGORY = {"FF": 0, "SI": 0, "FC": 0, "SL": 1, "ST": 1, "CU": 1, "KC": 1, "CH"
 PLAYER_WORLDS = {
     "P0": "no player or pitch-type effects at all: every pitch has the same outcome probabilities (nothing for player descriptors to find)",
     "P7": "whiff depends on OBSERVABLE traits: pitcher velocity/spin, batter contact and chase, plus stable pitcher and batter level offsets",
-    "P8": "like P7 but each pitcher also has a LATENT type-specific effect (his slider is great, his changeup poor) that no descriptor measures",
+    "P8": "no observable effects; stable level offsets plus a LATENT type-specific effect per pitcher (his slider is great, his changeup poor) that no descriptor measures",
 }
 
 
@@ -366,9 +366,9 @@ def simulate_players(kind: str, *, n_pitchers: int = 60, n_batters: int = 120, n
     if kind not in PLAYER_WORLDS:
         raise KeyError(f"unknown player world {kind!r}")
     rng = np.random.default_rng(seed)
-    flat = kind == "P0"
+    flat = kind == "P0"; observable = kind == "P7"
     velo = 93 + 2.0 * rng.standard_normal(n_pitchers); spin = 2300 + 150 * rng.standard_normal(n_pitchers)
-    zone_rate = np.clip(0.48 + 0.04 * rng.standard_normal(n_pitchers), 0.3, 0.65)
+    zone_rate = np.clip(0.48 + 0.04 * rng.standard_normal(n_pitchers), 0.3, 0.65) if not flat else np.full(n_pitchers, 0.48)
     repertoire = []; usage = []
     for i in range(n_pitchers):
         others = rng.choice([t for t in _PLAYER_TYPES if t != "FF"], size=3, replace=False)
@@ -376,9 +376,9 @@ def simulate_players(kind: str, *, n_pitchers: int = 60, n_batters: int = 120, n
         repertoire.append(types); usage.append(w)
     lat_p = np.zeros(n_pitchers) if flat else 0.35 * rng.standard_normal(n_pitchers)
     lat_pt = np.zeros((n_pitchers, len(_PLAYER_TYPES))) if kind != "P8" else 0.7 * rng.standard_normal((n_pitchers, len(_PLAYER_TYPES)))
-    bsw = np.zeros(n_batters) if flat else 0.5 * rng.standard_normal(n_batters)
-    chase = np.zeros(n_batters) if flat else 0.6 * rng.standard_normal(n_batters)
-    contact = np.zeros(n_batters) if flat else 0.5 * rng.standard_normal(n_batters)
+    bsw = 0.5 * rng.standard_normal(n_batters) if observable else np.zeros(n_batters)
+    chase = 0.6 * rng.standard_normal(n_batters) if observable else np.zeros(n_batters)
+    contact = 0.5 * rng.standard_normal(n_batters) if observable else np.zeros(n_batters)
     lat_b = np.zeros(n_batters) if flat else 0.35 * rng.standard_normal(n_batters)
     pitcher_of_game = rng.integers(0, n_pitchers, size=n_games)
     lineup = np.array([rng.choice(n_batters, size=9, replace=False) for _ in range(n_games)])
@@ -398,9 +398,11 @@ def simulate_players(kind: str, *, n_pitchers: int = 60, n_batters: int = 120, n
     swing = rng.random(n) < p_swing
     cat = np.array([_CATEGORY[t] for t in ptype]); base = np.full(n, -1.2) if flat else np.array([_WHIFF_BASE[t] for t in ptype])
     logit = base + lat_p[pit] + lat_b[bat] + lat_pt[pit, ptype_idx]
-    if not flat:
+    if kind == "P8":
+        logit = logit + 0.3 * (streak - 1)
+    if observable:
         z_velo = (velo[pit] - 93) / 2.0; z_spin = (spin[pit] - 2300) / 150.0
-        logit = logit + 0.45 * z_velo * (cat == 0) + 0.5 * z_spin * (cat == 1) - 0.8 * contact[bat] + 0.6 * chase[bat] * (cat == 1) + 0.3 * (streak - 1)
+        logit = logit + 0.9 * z_velo * (cat == 0) + 0.9 * z_spin * (cat == 1) - 1.0 * contact[bat] + 0.9 * chase[bat] * (cat == 1) + 0.3 * (streak - 1)
     whiff = swing & (rng.random(n) < _sigmoid(logit))
     rest = swing & ~whiff
     foul = rest & (rng.random(n) < 0.55); inplay = rest & ~foul
