@@ -199,7 +199,7 @@ def _pitch_filter(cols: Mapping[str, np.ndarray]) -> np.ndarray:
 def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str, np.ndarray] | None, *, profile: ProfileModel, target: str = "outcome",
                    levels: Sequence[str] = LEVELS, backend: str = "hgb", device: str = "cpu", params: Mapping[str, Any] | None = None,
                    reps: int = 1, reps_by_level: Mapping[str, int] | None = None, seed: int = 0, merge: Mapping[str, str] | None = None, bootstrap_reps: int = 200, cold_by: Sequence[str] = (),
-                   cold_folds: int = 5, calibrate: bool = False, min_cell_swings: float = 30.0, confidence: float = 0.95) -> dict[str, Any]:
+                   cold_folds: int = 5, calibrate: bool = False, min_cell_swings: float = 30.0, confidence: float = 0.95, fit_final: bool = False) -> dict[str, Any]:
     """Fit every ladder level on ``cols_train`` and score it on the held-out season (``cols_test``) and/or on unseen players (``cold_by``).
 
     Descriptors of training rows come from EARLIER games only (history mode); those of ``cols_test`` from ``profile`` as fitted (the whole training period).
@@ -290,4 +290,9 @@ def evaluate_group(cols_train: Mapping[str, np.ndarray], cols_test: Mapping[str,
                             c2 = type_contrast_gain(np.asarray(cte[by])[fresh], np.asarray(cte["pitch_type"])[fresh], yte[fresh], classes, probas_te["L0"][fresh],
                                                     probas_te[lv][fresh], min_cell_swings=min_cell_swings, reps=bootstrap_reps, seed=seed, confidence=confidence)
                             out["contrast"].append({"mode": "season_unseen", "side": by, "comparison": f"L0→{lv}", **c2})
+    # ---- without a held-out season there is no season fit: the model that answers questions is fitted on all the training rows
+    if cols_test is None and fit_final:
+        for lv in levels:
+            fit = fit_predict_level(backend, device, params, xtr[lv][0], ytr, games_tr, xtr[lv][0][:2], n_classes, reps=(reps_by_level or {}).get(lv, reps), seed=seed)
+            out["models"][lv] = fit.members
     return out

@@ -181,7 +181,7 @@ class LeagueModelMethod(ResearchMethod):
     """One boosted-tree model per handedness group on the whole league; player descriptors as inputs (P6 plan 3.4, 4.6)."""
 
     kind = "league_model"
-    version = 1
+    version = 2     # 2: a cold_only run with save_package fits the saved members on all rows; the package carries the descriptors
     label_zh = "全聯盟模型（球員描述特徵）"
     label_en = "League model with player descriptors"
     requires_scope = True
@@ -299,7 +299,7 @@ class LeagueModelMethod(ResearchMethod):
         return lc.evaluate_group(ctr, cte, profile=profile, target=config["target"], levels=config["levels"], backend=config["backend"], device=device, params=params,
                                  reps=max(reps_map.values()), reps_by_level=reps_map, seed=config["seed"], merge=config["class_merge"], bootstrap_reps=config["bootstrap_reps"],
                                  cold_by=config["cold_by"], cold_folds=config["cold_folds"], calibrate=config["calibration"], min_cell_swings=config["min_cell_swings"],
-                                 confidence=config["confidence"])
+                                 confidence=config["confidence"], fit_final=bool(config["save_package"]) and config["split"] == "cold_only")
 
     @staticmethod
     def _check_classes(ctr, config, group):

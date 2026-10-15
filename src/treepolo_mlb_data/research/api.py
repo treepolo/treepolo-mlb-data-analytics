@@ -52,6 +52,12 @@ def handle_get(service: ResearchService, path: str, query_string: str = "") -> R
     query = parse_qs(query_string)
     if route == "methods":
         return 200, {"methods": service.methods()}
+    if route == "pipeline/status":
+        return 200, service.pipeline().status()
+    if route == "pipeline/info":
+        from .pipeline import GROUPS, STEPS, environment_info, tier_info
+
+        return 200, {"tiers": tier_info(), "environment": environment_info(), "groups": list(GROUPS), "steps": [step[2] for step in STEPS]}
     if route in ("pitch-query", "pitch-query/meta", "pitch-query/players"):
         run_id = _int(_one(query, "run"), "run")
         if run_id is None:
@@ -95,6 +101,10 @@ def handle_post(service: ResearchService, path: str, payload: dict[str, Any]) ->
             payload.get("name", ""), str(payload.get("purpose", "")), str(payload.get("insight_markdown", ""))
         )
         return 200, {"item": study}
+    if route == "pipeline/start":
+        return 200, service.pipeline().start(payload)
+    if route == "pipeline/cancel":
+        return 200, service.pipeline().cancel()
     if route == "run":
         outcome = service.run(
             str(payload.get("kind", "")), payload.get("config") or {}, study_id=_int(payload.get("study_id"), "study_id"),

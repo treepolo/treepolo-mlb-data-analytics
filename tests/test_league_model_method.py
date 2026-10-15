@@ -94,3 +94,16 @@ def test_player_profiles_reliability_section(p7):
     rel = {r["metric"]: r for r in sections(p7, run, "Split-half")}
     assert rel["p_whiff_per_swing"]["players"] >= 10 and rel["b_swing_rate"]["split_half_r"] > 0.3      # P7 batters have stable swing traits
     assert any(r["item"] == "pitchers" and r["value"] == 60 for r in sections(p7, run, "Coverage"))
+
+
+@pytest.mark.skipif(not HAS_XGB, reason="xgboost not installed")
+def test_cold_only_package_holds_a_model_fitted_on_all_the_rows(p7):
+    """Without a held-out season the saved package still has to answer questions: its members are fitted on every training row."""
+
+    from treepolo_mlb_data.research.query_core import PackageModel
+
+    run = p7.run("league_model", {**BASE, "backend": "xgboost", "device": "cpu", "split": "cold_only", "bagging_reps": 2, "save_package": True, "levels": ["L0", "L3"],
+                                  "bag_levels": ["L3"], "seed": 3})["run"]
+    art = p7.store.load_artifact(run["id"], "model_package_RvR")
+    package = PackageModel.from_rows(art["rows"])
+    assert set(package.members) == {"L0", "L3"} and len(package.members["L3"]) == 2 and package.profile is not None

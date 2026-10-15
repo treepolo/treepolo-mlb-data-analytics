@@ -46,3 +46,17 @@ def test_query_page_is_wired_into_the_app():
     assert "innerHTML" not in script and "localStorage" not in script and "sessionStorage" not in script
     for label in ("情境查詢 Situation Query", "不涵蓋 Not covered", "外推", "不支持", "資料充足"):
         assert label in script
+
+
+def test_pipeline_page_is_wired_into_the_app():
+    script = (STATIC_DIR / "research-pipeline-page.js").read_text(encoding="utf-8")
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    ci = (STATIC_DIR.parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert '<script src="/research-pipeline-page.js"></script>' in index and index.index("/research-query-page.js") < index.index("/research-pipeline-page.js")
+    assert 'const PANEL_ID = "research-pipeline-panel"' in script and 'register?.(PANEL_ID, ROUTE)' in script and 'const ROUTE = "research-pipeline"' in script
+    assert "node --check src/treepolo_mlb_data/web_static/research-pipeline-page.js" in ci
+    for endpoint in ("/api/research/pipeline/start", "/api/research/pipeline/status", "/api/research/pipeline/info", "/api/research/pipeline/cancel"):
+        assert endpoint in script
+    assert "innerHTML" not in script and "localStorage" not in script and "sessionStorage" not in script
+    for label in ("一鍵研究 Run Everything", "開始 Start", "停止", "開啟情境查詢"):
+        assert label in script

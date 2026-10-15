@@ -20,6 +20,7 @@ from . import league_methods  # noqa: F401  (registers player_profiles and leagu
 from . import policy_methods  # noqa: F401  (registers pitch_policy)
 from . import anchor_methods  # noqa: F401  (registers action_effects)
 from . import query_methods  # noqa: F401  (registers pitch_query)
+from . import tune_methods  # noqa: F401  (registers param_search)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
@@ -111,6 +112,15 @@ class ResearchService:
         if side not in ("pitcher", "batter"):
             raise ConfigError("side must be pitcher or batter / side 必須是 pitcher 或 batter")
         return {"players": self.query_runtime(run_id).search(group, side, text, int(limit))}
+
+    # ------------------------------------------------------------------ one-click pipeline
+    def pipeline(self):
+        from .pipeline import PipelineManager
+
+        with self._lock:
+            if "_pipeline" not in self.__dict__:
+                self.__dict__["_pipeline"] = PipelineManager(self)
+            return self.__dict__["_pipeline"]
 
     def close(self) -> None:
         self.store.close()
