@@ -57,7 +57,7 @@ def build_environment(cols, re_by_state, shape, *, kappa: float = 50.0):
     start = np.zeros((3, 8)); np.add.at(start, (o[first & (o < 3)], B[first & (o < 3)]), 1.0)
     # value after a ball in play that is not a home run: the pitch's run value plus the run expectancy of its own state
     cls = np.array([{"in_play_out": 1, "in_play_single": 1, "in_play_double": 1, "in_play_triple": 1, "in_play_error_other": 1}.get(x, 0) for x in np.asarray(cols["outcome"]).astype(str)])
-    value = np.asarray(cols["pitch_value"], dtype=float) + re_cnt[np.minimum(b, shape.n_balls - 1), np.minimum(k, shape.n_strikes - 1), np.minimum(o, 2), B]
+    value = ball_in_play_value(cols, re_cnt, shape)
     ptype = np.asarray(cols["pitch_type"]).astype(str)
     a = np.array([pc_types().index(t) if t in pc_types() else -1 for t in ptype])
     ok = (cls == 1) & np.isfinite(value) & (a >= 0) & (o < 3)
@@ -78,6 +78,14 @@ def build_environment(cols, re_by_state, shape, *, kappa: float = 50.0):
     else:
         jbip[:] = re_pa[None]
     return pc.Environment(re_pa=re_pa, re_cnt=re_cnt, jbip=jbip, start=np.maximum(start, 1e-9))
+
+
+def ball_in_play_value(cols, re_cnt, shape):
+    """Runs on the pitch plus the run expectancy afterwards, per pitch: the pitch's run value plus the run expectancy of the state it was thrown in."""
+
+    b = np.asarray(cols["balls"]).astype(int); k = np.asarray(cols["strikes"]).astype(int)
+    o = np.asarray(cols["outs_when_up"]).astype(int); B = np.asarray(cols["bases"]).astype(int)
+    return np.asarray(cols["pitch_value"], dtype=float) + re_cnt[np.minimum(b, shape.n_balls - 1), np.minimum(k, shape.n_strikes - 1), np.minimum(o, 2), B]
 
 
 def pc_types():
@@ -129,6 +137,8 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("min_count", "int", default=300, minimum=1, label_zh="支持規則：最小球數", label_en="Support rule: minimum pitches"),
         ConfigField("class_merge", "json", default=None, label_zh="結果類別對照（預設同 P5）", label_en="Outcome class map (default as P5)"),
         ConfigField("min_class_count", "int", default=50, minimum=1, label_zh="類別最小樣本", label_en="Minimum rows per class"),
+        ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
+                    help_zh="用該紀錄的 J_BIP 取代描述性估計，並做錨點一致性檢查（計畫 3.6）。", help_en="Uses its J_BIP instead of the descriptive estimate and runs the anchor consistency check."),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
         ConfigField("save_table", "bool", default=True, label_zh="保存情境表附件", label_en="Save the situation table"),
         ConfigField("max_rows", "int", default=1_500_000, minimum=1000, label_zh="每組每球季列數上限", label_en="Row cap per group and season"),
@@ -156,9 +166,21 @@ class PitchPolicyMethod(ResearchMethod):
             gbm_module.resolve_device(config["backend"], config["device"])
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
+        if config["anchor_run_id"]:
+            self._anchor_run(ctx, config)
+
+    @staticmethod
+    def _anchor_run(ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
+        run = ctx.store.get_run(int(config["anchor_run_id"])) if ctx.store is not None else None
+        if run is None or run["kind"] != "action_effects" or run["status"] != "success":
+            raise ConfigError(f"anchor_run_id {config['anchor_run_id']} is not a successful action_effects run / anchor_run_id 不是成功的 action_effects 紀錄")
+        return run
 
     def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
-        return re_method_inputs(ctx, config)
+        out = re_method_inputs(ctx, config)
+        if config["anchor_run_id"]:
+            out = {**out, "anchor_run_key": self._anchor_run(ctx, config)["run_key"]}
+        return out
 
     # ------------------------------------------------------------------------------------------------ run
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
@@ -170,6 +192,7 @@ class PitchPolicyMethod(ResearchMethod):
         cols_all = fetch_columns(ctx, config, config["groups"], years, re_by_state=re.re_by_state)
         shape = pc.Shape()
         r1_rows, value_rows, risk_rows, marg_rows, support_rows, artifacts = [], [], [], [], [], []
+        direction_rows, anchor_rows = [], []
         for group in config["groups"]:
             sel = np.nonzero(cols_all["group"] == group)[0]
             if len(sel) == 0:
@@ -177,6 +200,9 @@ class PitchPolicyMethod(ResearchMethod):
             cols = lc.take(cols_all, sel)
             LeagueModelMethod._check_classes(cols, {**config, "target": "outcome"}, group)
             env = build_environment(cols, re.re_by_state, shape)
+            anchor = self._load_anchor(ctx, config, group)
+            if anchor is not None:
+                env.jbip = np.where(np.isfinite(anchor["jbip"]) & (anchor["jbip"] != 0), anchor["jbip"], env.jbip)
             params = dict(max_depth=config["max_depth"], min_leaf=config["min_leaf"], learning_rate=config["learning_rate"], l2=config["l2"],
                           max_iter=config["max_iter"], early_stopping_rounds=config["early_stopping_rounds"])
             members, classes = pb.fit_outcome_members(cols, backend=config["backend"], device=device, params=params, reps=config["members"], seed=config["seed"],
@@ -193,6 +219,9 @@ class PitchPolicyMethod(ResearchMethod):
             risk_rows += self._risk(group, dyns, env, shape, config)
             m_rows, s_rows = self._marginals(group, an, config)
             marg_rows += m_rows; support_rows += s_rows
+            direction_rows += self._direction(group, an, config)
+            if anchor is not None:
+                anchor_rows += self._anchor_rows(group, an, tensor, anchor, shape)
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config))
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "backend": config["backend"], "device": device,
@@ -205,8 +234,14 @@ class PitchPolicyMethod(ResearchMethod):
                          ("group", "lambda"), "duckdb", DIGITS),
             make_section("Marginal value 邊際價值摘要（依觀察到的出現頻率加權）", ("group", "action", "advantage", "adv_lo", "adv_hi", "marginal", "m_lo", "m_hi", "detected_share", "supported_share"),
                          marg_rows, ("group", "action"), "duckdb", DIGITS),
+            make_section("Direction map 方向圖（球數×前一球 × 球種；邊際價值）", ("group", "context", "balls", "strikes", "prev", "action", "marginal", "advantage", "adv_lo", "adv_hi", "n",
+                                                                         "not_detected"), direction_rows, ("group", "context", "action"), "duckdb", DIGITS),
             make_section("Support 支持表", ("group", "action", "supported_share", "observed_share"), support_rows, ("group", "action"), "duckdb", DIGITS),
         )
+        if anchor_rows:
+            sections = sections + (make_section("Anchor 錨點一致性（計畫 3.6）", ("group", "design", "anchor_cells", "same_sign_share", "median_ratio", "model_only_cells", "model_large_cells", "passes"),
+                                                anchor_rows, ("group", "design"), "duckdb", DIGITS),)
+            extras["anchor_run_id"] = config["anchor_run_id"]
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
     # ------------------------------------------------------------------------------------------------ sections
@@ -315,6 +350,67 @@ class PitchPolicyMethod(ResearchMethod):
                            "m_hi": float(mhi[0]), "detected_share": float((det[use, a] * w).sum() / w.sum()), "supported_share": float(w.sum() / occ[valid].sum())})
             s_rows.append({"group": group, "action": name, "supported_share": float(w.sum() / occ[valid].sum()), "observed_share": float((an.obs[valid, a] * occ[valid]).sum() / occ[valid].sum())})
         return m_rows, s_rows
+
+    @staticmethod
+    def _load_anchor(ctx, config, group):
+        if not config["anchor_run_id"]:
+            return None
+        art = ctx.store.load_artifact(int(config["anchor_run_id"]), f"anchor_{group}")
+        if art is None:
+            raise ConfigError(f"the anchor run has no table for group {group} / 錨點紀錄沒有分組 {group} 的資料")
+        return unpack_arrays(art["rows"])
+
+    @staticmethod
+    def _anchor_rows(group, an, tensor, anchor, shape):
+        from . import anchor as anc
+
+        types = [str(t) for t in anchor["types"]]
+        model = anc.model_contrasts(tensor.mean(axis=0), an.obs, an.support, an.occupancy, shape, types)
+        rows = []
+        for key in sorted(k for k in anchor if k.startswith("eff_")):
+            design = key[4:]
+            anchor_rows = []
+            for ph, pname in enumerate(anc.PHASES):
+                for t in types:
+                    ai = pc_types().index(t)
+                    for c, cname in enumerate(pc.OUTCOMES):
+                        anchor_rows.append({"phase": pname, "action": t, "class": cname, "effect": float(anchor[key][ph, ai, c]), "se": float(anchor[f"se_{design}"][ph, ai, c])})
+            res = anc.anchor_consistency(model, anchor_rows)
+            rows.append({"group": group, "design": design, **{k: res[k] for k in ("anchor_cells", "same_sign_share", "median_ratio", "model_only_cells", "model_large_cells")}, "passes": int(res["passes"])})
+        return rows
+
+    @staticmethod
+    def _direction(group, an, config):
+        """Marginal value by (count, previous type) context and action: the occupancy-weighted mean over outs, bases and streak, with the member interval of that mean."""
+
+        from .profiles import PITCH_TYPES
+
+        shape = an.shape; occ = an.occupancy
+        b, k, o, base, p, r = shape.coords()
+        conf = config["cell_confidence"]
+        rows = []
+        M = an.advantage.shape[0]
+        for bi in range(shape.n_balls):
+            for ki in range(shape.n_strikes):
+                for pi in range(shape.n_actions + 1):
+                    if (pi == shape.none) != (bi == 0 and ki == 0):
+                        continue
+                    ctx_mask = (b == bi) & (k == ki) & (p == pi)
+                    label = f"{bi}-{ki} | {'none' if pi == shape.none else PITCH_TYPES[pi]}"
+                    for a, name in enumerate(PITCH_TYPES):
+                        use = ctx_mask & an.support[:, a] & (occ > 0)
+                        w = occ[use]
+                        if w.sum() <= 0:
+                            continue
+                        adv_m = np.array([(np.nan_to_num(an.advantage[m][use, a]) * w).sum() / w.sum() for m in range(M)])[:, None]
+                        mg_m = np.array([(np.nan_to_num(an.marginal[m][use, a]) * w).sum() / w.sum() for m in range(M)])[:, None]
+                        adv, alo, ahi = pc.member_interval(adv_m, conf); mg = pc.member_interval(mg_m, conf)[0]
+                        found = bool(pc.detect(adv, alo, ahi, np.array([True]), config["tau"])[0])
+                        rows.append({"group": group, "context": label, "balls": bi, "strikes": ki, "prev": "none" if pi == shape.none else PITCH_TYPES[pi], "action": name,
+                                     "marginal": float(mg[0]), "advantage": float(adv[0]), "adv_lo": float(alo[0]), "adv_hi": float(ahi[0]),
+                                     "n": int(an.extras["n_cell"][ctx_mask & (o == 0) & (base == 0), a].sum()) if an.extras.get("n_cell") is not None else 0,
+                                     "not_detected": int(not found)})
+        return rows
 
     @staticmethod
     def _table_artifact(group, an, tensor, config):

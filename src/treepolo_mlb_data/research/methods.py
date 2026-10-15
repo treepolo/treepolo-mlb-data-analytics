@@ -35,6 +35,7 @@ class ResearchContext:
     facade: Any
     scope: dict[str, Any]
     progress: ProgressCallback | None = None
+    store: Any = None             # the research store, so that a method can read another run (an anchor) it was told to use
 
     def source_node(self):
         """The pitch table restricted to the research scope (unrestricted when no scope)."""

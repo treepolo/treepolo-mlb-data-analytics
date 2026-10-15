@@ -13,6 +13,30 @@ from . import policy_core as pc
 from .profiles import PITCH_TYPES
 
 
+# ------------------------------------------------------------------------------------------------ streak bookkeeping
+def derive_prior_streak(game_pk, at_bat, pitch_number, pitch_index, streak_pos) -> np.ndarray:
+    """Length of the run of same-type pitches that ended just before each pitch (0 for the first pitch of a plate appearance).
+
+    ``streak_pos`` in the pitch table is the position of the pitch itself in its run (1 when the type changed), so the state that the pitcher faced
+    (previous type and how many in a row so far) is the ``streak_pos`` of the previous pitch of the same plate appearance."""
+
+    game_pk = np.asarray(game_pk); at_bat = np.asarray(at_bat); pitch_number = np.asarray(pitch_number)
+    pitch_index = np.asarray(pitch_index); streak = np.nan_to_num(np.asarray(streak_pos, dtype=float), nan=1.0)
+    order = np.lexsort((pitch_number, at_bat, game_pk))
+    g, a, i, st = game_pk[order], at_bat[order], pitch_index[order], streak[order]
+    same = np.zeros(len(order), dtype=bool)
+    same[1:] = (g[1:] == g[:-1]) & (a[1:] == a[:-1]) & (i[1:] == i[:-1] + 1)
+    prior_sorted = np.zeros(len(order)); prior_sorted[1:] = np.where(same[1:], st[:-1], 0.0)
+    out = np.zeros(len(order)); out[order] = prior_sorted
+    return out
+
+
+def state_streak(prior_streak) -> np.ndarray:
+    """Engine streak index (0, 1, 2 = run so far of 1, 2, 3+) from the prior run length (0 = no previous pitch)."""
+
+    return np.clip(np.asarray(prior_streak, dtype=float).astype(int) - 1, 0, pc.STREAKS - 1)
+
+
 # ------------------------------------------------------------------------------------------------ the grid of situations
 def cell_columns(shape: pc.Shape, group: str = "RvR") -> dict[str, np.ndarray]:
     """One row per (state, action): the columns ``league_core.level_matrix`` reads, so the fitted level-L0 model can be asked about every situation."""
@@ -21,8 +45,10 @@ def cell_columns(shape: pc.Shape, group: str = "RvR") -> dict[str, np.ndarray]:
     b, k, o, base, p, r = shape.coords()
     rows = np.repeat(np.arange(S), A); action = np.tile(np.arange(A), S)
     prev = np.array(list(PITCH_TYPES) + ["none"])[np.minimum(p, A)]
+    same = (p[rows] == action) & (p[rows] < A)
+    streak_now = np.where(same, np.minimum(r[rows] + 2, 3), 1)         # position of the pitch in its run: the run so far plus one when the type is repeated
     return dict(game_pk=np.zeros(S * A, dtype=np.int64), balls=b[rows].astype(float), strikes=k[rows].astype(float), outs_when_up=o[rows].astype(float), bases=base[rows],
-                streak_pos=(r[rows] + 1).astype(float), prev1_pitch_type=prev[rows], pitch_type=np.array(PITCH_TYPES)[action], group=np.full(S * A, group))
+                streak_pos=streak_now.astype(float), prev1_pitch_type=prev[rows], pitch_type=np.array(PITCH_TYPES)[action], group=np.full(S * A, group))
 
 
 def outcome_tensor(members: Sequence[gbm.FittedGbm], classes: Sequence[str], shape: pc.Shape, group: str = "RvR") -> np.ndarray:
@@ -65,7 +91,7 @@ def usage_from_counts(cols: Mapping[str, np.ndarray], shape: pc.Shape, *, kappa:
     prev_name = np.asarray(cols["prev1_pitch_type"]).astype(str)
     prev = np.array([PITCH_TYPES.index(t) if t in PITCH_TYPES else A for t in prev_name])
     b = np.asarray(cols["balls"]).astype(int); k = np.asarray(cols["strikes"]).astype(int)
-    r = np.clip(np.nan_to_num(np.asarray(cols["streak_pos"], dtype=float), nan=1.0).astype(int) - 1, 0, pc.STREAKS - 1)
+    r = state_streak(cols["prior_streak"])
     ok = (a >= 0) & (b < shape.n_balls) & (k < shape.n_strikes)
     cnt = np.zeros((shape.n_balls, shape.n_strikes, A + 1, pc.STREAKS, A))
     np.add.at(cnt, (b[ok], k[ok], prev[ok], r[ok], a[ok]), 1.0)
@@ -123,7 +149,7 @@ def analyze(members: Sequence[pc.Dynamics], env: pc.Environment, shape: pc.Shape
     base = start["observed"]
     saving = {k: base - start[k] for k in kinds}
     return Analysis(shape, tuple(kinds), start, saving, float(ppp.mean()), hr, q_obs, marg, adv, pol_sum, occ, members[0].obs, members[0].support, delta,
-                    {"members": M, "trust": trust, "lam": lam, "v_observed": v_obs})
+                    {"members": M, "trust": trust, "lam": lam, "v_observed": v_obs, "n_cell": members[0].n})
 
 
 def pooled(members: Sequence[pc.Dynamics]) -> pc.Dynamics:

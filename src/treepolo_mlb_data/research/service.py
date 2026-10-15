@@ -18,6 +18,7 @@ from . import regression_methods  # noqa: F401  (registers streak_regression)
 from . import compare_methods  # noqa: F401  (registers run_compare)
 from . import league_methods  # noqa: F401  (registers player_profiles and league_model)
 from . import policy_methods  # noqa: F401  (registers pitch_policy)
+from . import anchor_methods  # noqa: F401  (registers action_effects)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
@@ -102,7 +103,7 @@ class ResearchService:
         resolved = normalize_config(method.fields, raw)
         scope = normalize_scope(raw_scope, required=method.requires_scope)
         resolved["scope"] = scope
-        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=None)
+        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=None, store=self.store)
         method.validate(resolved, ctx)
 
         fingerprint = compute_scope_fingerprint(self.config.database_path, scope)
@@ -151,7 +152,7 @@ class ResearchService:
             if progress is not None:
                 progress(stage, percentage, detail)
 
-        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report)
+        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report, store=self.store)
         started = time.monotonic()
         try:
             output = method.run(ctx, resolved)

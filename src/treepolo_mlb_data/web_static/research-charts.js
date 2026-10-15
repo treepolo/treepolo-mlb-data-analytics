@@ -182,6 +182,46 @@
     return assemble(built, panels, names, options, "空心 hollow = 樣本不足 low n");
   }
 
+
+  // ---- horizontal bars with intervals ---------------------------------------------------------------------------------
+  // mapping: {label, value, lo, hi, color, low, facet}; one row per label, a bar from 0 to the value, a whisker for the interval; low=1 bars are faded.
+  function bars(rows, mapping, options = {}) {
+    const kept = options.hideLow && mapping.low ? rows.filter(r => Number(r[mapping.low]) !== 1) : rows;
+    const pts = kept.map(r => ({ r, label: r[mapping.label] == null ? null : String(r[mapping.label]), v: num(r[mapping.value]), lo: num(r[mapping.lo]), hi: num(r[mapping.hi]) })).filter(p => p.label !== null && isNum(p.v));
+    if (!pts.length) return emptyChart(options.title || "", "沒有可畫的資料 No data to draw");
+    const ext = extent(pts.flatMap(p => [p.v, p.lo, p.hi]).concat(options.zeroBase === false ? [] : [0]));
+    const ticks = niceTicks(ext[0], ext[1], 4);
+    const domain = [Math.min(ext[0], ticks[0]), Math.max(ext[1], ticks[ticks.length - 1])];
+    const labels = options.labelOrder ? uniqueOrdered(pts.map(p => p.label), options.labelOrder) : [...new Set(pts.map(p => p.label))];
+    const names = [...new Set(pts.map(p => (mapping.color ? String(p.r[mapping.color]) : "")))];
+    const panels = [...groupBy(pts.map(p => p.r), mapping.facet).keys()];
+    const rowH = 18, left = 120, right = 16, top = 26, bottom = 34;
+    const dim = { width: 380, height: top + labels.length * rowH + bottom };
+    const xs = linearScale(domain, [left, dim.width - right]);
+    const built = panels.map(panelName => {
+      const parts = [];
+      ticks.forEach(t => {
+        parts.push(node("line", { x1: xs(t), x2: xs(t), y1: top, y2: top + labels.length * rowH, stroke: GRID, "stroke-width": 1 }));
+        parts.push(node("text", { x: xs(t), y: top + labels.length * rowH + 13, "text-anchor": "middle", "font-size": 10, fill: MUTED }, [], fmt(t)));
+      });
+      if (domain[0] <= 0 && domain[1] >= 0) parts.push(node("line", { x1: xs(0), x2: xs(0), y1: top, y2: top + labels.length * rowH, stroke: INK, "stroke-dasharray": "4 3" }));
+      labels.forEach((label, li) => parts.push(node("text", { x: left - 6, y: top + li * rowH + rowH / 2 + 3, "text-anchor": "end", "font-size": 10, fill: INK }, [], label)));
+      pts.filter(p => (mapping.facet ? String(p.r[mapping.facet]) : "") === panelName).forEach(p => {
+        const li = labels.indexOf(p.label), y = top + li * rowH, cy = y + rowH / 2, color = colorFor(names.indexOf(mapping.color ? String(p.r[mapping.color]) : ""));
+        const faded = mapping.low && Number(p.r[mapping.low]) === 1;
+        const x0 = xs(Math.min(0, p.v)), x1 = xs(Math.max(0, p.v));
+        parts.push(node("rect", { x: x0, y: y + 3, width: Math.max(x1 - x0, 0.5), height: rowH - 7, fill: color, "fill-opacity": faded ? 0.3 : 0.85, class: faded ? "rc-bar rc-low" : "rc-bar" }, [node("title", {}, [], `${p.label}: ${fmt(p.v)}${isNum(p.lo) && isNum(p.hi) ? ` [${fmt(p.lo)}, ${fmt(p.hi)}]` : ""}`)]));
+        if (isNum(p.lo) && isNum(p.hi)) {
+          parts.push(node("line", { x1: xs(p.lo), x2: xs(p.hi), y1: cy, y2: cy, stroke: INK, "stroke-width": 1.5, class: "rc-whisker" }));
+          [p.lo, p.hi].forEach(e => parts.push(node("line", { x1: xs(e), x2: xs(e), y1: cy - 3, y2: cy + 3, stroke: INK, "stroke-width": 1.5 })));
+        }
+      });
+      parts.push(node("text", { x: (left + dim.width - right) / 2, y: dim.height - 4, "text-anchor": "middle", "font-size": 11, fill: INK }, [], options.xLabel || mapping.value));
+      return node("g", { class: "rc-panel" }, [panelName ? node("text", { x: left, y: 14, "font-size": 12, "font-weight": 700, fill: INK }, [], panelName) : null, ...parts]);
+    });
+    return assemble(built, panels, names, options, mapping.low ? "淡色＝無可偵測差異或樣本不足 faded = not detected / low n" : "", dim);
+  }
+
   function uniqueOrdered(values, order) {
     const seen = [...new Set(values.filter(v => v !== null && v !== undefined))];
     if (order) return order.filter(v => seen.includes(v)).concat(seen.filter(v => !order.includes(v)));
@@ -203,7 +243,7 @@
     const height = head + legend + rowsN * dim.height + foot;
     const children = [
       node("text", { x: 8, y: 18, "font-size": 14, "font-weight": 700, fill: INK }, [], options.title || ""),
-      node("text", { x: 8, y: 34, "font-size": 10, fill: MUTED }, [], DISCLAIMER),
+      node("text", { x: 8, y: 34, "font-size": 10, fill: MUTED }, [], options.disclaimer || DISCLAIMER),
     ];
     if (legend) seriesNames.forEach((name, i) => children.push(node("g", { class: "rc-legend" }, [
       node("rect", { x: 8 + (i % perRow) * 70, y: head - 4 + Math.floor(i / perRow) * 14, width: 10, height: 10, fill: colorFor(i) }),
@@ -217,6 +257,14 @@
   function pick(columns, names) { return names.find(n => columns.includes(n)) || null; }
   const PRESETS = {
     streak: { label: "連投曲線 Streak curve", type: "line", guess: c => ({ x: pick(c, ["k", "term"]), y: pick(c, ["estimate", "mean", "diff"]), lo: pick(c, ["lo"]), hi: pick(c, ["hi"]), series: pick(c, ["pitch_type"]), facet: pick(c, ["hand_group", "frame_group"]), zeroLine: true }), options: { integerX: true } },
+    direction: { label: "方向圖 Direction map（邊際價值）", type: "heatmap", guess: c => ({ row: pick(c, ["context"]), col: pick(c, ["action"]), value: pick(c, ["marginal"]), n: pick(c, ["n"]), low: pick(c, ["not_detected"]), facet: pick(c, ["group", "hand_group"]) }),
+      options: { diverging: true, disclaimer: "模型估計（聯盟平均）：多投某球種約 10 個百分點的每球失分變化；負＝對投手有利，灰淡＝無可偵測差異 · Model estimate for the league average" } },
+    frontier: { label: "取捨前緣 Risk frontier", type: "scatter", guess: c => ({ x: pick(c, ["hr_probability"]), y: pick(c, ["expected_runs"]), xlo: pick(c, ["hr_lo"]), xhi: pick(c, ["hr_hi"]), ylo: pick(c, ["lo"]), yhi: pick(c, ["hi"]), color: pick(c, ["lambda"]), facet: pick(c, ["group"]) }),
+      options: { xLabel: "此打席全壘打機率", yLabel: "期望失分", disclaimer: "模型估計：每個 λ 的信賴區域政策 · Model estimate, one trust-region policy per lambda" } },
+    ablation: { label: "特徵消融 Feature ablation（對數損失改善）", type: "bars", guess: c => ({ label: pick(c, ["comparison"]), value: pick(c, ["delta_logloss", "gain"]), lo: pick(c, ["lo"]), hi: pick(c, ["hi"]), color: pick(c, ["mode"]), facet: pick(c, ["group"]) }),
+      options: { xLabel: "對數損失改善（正＝球員描述有用）", disclaimer: "沒見過的球員上的預測改善 · Prediction gain on players the model has not seen" } },
+    situationBars: { label: "情境條圖 Situation bars（每種球種的 Q）", type: "bars", guess: c => ({ label: pick(c, ["action"]), value: pick(c, ["q"]), lo: pick(c, ["q_lo"]), hi: pick(c, ["q_hi"]), color: pick(c, ["indistinct_group"]), low: pick(c, ["unsupported"]) }),
+      options: { zeroBase: false, xLabel: "到半局結束的期望失分", disclaimer: "模型估計：此情境投該球種、之後照一般投法 · Model estimate: throw it now, then play as usual" } },
     prevNext: { label: "前一球→下一球熱圖 Previous→next heatmap", type: "heatmap", guess: c => ({ row: pick(c, ["prev1_pitch_type"]), col: pick(c, ["pitch_type"]), value: pick(c, ["whiff_per_swing", "mean_value", "hr_rate", "swing_rate"]), n: pick(c, ["n"]), low: pick(c, ["low_n"]), facet: pick(c, ["hand_group"]) }), options: { hideLow: true } },
     location: { label: "位置熱圖 Location heatmap", type: "heatmap", guess: c => ({ row: pick(c, ["loc_z_bin"]), col: pick(c, ["loc_x_bin"]), value: pick(c, ["whiff_per_swing", "mean_value", "hr_rate", "swing_rate"]), n: pick(c, ["n"]), low: pick(c, ["low_n"]), facet: pick(c, ["pitch_type", "hand_group"]) }), options: { reverseRows: true, hideLow: true } },
     evHr: { label: "期望值對全壘打 EV vs HR", type: "scatter", guess: c => ({ x: pick(c, ["mean_value"]), y: pick(c, ["hr_rate"]), xlo: pick(c, ["value_lo"]), xhi: pick(c, ["value_hi"]), ylo: pick(c, ["hr_lo"]), yhi: pick(c, ["hr_hi"]), color: pick(c, ["pitch_type"]), low: pick(c, ["low_n"]), facet: pick(c, ["hand_group"]) }), options: { hideLow: true } },
@@ -230,6 +278,7 @@
       return heatmap(rows, mapping, opts);
     }
     if (type === "scatter") return scatter(rows, mapping, options);
+    if (type === "bars") return bars(rows, mapping, options);
     throw new Error(`unknown chart type: ${type}`);
   }
 
@@ -248,7 +297,7 @@
     return el;
   }
 
-  const api = { PALETTE, PRESETS, DISCLAIMER, niceTicks, linearScale, heatColor, lineChart, heatmap, scatter, build, toSvgString, toDom };
+  const api = { PALETTE, PRESETS, DISCLAIMER, niceTicks, linearScale, heatColor, lineChart, heatmap, scatter, bars, build, toSvgString, toDom };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.TreepoloResearchCharts = api;
 })();

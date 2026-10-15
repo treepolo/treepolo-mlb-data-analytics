@@ -40,7 +40,7 @@ LEVELS = ("L0", "L1", "L2", "L3")
 GROUPS = ("RvR", "RvL", "LvR", "LvL")
 DIGITS = 8
 EXTRA_RAW = ("pfx_x", "pfx_z", "release_spin_rate", "release_extension", "release_pos_x", "release_pos_z", "arm_angle", "game_date")
-FETCH = ("pitch_uid", "game_pk", "game_year", "game_date", "pitcher", "batter", "hand_group", "pitch_type", "outcome", "zone", "pitch_index_in_pa", "events",
+FETCH = ("pitch_uid", "at_bat_number", "pitch_number", "game_pk", "game_year", "game_date", "pitcher", "batter", "hand_group", "pitch_type", "outcome", "zone", "pitch_index_in_pa", "events",
          "release_speed", "release_spin_rate", "spin_axis", "pfx_x", "pfx_z", "release_pos_x", "release_pos_z", "release_extension", "arm_angle", "plate_x",
          "plate_z", "balls", "strikes", "outs_when_up", "bases", "prev1_pitch_type", "streak_pos")
 STRING_COLUMNS = ("hand_group", "pitch_type", "outcome", "prev1_pitch_type")
@@ -69,7 +69,7 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
                     chunks[c].append(np.array(["" if v is None else str(v) for v in values]))
                 elif c in ("events", "game_date"):
                     chunks[c].append(np.array(values, dtype=object))
-                elif c in ("game_pk", "game_year", "pitcher", "batter", "bases"):
+                elif c in ("game_pk", "game_year", "pitcher", "batter", "bases", "at_bat_number", "pitch_number"):
                     chunks[c].append(np.array([0 if v is None else int(v) for v in values], dtype=np.int64))
                 elif c == "pitch_uid":
                     chunks[c].append(np.array([str(v) for v in values]))
@@ -83,6 +83,9 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
     cols["game_order"] = cols["game_order"].astype(np.int64)
     # one game has exactly one rank, but two games on the same day must not share one: rank by the game id within a date
     cols["streak_pos"] = np.where(np.isnan(cols["streak_pos"]), 1.0, cols["streak_pos"])
+    from .policy_build import derive_prior_streak
+
+    cols["prior_streak"] = derive_prior_streak(cols["game_pk"], cols["at_bat_number"], cols["pitch_number"], cols["pitch_index_in_pa"], cols["streak_pos"])
     cols["prev1_pitch_type"] = np.where(cols["prev1_pitch_type"] == "", "none", cols["prev1_pitch_type"])
     return cols
 

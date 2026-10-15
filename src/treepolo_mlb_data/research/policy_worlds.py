@@ -16,6 +16,8 @@ WORLDS = {
     "W1": "The slider is better than the others in every situation (more whiffs, fewer home runs): every trust region should lean to the slider.",
     "W2": "Repeating the previous pitch type adds whiffs: the best policy repeats.",
     "W3": "The slider is better when the pitcher is ahead in the count, the changeup when he is behind: the policy switches with the count.",
+    "W4": "Pitcher quality confounds: better pitchers throw the slider more and also get more whiffs, but the slider itself does nothing. A model without pitcher effects credits the slider.",
+    "W5": "Form of the day confounds: on good days a pitcher throws the slider more and gets more whiffs, but the slider itself does nothing. Pitcher fixed effects are not enough, pitcher-game fixed effects are.",
     "W6": "The changeup is excellent at three balls but nobody throws it there: the action is not supported and must not be recommended.",
 }
 RE_PA = np.array([[0.50, 0.90, 1.12, 1.50, 1.35, 1.75, 1.95, 2.35],
@@ -33,6 +35,7 @@ class PolicyWorld:
     env: pc.Environment
     notes: str = ""
     expect: dict = field(default_factory=dict)
+    latent: dict | None = None        # W4/W5: {"kind": "quality"|"form", "outcome": logit shift per outcome and unit, "slider": usage logit shift per unit}
 
 
 def _logits(shape: pc.Shape) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
@@ -95,6 +98,8 @@ def build_world(kind: str, shape: pc.Shape | None = None) -> PolicyWorld:
         lg[:, SL, pc.OC["ball"]] += 0.35 * behind
         lg[:, CH, pc.OC["ball"]] -= 0.8 * behind
         lg[:, CH, pc.OC["called_strike"]] += 0.4 * behind
+    elif kind in ("W4", "W5"):
+        pass
     elif kind == "W6":
         lg[:, CH, pc.OC["ball"]] -= 2.5 * (b == 3)
         lg[:, CH, pc.OC["called_strike"]] += 1.2 * (b == 3)
@@ -127,7 +132,13 @@ def build_world(kind: str, shape: pc.Shape | None = None) -> PolicyWorld:
                     idx = shape.index(bb, kk, oo, B, np.arange(shape.n_actions + 1)[:, None], np.arange(pc.STREAKS)[None, :]).ravel()
                     cnt[bb, kk, oo, B] = float((V[idx] * occ[idx]).sum() / occ[idx].sum())
     env.re_cnt = cnt
-    return PolicyWorld(kind, shape, truth, env, WORLDS[kind])
+    latent = None
+    if kind in ("W4", "W5"):
+        shift = np.zeros(pc.C)
+        for name, v in (("whiff", 0.35), ("ball", -0.20), ("in_play_home_run", -0.30), ("called_strike", 0.05)):
+            shift[pc.OC[name]] = v
+        latent = {"kind": "quality" if kind == "W4" else "form", "outcome": shift, "slider": 0.9}
+    return PolicyWorld(kind, shape, truth, env, WORLDS[kind], latent=latent)
 
 
 def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: int = 60, group: str = "RvR", years=(2023, 2024)) -> dict[str, np.ndarray]:
@@ -136,6 +147,14 @@ def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: i
     rng = np.random.default_rng(seed)
     sh, dyn = world.shape, world.truth
     n_pa = int(n_pa)
+    lat = world.latent
+    if lat is not None:
+        pa_per_game = min(pa_per_game, 25)          # one pitcher per game, so the pitcher-game effect is a game effect
+        game_of_pa = np.arange(n_pa) // pa_per_game
+        n_game = int(game_of_pa.max()) + 1
+        pitcher_of_game = rng.integers(0, 40, size=n_game)
+        z_pitcher = rng.standard_normal(40)
+        z_pa = (z_pitcher[pitcher_of_game[game_of_pa]] if lat["kind"] == "quality" else rng.standard_normal(n_game)[game_of_pa])
     ob = rng.choice(24, size=n_pa, p=(world.env.start / world.env.start.sum()).ravel())
     outs, bases = ob // 8, ob % 8
     state = np.array(sh.index(0, 0, outs, bases, sh.none, 0), dtype=np.int64)
@@ -149,8 +168,17 @@ def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: i
         if len(idx) == 0:
             break
         s = state[idx]
-        a = np.minimum((rng.random(len(idx))[:, None] > cum_obs[s]).sum(axis=1), sh.n_actions - 1)
-        c = np.minimum((rng.random(len(idx))[:, None] > cum_P[s, a]).sum(axis=1), pc.C - 1)
+        if lat is None:
+            a = np.minimum((rng.random(len(idx))[:, None] > cum_obs[s]).sum(axis=1), sh.n_actions - 1)
+            c = np.minimum((rng.random(len(idx))[:, None] > cum_P[s, a]).sum(axis=1), pc.C - 1)
+        else:
+            zz = z_pa[idx]
+            w = dyn.obs[s].copy(); w[:, SL] *= np.exp(lat["slider"] * zz)
+            cw = np.cumsum(w / w.sum(axis=1, keepdims=True), axis=1)
+            a = np.minimum((rng.random(len(idx))[:, None] > cw).sum(axis=1), sh.n_actions - 1)
+            q = dyn.P[s, a] * np.exp(zz[:, None] * lat["outcome"][None, :])
+            cq = np.cumsum(q / q.sum(axis=1, keepdims=True), axis=1)
+            c = np.minimum((rng.random(len(idx))[:, None] > cq).sum(axis=1), pc.C - 1)
         rows["pa"].append(pa_id[idx]); rows["state"].append(s); rows["action"].append(a); rows["outcome"].append(c)
         n2 = nxt[s, a, c]
         active[idx[n2 < 0]] = False
@@ -160,11 +188,12 @@ def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: i
     b, k, o, base, p, r = np.unravel_index(st, sh.dims)
     n = len(pa)
     game = pa // pa_per_game + 1
+    pitcher_ids = (10 + pitcher_of_game[pa // pa_per_game]) if lat is not None else (10 + (pa % 40))
     names = np.array([("in_play_out" if x == "in_play_non_hr" else x) for x in pc.OUTCOMES])      # the raw name the default class map folds into in_play_non_hr
     prev = np.where(p == sh.none, "none", np.array(PITCH_TYPES + ("none",))[np.minimum(p, sh.n_actions)])
     in_play = names == "in_play_out"
     value = np.where(in_play[oc], world.env.jbip[ac, o, base] - world.env.re_cnt[np.minimum(b, sh.n_balls - 1), np.minimum(k, sh.n_strikes - 1), o, base], 0.0)
-    return dict(game_pk=game, pitcher=10 + (pa % 40), batter=1000 + (pa % 90), group=np.full(n, group), pitch_type=np.array(PITCH_TYPES)[ac], outcome=names[oc],
-                balls=b.astype(float), strikes=k.astype(float), outs_when_up=o.astype(float), bases=base, prev1_pitch_type=prev, streak_pos=(r + 1).astype(float),
+    return dict(game_pk=game, pitcher=pitcher_ids, batter=1000 + (pa % 90), group=np.full(n, group), pitch_type=np.array(PITCH_TYPES)[ac], outcome=names[oc],
+                balls=b.astype(float), strikes=k.astype(float), outs_when_up=o.astype(float), bases=base, prev1_pitch_type=prev, streak_pos=np.where((p < sh.n_actions) & (ac == p), np.minimum(r + 2, 3), 1).astype(float), prior_streak=np.where(p == sh.none, 0, r + 1).astype(float),
                 game_year=np.where(game <= int(game.max() * 0.6), years[0], years[1]), pa_id=pa,
                 pitch_value=value, state_code=(b * 1000 + k * 100 + o * 10 + base).astype(float))

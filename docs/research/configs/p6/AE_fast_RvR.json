@@ -1,0 +1,31 @@
+{
+ "kind": "action_effects",
+ "study": "P6",
+ "scope": {
+  "game_years": [
+   2023,
+   2024
+  ],
+  "game_types": [
+   "R"
+  ]
+ },
+ "re_scope": {
+  "game_years": [
+   2023,
+   2024
+  ],
+  "game_types": [
+   "R"
+  ]
+ },
+ "purpose": "tuning",
+ "groups": [
+  "RvR"
+ ],
+ "designs": [
+  "S3",
+  "S4"
+ ],
+ "max_rows": 3500000
+}

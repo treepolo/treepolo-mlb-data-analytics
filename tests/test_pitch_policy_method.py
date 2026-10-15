@@ -5,7 +5,7 @@ import pytest
 
 from state_fixtures import make_state_db
 from treepolo_mlb_data.config import AppConfig
-from treepolo_mlb_data.research import gbm, policy_core as pc, policy_methods as pm, policy_worlds as pw
+from treepolo_mlb_data.research import anchor_methods as am, gbm, policy_core as pc, policy_methods as pm, policy_worlds as pw
 from treepolo_mlb_data.research.config_schema import ConfigError
 from treepolo_mlb_data.research.profiles import PITCH_TYPES
 from treepolo_mlb_data.research.service import ResearchService
@@ -113,3 +113,50 @@ def test_environment_recovers_the_world_values(w1):
     seen = np.isin(np.arange(9), [PITCH_TYPES.index(t) for t in ("FF", "SL", "CH")])
     assert np.abs(env.jbip[seen] - world.env.jbip[seen]).max() < 0.03
     assert np.abs(env.start / env.start.sum() - world.env.start / world.env.start.sum()).max() < 0.01
+
+
+@pytest.fixture(scope="module")
+def anchored(service, w1):
+    """An action_effects run on the same world and a pitch_policy run that uses it as its anchor."""
+
+    mp = pytest.MonkeyPatch()
+    world, cols = w1
+    for module in (pm, am):
+        mp.setattr(module, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+        mp.setattr(module, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
+    try:
+        anchor = service.run("action_effects", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"]})["run"]
+        policy = service.run("pitch_policy", {**BASE, "anchor_run_id": anchor["id"], "cross_eval": False, "members": 3})["run"]
+    finally:
+        mp.undo()
+    return anchor, policy
+
+
+def test_action_effects_run_has_the_anchor_tables(service, anchored):
+    anchor, _ = anchored
+    contrasts = section(service, anchor, "Action contrasts")
+    sl = next(r for r in contrasts if r["design"] == "S3" and r["action"] == "SL" and r["class"] == "whiff" and r["phase"] == "even")
+    assert sl["lo"] > 0.02
+    fit = section(service, anchor, "Fit summary")
+    assert {r["design"] for r in fit} == {"S3", "S4"} and max(r["outside_01_share"] for r in fit if r["design"] == "S3") < 0.01       # (S4 cells are one or two pitches in this world, so only S3 is checked)
+    jb = section(service, anchor, "J_BIP")
+    assert len(jb) == 3 * 24 and {r["action"] for r in jb} == {"FF", "SL", "CH"}
+    arrays = pm.unpack_arrays(service.store.load_artifact(anchor["id"], "anchor_RvR")["rows"])
+    assert arrays["jbip"].shape == (9, 3, 8) and arrays["eff_S3"].shape == (3, 9, 8)
+
+
+def test_policy_with_anchor_reports_consistency_and_direction_map(service, anchored):
+    _, policy = anchored
+    anchor_sec = section(service, policy, "Anchor")
+    assert {r["design"] for r in anchor_sec} == {"S3", "S4"} and all(r["passes"] == 1 for r in anchor_sec)
+    direction = section(service, policy, "Direction map")
+    sl = [r for r in direction if r["action"] == "SL" and r["context"].startswith("1-1 ")]
+    assert sl and all(r["marginal"] < 0 for r in sl) and any(r["not_detected"] == 0 for r in direction if r["action"] == "SL")
+    assert {r["action"] for r in direction} == {"FF", "SL", "CH"} and all(r["context"].startswith("0-0 | none") for r in direction if r["balls"] == 0 and r["strikes"] == 0)
+
+
+def test_anchor_must_be_an_action_effects_run(service, result, patched):
+    with pytest.raises(ConfigError, match="action_effects"):
+        service.run("pitch_policy", {**BASE, "anchor_run_id": result["id"]})
+    with pytest.raises(ConfigError):
+        service.run("pitch_policy", {**BASE, "anchor_run_id": 9999})

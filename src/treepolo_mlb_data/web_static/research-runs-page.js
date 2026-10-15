@@ -181,7 +181,7 @@
   const CHART_PAGE = 1000, CHART_MAX_ROWS = 200000;
   const ROLES = {
     line: ["x", "y", "lo", "hi", "series", "facet"], heatmap: ["row", "col", "value", "n", "low", "facet"],
-    scatter: ["x", "y", "xlo", "xhi", "ylo", "yhi", "color", "low", "facet"],
+    scatter: ["x", "y", "xlo", "xhi", "ylo", "yhi", "color", "low", "facet"], bars: ["label", "value", "lo", "hi", "color", "low", "facet"],
   };
 
   async function loadAllRows(runId, sectionIndex, total) {

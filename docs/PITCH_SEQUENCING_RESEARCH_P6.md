@@ -447,9 +447,12 @@ R5：不評等級（描述）。
 ### A.3 `action_effects`（研究方法，版本 1；錨點）
 - **用途**：聯盟層固定效應線性機率模型（P5 `streak_regression` 的延伸），只用來做錨點一致性檢查（3.6）與提供 $J_{BIP}$（3.7）。
 - **設定欄位**：`scope`；`groups`；`classes`；`fixed_effects`（`["pitcher","batter"]` 或 `["pitcher_game","batter"]`）；`count_ladder`（`D1`、`D2`、`D3`）；`memory`（0 或 1）；`streak_cap`（3）；`pitch_types`；`support_min_share`（0.05）、`support_min_n`（300）；`cluster_by`（`pitcher`）；`seed`；`purpose`。
-- 沿用 `fixed_effects.py` 的 `fe_ols`（交替投影去除固定效應、CR1）。
+- 沿用 `fixed_effects.py` 的 `demean`（交替投影去除固定效應）與 CR1 聚類標準誤；各結果類別共用同一個設計矩陣（係數加總為 0，擬合值加總為 1）。
+- **6.0c 實作的設計**：情境項（球數 11、出局 2、壘包 7、前一球球種 8、連投第 2 顆與第 3 顆以上）＋球種虛擬變數＋球種 × 球數階段（領先、落後；平手為基準）。球種效果以「相對同一階段一般配球組合」表示（`球種係數 − Σ 份額 × 球種係數`），這與全聯盟模型的 `model_contrasts` 逐格可比。`anchor_consistency` 在錨點看得到效果（|效果| ≥ 2.576 × 標準誤）的格子上，計算同號比例與大小比值中位數；另外列出「模型看到、錨點看不到」的格數（混淆的訊號）。
+- **J_BIP**：出局×壘包格平均＋球種效果（投手、打者固定效應內估計），薄格向該相加值收縮（`jbip_kappa`）；`pitch_policy` 以 `anchor_run_id` 取用。
+- **連投編碼（6.0c 修正）**：資料表的 `streak_pos` 是「本球在連投中的位置」（換球種時為 1）；決策狀態要的是「前一段連投已經投了幾球」，由同一打席上一球的 `streak_pos` 取得（`derive_prior_streak`）。格點預測時，本球的 `streak_pos` ＝ 重複同球種 ? 前一段長度＋1（上限 3）: 1。6.0b 的合成世界在訓練與預測兩端用同一編碼，所以沒有被這個差別影響，但真實資料需要這個對照；已加測試確認訓練列與格點列的編碼一致。
 - **結果節**：`係數`、`邊際效應（連投、前一球）`、`聯盟層預測`、`J_BIP`、`擬合摘要`（含超出 [0,1] 的比例）。
-- **已知答案測試**：W0–W5。
+- **已知答案測試**：W4（投手素質混淆）：S3、S4 的球種效果 99% 區間都含 0，不套固定效應的簡單比較誤報 +2.3 個百分點；W5（當天狀態混淆）：S3 誤報（下界 > 0.01），S4 ≈ 0；W1：還原真實的球種效果。全聯盟 L0 模型在 W4 上被混淆（與錨點不一致，`model_only_cells` ≥ 2），在 W1 上與錨點一致。
 
 ### A.4 `outcome_model` 的決策時特徵版本（基準）
 - `base_numeric`、`base_categorical` 預設排除 `plate_x`、`plate_z`、`release_speed`、`pfx_x`、`pfx_z`、`zone`（新增 `feature_set: "decision_time"`，預設仍為舊行為以保持 P5 可重現）。

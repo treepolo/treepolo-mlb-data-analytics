@@ -89,4 +89,43 @@ const g = charts.PRESETS.streak.guess(["hand_group", "pitch_type", "k", "estimat
 assert.deepEqual([g.x, g.y, g.lo, g.hi, g.series, g.facet], ["k", "estimate", "lo", "hi", "pitch_type", "hand_group"]);
 const e = charts.PRESETS.evHr.guess(["mean_value", "hr_rate", "value_lo", "value_hi", "hr_lo", "hr_hi", "pitch_type", "low_n"]);
 assert.equal(e.xlo, "value_lo"); assert.equal(e.low, "low_n");
+
+// bars with intervals (situation bars, feature ablation): one row per label, whiskers only when both ends are known, faded low rows, zero line
+const bar = charts.build("bars", [
+  { action: "FF", q: 0.52, q_lo: 0.50, q_hi: 0.54, indistinct_group: "a", unsupported: 0 },
+  { action: "SL", q: 0.47, q_lo: 0.45, q_hi: 0.49, indistinct_group: "b", unsupported: 0 },
+  { action: "KC", q: 0.60, q_lo: null, q_hi: null, indistinct_group: "c", unsupported: 1 },
+  { action: "XX", q: null },
+], { label: "action", value: "q", lo: "q_lo", hi: "q_hi", color: "indistinct_group", low: "unsupported" }, { title: "bars", zeroBase: false, disclaimer: "model estimate" });
+assert.equal(cls(bar, "rc-bar").length, 3); assert.equal(cls(bar, "rc-low").length, 1); assert.equal(cls(bar, "rc-whisker").length, 2);
+assert.ok(find(bar, t => t.text === "model estimate").length === 1 && find(bar, t => t.text && t.text.includes("Historical outcomes")).length === 0);
+assert.ok(find(bar, t => t.tag === "line" && t.attrs["stroke-dasharray"]).length === 0);          // zeroBase false and all values > 0: no zero line
+const abl = charts.build("bars", [
+  { group: "RvR", comparison: "L0→L1", mode: "cold_pitcher", delta_logloss: 0.003, lo: 0.002, hi: 0.004 },
+  { group: "RvR", comparison: "L0→L3", mode: "cold_pitcher", delta_logloss: 0.012, lo: 0.011, hi: 0.0125 },
+  { group: "LvL", comparison: "L0→L3", mode: "cold_pitcher", delta_logloss: -0.001, lo: -0.002, hi: 0.0 },
+], charts.PRESETS.ablation.guess(["group", "comparison", "mode", "delta_logloss", "lo", "hi"]), charts.PRESETS.ablation.options);
+assert.equal(cls(abl, "rc-panel").length, 2); assert.equal(cls(abl, "rc-bar").length, 3);
+assert.ok(find(abl, t => t.tag === "line" && t.attrs["stroke-dasharray"]).length === 2);           // zero line in both panels
+assert.ok(cls(charts.build("bars", [{ l: "a", v: 1 }], { label: "l", value: "v" }, {}), "rc-whisker").length === 0);
+assert.ok(cls(charts.build("bars", [{ l: null, v: null }], { label: "l", value: "v" }, {}), "rc-empty").length === 1);
+
+// direction map: diverging colours, cells without a detectable difference are faded; frontier uses the scatter with interval bars
+const dirMap = charts.build("heatmap", [
+  { group: "RvR", context: "0-0 | none", action: "SL", marginal: -0.006, n: 900, not_detected: 0 },
+  { group: "RvR", context: "0-0 | none", action: "CH", marginal: 0.001, n: 400, not_detected: 1 },
+  { group: "RvR", context: "1-2 | FF", action: "SL", marginal: 0.004, n: 300, not_detected: 0 },
+], charts.PRESETS.direction.guess(["group", "context", "action", "marginal", "n", "not_detected"]), charts.PRESETS.direction.options);
+assert.equal(cls(dirMap, "rc-cell").length, 3); assert.equal(cls(dirMap, "rc-low").length, 1);
+const dirFills = cls(dirMap, "rc-cell").map(c => c.attrs.fill);
+assert.ok(dirFills[0].startsWith("rgb(") && dirFills[0] !== dirFills[2]);                         // negative blue vs positive red
+const gd = charts.PRESETS.direction.guess(["group", "context", "action", "marginal", "n", "not_detected"]);
+assert.deepEqual([gd.row, gd.col, gd.value, gd.low, gd.facet], ["context", "action", "marginal", "not_detected", "group"]);
+const front = charts.build("scatter", [
+  { group: "RvR", lambda: 0, expected_runs: 0.5, lo: 0.49, hi: 0.51, hr_probability: 0.040, hr_lo: 0.039, hr_hi: 0.041 },
+  { group: "RvR", lambda: 1, expected_runs: 0.505, lo: 0.495, hi: 0.515, hr_probability: 0.037, hr_lo: 0.036, hr_hi: 0.038 },
+], charts.PRESETS.frontier.guess(["group", "lambda", "expected_runs", "lo", "hi", "hr_probability", "hr_lo", "hr_hi"]), charts.PRESETS.frontier.options);
+assert.equal(cls(front, "rc-point").length, 2); assert.equal(find(front, t => t.tag === "line" && t.attrs["stroke-opacity"] === 0.5).length, 4);
+assert.ok(find(front, t => t.text === "此打席全壘打機率").length === 1);
+for (const id of ["direction", "frontier", "ablation", "situationBars"]) assert.ok(charts.PRESETS[id].label && ["heatmap", "scatter", "bars"].includes(charts.PRESETS[id].type));
 console.log("research-charts: ok");
