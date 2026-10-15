@@ -52,6 +52,19 @@ def handle_get(service: ResearchService, path: str, query_string: str = "") -> R
     query = parse_qs(query_string)
     if route == "methods":
         return 200, {"methods": service.methods()}
+    if route in ("pitch-query", "pitch-query/meta", "pitch-query/players"):
+        run_id = _int(_one(query, "run"), "run")
+        if run_id is None:
+            raise ConfigError("run is required / 需要 run")
+        if route == "pitch-query/meta":
+            return 200, service.pitch_query_meta(run_id)
+        if route == "pitch-query/players":
+            return 200, service.pitch_query_players(run_id, _one(query, "group", ""), _one(query, "side", ""), _one(query, "q", ""), _int(_one(query, "limit"), "limit", 20))
+        params = {k: v[0] for k, v in query.items() if k != "run" and v}
+        missing = [k for k in ("group", "balls", "strikes", "outs") if k not in params]
+        if missing:
+            raise ConfigError(f"missing parameters {missing} / 缺少參數 {missing}")
+        return 200, service.pitch_query(run_id, params)
     if route == "studies":
         return 200, {"studies": service.list_studies()}
     if route == "runs":

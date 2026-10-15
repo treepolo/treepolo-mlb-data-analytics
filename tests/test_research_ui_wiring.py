@@ -31,3 +31,18 @@ def test_chart_module_is_wired_and_its_node_test_passes():
     if node:
         root = STATIC_DIR.parents[2]
         subprocess.run([node, str(root / "tests" / "research-charts.test.cjs")], check=True, cwd=root)
+
+
+def test_query_page_is_wired_into_the_app():
+    script = (STATIC_DIR / "research-query-page.js").read_text(encoding="utf-8")
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    ci = (STATIC_DIR.parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert '<script src="/research-query-page.js"></script>' in index
+    assert index.index("/research-charts.js") < index.index("/research-query-page.js") and index.index("/research-runs-page.js") < index.index("/research-query-page.js")
+    assert 'const PANEL_ID = "research-query-panel"' in script and 'register?.(PANEL_ID, ROUTE)' in script and 'const ROUTE = "research-query"' in script
+    assert "node --check src/treepolo_mlb_data/web_static/research-query-page.js" in ci
+    for endpoint in ("/api/research/pitch-query?", "/api/research/pitch-query/meta", "/api/research/pitch-query/players"):
+        assert endpoint in script
+    assert "innerHTML" not in script and "localStorage" not in script and "sessionStorage" not in script
+    for label in ("情境查詢 Situation Query", "不涵蓋 Not covered", "外推", "不支持", "資料充足"):
+        assert label in script

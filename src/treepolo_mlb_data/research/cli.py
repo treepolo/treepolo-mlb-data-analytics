@@ -46,6 +46,17 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     imp = sub.add_parser("import", help="Import a research bundle file")
     imp.add_argument("path", type=Path)
 
+    query = sub.add_parser("query", help="Ask what each pitch type is worth in a situation (needs a pitch_query run)")
+    query.add_argument("run_id", type=int, help="id of a pitch_query run")
+    query.add_argument("--group", required=True, choices=("RvR", "RvL", "LvR", "LvL"))
+    query.add_argument("--balls", type=int, default=0); query.add_argument("--strikes", type=int, default=0); query.add_argument("--outs", type=int, default=0)
+    query.add_argument("--bases", default="000", help="three digits for first, second, third base ('100' = runner on first), or a number 0-7")
+    query.add_argument("--prev", default="none", help="previous pitch type or none"); query.add_argument("--streak", type=int, default=1, help="1, 2 or 3 (three or more) in a row")
+    query.add_argument("--pitcher", default=None, help="pitcher id (M1/M3)"); query.add_argument("--batter", default=None, help="batter id (M2/M3)")
+    query.add_argument("--samples", type=int, default=100); query.add_argument("--members", type=int, default=10)
+    query.add_argument("--find", default=None, help="search players instead: pitcher:TEXT or batter:TEXT (id or name)")
+    query.add_argument("--json", action="store_true", help="print JSON instead of a table")
+
 
 def _print(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2))
@@ -118,6 +129,16 @@ def run_command(args: argparse.Namespace, config) -> int:
             _print({"written": str(args.out), "bytes": len(data)})
         elif command == "import":
             _print(import_bundle(service.store, args.path.read_bytes()))
+        elif command == "query":
+            from .query_core import format_table
+
+            if args.find:
+                side, _, text = args.find.partition(":")
+                _print(service.pitch_query_players(args.run_id, args.group, side, text))
+            else:
+                result = service.pitch_query(args.run_id, {"group": args.group, "balls": args.balls, "strikes": args.strikes, "outs": args.outs, "bases": args.bases, "prev": args.prev,
+                                                          "streak": args.streak, "pitcher": args.pitcher, "batter": args.batter, "samples": args.samples, "members": args.members})
+                _print(result) if args.json else print(format_table(result))
         else:  # pragma: no cover - argparse enforces the choices
             raise ConfigError(f"Unknown research command: {command}")
         return 0

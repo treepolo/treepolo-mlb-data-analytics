@@ -108,7 +108,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 1
+    version = 2     # 2: situation table keeps float64 arrays, counts, the environment and home-run bounds (pitch_query reads it)
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -223,7 +223,7 @@ class PitchPolicyMethod(ResearchMethod):
             if anchor is not None:
                 anchor_rows += self._anchor_rows(group, an, tensor, anchor, shape)
             if config["save_table"]:
-                artifacts.append(self._table_artifact(group, an, tensor, config))
+                artifacts.append(self._table_artifact(group, an, tensor, config, env))
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "backend": config["backend"], "device": device,
                   "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)", "mode": "M0 league average (level L0)"}
         sections = (
@@ -413,17 +413,28 @@ class PitchPolicyMethod(ResearchMethod):
         return rows
 
     @staticmethod
-    def _table_artifact(group, an, tensor, config):
-        conf = config["cell_confidence"]
-        q, qlo, qhi = an.interval(an.q_obs, conf)
-        adv, alo, ahi = an.interval(an.advantage, conf)
-        mg, mlo, mhi = an.interval(an.marginal, conf)
-        arrays = dict(q=q.astype(np.float32), q_lo=qlo.astype(np.float32), q_hi=qhi.astype(np.float32), advantage=adv.astype(np.float32), adv_lo=alo.astype(np.float32),
-                      adv_hi=ahi.astype(np.float32), marginal=mg.astype(np.float32), m_lo=mlo.astype(np.float32), m_hi=mhi.astype(np.float32),
-                      p_outcome=tensor.mean(axis=0).astype(np.float32), support=an.support, obs=an.obs.astype(np.float32), occupancy=an.occupancy.astype(np.float32),
-                      dp_trust=an.policies.get("dp_trust", an.obs).astype(np.float32), dp_unrestricted=an.policies.get("dp_unrestricted", an.obs).astype(np.float32))
+    def _table_artifact(group, an, tensor, config, env):
         return ArtifactData(f"situation_table_{group}", f"Situation table of group {group}: arrays over [state, action(, outcome)] packed as npz/zlib/base64 (state layout in extras)",
-                            ("part", "payload"), tuple(pack_arrays(arrays)))
+                            ("part", "payload"), tuple(pack_arrays(situation_arrays(group, an, tensor, env, config))))
+
+
+def situation_arrays(group, an, tensor, env, config) -> dict:
+    """The arrays of the situation table (everything ``query_core.SituationTable`` reads), from the analysis of the bagged members."""
+
+    import json
+
+    conf = config["cell_confidence"]
+    q, qlo, qhi = an.interval(an.q_obs, conf)
+    adv, alo, ahi = an.interval(an.advantage, conf)
+    mg, mlo, mhi = an.interval(an.marginal, conf)
+    hr_mean, hr_lo, hr_hi = an.interval(tensor[:, :, :, pc.OC["in_play_home_run"]], conf)
+    n = an.extras.get("n_cell")
+    meta = {"group": group, "tau": config["tau"], "delta": config["marginal_shift"], "confidence": conf, "min_count": config["min_count"], "min_share": config["min_share"],
+            "trust": config["trust_region"], "classes": list(pc.OUTCOMES), "members": int(an.extras["members"]), "mode": "M0 league average (level L0)"}
+    return dict(q=q, q_lo=qlo, q_hi=qhi, advantage=adv, adv_lo=alo, adv_hi=ahi, marginal=mg, m_lo=mlo, m_hi=mhi, p_outcome=tensor.mean(axis=0), hr_lo=hr_lo, hr_hi=hr_hi,
+                support=an.support, obs=an.obs, occupancy=an.occupancy, n=(np.zeros(an.obs.shape) if n is None else n),
+                dp_trust=an.policies.get("dp_trust", an.obs), dp_unrestricted=an.policies.get("dp_unrestricted", an.obs),
+                re_pa=env.re_pa, re_cnt=env.re_cnt, jbip=env.jbip, start=env.start, meta=np.array(json.dumps(meta)))
 
 
 register_method(PitchPolicyMethod())

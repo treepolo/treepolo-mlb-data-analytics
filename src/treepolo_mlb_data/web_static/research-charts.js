@@ -196,7 +196,7 @@
     const names = [...new Set(pts.map(p => (mapping.color ? String(p.r[mapping.color]) : "")))];
     const panels = [...groupBy(pts.map(p => p.r), mapping.facet).keys()];
     const rowH = 18, left = 120, right = 16, top = 26, bottom = 34;
-    const dim = { width: 380, height: top + labels.length * rowH + bottom };
+    const dim = { width: 520, height: top + labels.length * rowH + bottom };
     const xs = linearScale(domain, [left, dim.width - right]);
     const built = panels.map(panelName => {
       const parts = [];

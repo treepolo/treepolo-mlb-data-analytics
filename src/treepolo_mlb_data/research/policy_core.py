@@ -141,18 +141,41 @@ class Engine:
         self.no_support = empty
         self.obs_eff = dyn.obs
 
-    # --- values
-    def q(self, V: np.ndarray, term: np.ndarray | None = None) -> np.ndarray:
-        t = self.term if term is None else term
-        cont = np.where(self._live, V[self._safe], t)
-        return (self.dyn.P * cont).sum(axis=2)
+    def rebind(self, dyn: Dynamics) -> "Engine":
+        """Another engine on the same state structure and terminal values (they do not depend on the outcome probabilities) with different dynamics."""
 
-    def evaluate(self, pi: np.ndarray, term: np.ndarray | None = None) -> np.ndarray:
+        import copy
+
+        other = copy.copy(self)
+        other.dyn = dyn
+        sup = dyn.support.copy(); empty = ~sup.any(axis=1)
+        sup[empty] = dyn.obs[empty] > 0
+        other.sup_eff, other.no_support, other.obs_eff = sup, empty, dyn.obs
+        return other
+
+    # --- values
+    def q(self, V: np.ndarray, term: np.ndarray | None = None, rows: np.ndarray | None = None) -> np.ndarray:
+        """Q[s, a] for all states, or only for ``rows`` (state indices) when given."""
+
+        t = self.term if term is None else term
+        if rows is None:
+            return (self.dyn.P * np.where(self._live, V[self._safe], t)).sum(axis=2)
+        return (self.dyn.P[rows] * np.where(self._live[rows], V[self._safe[rows]], t[rows])).sum(axis=2)
+
+    def evaluate(self, pi: np.ndarray, term: np.ndarray | None = None, active: np.ndarray | None = None, tol: float | None = None) -> np.ndarray:
+        """Value of a policy. ``active`` limits the work to a set of states that only lead to each other (the states of one outs-and-bases cell)."""
+
+        tol = self.tol if tol is None else tol
         V = np.zeros(self.shape.size)
         for _ in range(self.max_iter):
-            new = (pi * self.q(V, term)).sum(axis=1)
-            done = np.max(np.abs(new - V)) < self.tol
-            V = new
+            if active is None:
+                new = (pi * self.q(V, term)).sum(axis=1)
+                done = np.max(np.abs(new - V)) < tol
+                V = new
+            else:
+                new = (pi[active] * self.q(V, term, active)).sum(axis=1)
+                done = np.max(np.abs(new - V[active])) < tol
+                V[active] = new
             if done:
                 break
         return V
@@ -195,22 +218,9 @@ class Engine:
         return self._argmin_policy(self.one_step())
 
     def trust_policy(self, Q: np.ndarray, delta: float) -> np.ndarray:
-        """Per state, the shares within ``delta`` of the observed shares that minimise the expected Q (exact solution of the small linear programme:
-        start from the lower bounds and give the remaining probability to the cheapest actions up to their upper bounds)."""
+        """Per state, the shares within ``delta`` of the observed shares that minimise the expected Q (see ``trust_shares``)."""
 
-        obs, sup = self.obs_eff, self.sup_eff
-        low = np.where(sup, np.maximum(obs - delta, 0.0), 0.0)
-        up = np.where(sup, np.minimum(obs + delta, 1.0), 0.0)
-        room = up - low
-        remaining = np.maximum(1.0 - low.sum(axis=1), 0.0)
-        order = np.argsort(np.where(sup, Q, np.inf), axis=1, kind="stable")
-        sorted_room = np.take_along_axis(room, order, axis=1)
-        before = np.cumsum(sorted_room, axis=1) - sorted_room
-        add_sorted = np.clip(remaining[:, None] - before, 0.0, sorted_room)
-        add = np.zeros_like(add_sorted); np.put_along_axis(add, order, add_sorted, axis=1)
-        pi = low + add
-        total = pi.sum(axis=1, keepdims=True)
-        return pi / np.where(total > 0, total, 1.0)
+        return trust_shares(Q, self.obs_eff, self.sup_eff, delta)
 
     def solve(self, kind: str, trust: float = 0.10, term: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         """(V, pi) of one policy kind; the dynamic-programming kinds iterate the Bellman operator to convergence."""
@@ -265,6 +275,24 @@ class Engine:
     def hr_probability(self, pi: np.ndarray) -> float:
         V = self.evaluate(pi, hr_terminal(self.shape, self.nxt))
         return self.start_value(V)
+
+
+def trust_shares(Q: np.ndarray, obs: np.ndarray, sup: np.ndarray, delta: float) -> np.ndarray:
+    """Exact solution of the small linear programme per state: start from the lower bounds ``max(obs - delta, 0)`` and give the remaining probability to the
+    cheapest actions up to their upper bounds ``min(obs + delta, 1)``. Unsupported actions stay at zero."""
+
+    low = np.where(sup, np.maximum(obs - delta, 0.0), 0.0)
+    up = np.where(sup, np.minimum(obs + delta, 1.0), 0.0)
+    room = up - low
+    remaining = np.maximum(1.0 - low.sum(axis=1), 0.0)
+    order = np.argsort(np.where(sup, Q, np.inf), axis=1, kind="stable")
+    sorted_room = np.take_along_axis(room, order, axis=1)
+    before = np.cumsum(sorted_room, axis=1) - sorted_room
+    add_sorted = np.clip(remaining[:, None] - before, 0.0, sorted_room)
+    add = np.zeros_like(add_sorted); np.put_along_axis(add, order, add_sorted, axis=1)
+    pi = low + add
+    total = pi.sum(axis=1, keepdims=True)
+    return pi / np.where(total > 0, total, 1.0)
 
 
 # ------------------------------------------------------------------------------------------------ numbers built on Q
@@ -325,7 +353,9 @@ def member_interval(values: np.ndarray, confidence: float = 0.99) -> tuple[np.nd
     """Mean and mean +- t * SD over the bagged members (axis 0), the interval convention of the whole study."""
 
     m = values.shape[0]
-    mean = np.nanmean(values, axis=0); sd = np.nanstd(values, axis=0, ddof=1) if m > 1 else np.zeros_like(mean)
+    with np.errstate(all="ignore"), __import__("warnings").catch_warnings():
+        __import__("warnings").simplefilter("ignore", RuntimeWarning)
+        mean = np.nanmean(values, axis=0); sd = np.nanstd(values, axis=0, ddof=1) if m > 1 else np.zeros_like(mean)
     t = t_critical(m, confidence)
     return mean, mean - t * sd, mean + t * sd
 

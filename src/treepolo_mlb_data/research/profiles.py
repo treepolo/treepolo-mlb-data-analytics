@@ -84,6 +84,15 @@ class KeyedSums:
     def group_sums(self) -> np.ndarray:
         return self.sums
 
+    def decode(self) -> tuple[list[np.ndarray], np.ndarray]:
+        """(key columns, sums) of every stored key, in the order of ``self.keys``."""
+
+        rem = self.keys.copy(); columns = []
+        for vocab, stride in zip(self.vocab, self.stride):
+            idx = rem // stride; rem = rem % stride
+            columns.append(vocab[np.maximum(idx - 1, 0)])
+        return columns, self.sums
+
 
 class SumTable:
     """Totals and 'strictly earlier games only' sums of a value matrix over composite keys.
@@ -278,6 +287,24 @@ class ProfileModel:
             present = v[:, 2 * j + 1].sum()
             out[j] = v[:, 2 * j].sum() / present if present > 0 else 0.0
         return out
+
+    # ------------------------------------------------------------------------------------------- who is in the tables
+    def players(self, side: str, group: str) -> tuple[np.ndarray, np.ndarray]:
+        """(ids, pitches) of the pitchers or batters seen in ``group`` during the fitted period."""
+
+        if side == "pitcher":
+            (ids, groups), sums = self.a["pgn"].total.decode(); n = sums[:, 0]
+        else:
+            (ids, groups), sums = self.t["bg"].total.decode(); n = sums[:, self.col["one"]]
+        keep = np.asarray(groups).astype(str) == group
+        return np.asarray(ids)[keep], n[keep]
+
+    def pitcher_arsenal(self, pitcher, group: str) -> dict[str, int]:
+        """Pitches of each analysed type that ``pitcher`` threw in ``group``."""
+
+        (ids, types, groups), sums = self.a["ptg"].total.decode()
+        keep = (np.asarray(ids) == pitcher) & (np.asarray(groups).astype(str) == group)
+        return {str(t): int(n) for t, n in zip(np.asarray(types)[keep], sums[keep, 0])}
 
     # ------------------------------------------------------------------------------------------- transform
     def feature_names(self, side: str) -> list[str]:

@@ -22,3 +22,15 @@ python docs\research\scripts\run_configs.py F:\treepolo-p6-tmp\p6.log docs\resea
 - 長工作不因超過估計時間而中止。
 - 調參（tuning）只能用 2023–2024；2025/2026 為保留球季，只在 final_test 使用。
 - `min_gain`（G1a 最小增益）真實資料用預設 0.0003。
+
+## 情境查詢（6.0d）在使用者電腦上的整合測試
+先決條件：`AE_fast_RvR.json`、`PP_fast_RvR.json`（`anchor_run_id` 填前者的紀錄編號）、`L_fast_RvR.json`（要在設定裡加 `"save_package": true`）都跑完。然後建立查詢紀錄（把編號換成實際的）：
+```
+{"kind": "pitch_query", "study": "P6", "scope": {"game_years": [2023, 2024], "game_types": ["R"]}, "policy_run_id": <PP 紀錄>, "package_run_id": <L 紀錄>, "level": "L3"}
+```
+存成 `docs/research/configs/p6/PQ_RvR.json` 用 `run_configs.py` 執行；它會做 5.7 的驗收、量 M1–M3 的延遲（目標 ≤ 30 秒）並算球員名稱涵蓋率（目標 ≥ 95%）。之後：
+```
+treepolo-mlb research query <PQ 紀錄> --group RvR --balls 1 --strikes 2 --outs 1 --bases 100 --prev SL --streak 2
+treepolo-mlb research query <PQ 紀錄> --group RvR --find pitcher:Skenes
+```
+網頁：啟動 `treepolo-mlb` 的網頁介面，左邊選單「研究 → 情境查詢」。

@@ -19,6 +19,7 @@ from . import compare_methods  # noqa: F401  (registers run_compare)
 from . import league_methods  # noqa: F401  (registers player_profiles and league_model)
 from . import policy_methods  # noqa: F401  (registers pitch_policy)
 from . import anchor_methods  # noqa: F401  (registers action_effects)
+from . import query_methods  # noqa: F401  (registers pitch_query)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
@@ -77,6 +78,39 @@ class ResearchService:
     # ------------------------------------------------------------------ meta
     def methods(self) -> list[dict[str, Any]]:
         return [method.describe() for method in list_methods()]
+
+    # ------------------------------------------------------------------ situation queries (pitch_query runs)
+    def query_runtime(self, run_id: int):
+        from .query_methods import QueryRuntime
+
+        with self._lock:
+            cache = self.__dict__.setdefault("_query_runtimes", {})
+            if int(run_id) not in cache:
+                run = self.store.get_run(int(run_id))
+                if run is None or run["kind"] != "pitch_query" or run["status"] != "success":
+                    raise ConfigError(f"run {run_id} is not a successful pitch_query run / 紀錄 {run_id} 不是成功的 pitch_query 紀錄")
+                extras = self.store.load_result(int(run_id))["extras"]
+                cache[int(run_id)] = QueryRuntime(self.store, policy_run_id=extras["policy_run_id"], package_run_id=extras.get("package_run_id") or 0, level=extras.get("level", "L3"),
+                                                  query_run_id=int(run_id))
+            return cache[int(run_id)]
+
+    def pitch_query(self, run_id: int, params: dict[str, Any]) -> dict[str, Any]:
+        return self.query_runtime(run_id).answer(params)
+
+    def pitch_query_meta(self, run_id: int) -> dict[str, Any]:
+        from .profiles import PITCH_TYPES
+        from .query_core import NOT_COVERED
+
+        rt = self.query_runtime(run_id)
+        groups = rt.groups()
+        return {"run": int(run_id), "groups": groups, "pitch_types": list(PITCH_TYPES), "players_available": bool(rt.package_run_id),
+                "package_groups": [g for g in groups if rt.has_package(g)], "level": rt.level, "gates": {g: rt.gate_status(g) for g in groups}, "not_covered": list(NOT_COVERED),
+                "tables": {g: {k: rt.table(g).meta[k] for k in ("confidence", "tau", "delta", "min_count", "members", "mode")} for g in groups}}
+
+    def pitch_query_players(self, run_id: int, group: str, side: str, text: str = "", limit: int = 20) -> dict[str, Any]:
+        if side not in ("pitcher", "batter"):
+            raise ConfigError("side must be pitcher or batter / side 必須是 pitcher 或 batter")
+        return {"players": self.query_runtime(run_id).search(group, side, text, int(limit))}
 
     def close(self) -> None:
         self.store.close()

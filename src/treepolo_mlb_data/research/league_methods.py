@@ -274,7 +274,7 @@ class LeagueModelMethod(ResearchMethod):
             cal_rows += [{"group": group, **r} for r in res["calibration"]]
             gate_rows += self._gates(group, res, config["min_gain"])
             if config["save_package"]:
-                artifacts.append(self._package(group, res, config))
+                artifacts.append(self._package(group, res, config, profile))
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "split": config["split"], "backend": config["backend"], "device": device, "classes": classes,
                   "target": config["target"], "train_years": train_years, "test_years": list(config["test_years"]) if config["split"] == "holdout_years" else [],
                   "final_test": config["purpose"] == "final_test", "extra_study": config["purpose"] == "extra_study", "reserved_years": list(RESERVED_YEARS),
@@ -332,16 +332,29 @@ class LeagueModelMethod(ResearchMethod):
         return out
 
     @staticmethod
-    def _package(group: str, res: dict[str, Any], config: dict[str, Any]) -> ArtifactData:
-        """Bagged members of every level as base64 chunks (an artifact is a table; the bytes are split to keep the rows small)."""
+    def _package(group: str, res: dict[str, Any], config: dict[str, Any], profile=None) -> ArtifactData:
+        """Bagged members of every level, the fitted player descriptors and a small description, as base64 chunks (an artifact is a table;
+        the bytes are split to keep the rows small). ``pitch_query`` reads this to answer questions about named players."""
+
+        import json
+        import pickle
 
         rows = []
+
+        def add(level: str, member: int, raw: bytes) -> None:
+            blob = base64.b64encode(zlib.compress(raw)).decode("ascii")
+            for part in range(0, len(blob), 400_000):
+                rows.append({"level": level, "member": member, "part": part // 400_000, "payload": blob[part:part + 400_000]})
+
         for lv, members in res["models"].items():
             for i, m in enumerate(members):
-                blob = base64.b64encode(zlib.compress(m.to_bytes())).decode("ascii")
-                for part in range(0, len(blob), 400_000):
-                    rows.append({"level": lv, "member": i, "part": part // 400_000, "payload": blob[part:part + 400_000]})
-        return ArtifactData(f"model_package_{group}", f"Boosted-tree members of group {group} (base64 of zlib of pickled FittedGbm)", ("level", "member", "part", "payload"), tuple(rows))
+                add(lv, i, m.to_bytes())
+        if profile is not None:
+            add("__profile__", 0, pickle.dumps(profile))
+        meta = {"group": group, "classes": list(res["classes"]), "levels": list(res["models"]), "target": config["target"], "backend": config["backend"],
+                "train_years": list(config["train_years"]) if config["split"] == "holdout_years" else None, "format": 1}
+        add("__meta__", 0, json.dumps(meta).encode("utf-8"))
+        return ArtifactData(f"model_package_{group}", f"Boosted-tree members of group {group}, player descriptors and description (base64 of zlib of pickles)", ("level", "member", "part", "payload"), tuple(rows))
 
 
 for _method in (PlayerProfilesMethod(), LeagueModelMethod()):
