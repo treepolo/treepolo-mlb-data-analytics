@@ -154,7 +154,11 @@
   async function guard(fn) { try { say(""); await fn(); } catch (error) { say(`錯誤 Error: ${error.message}`); } }
 
   async function open() {
-    if (!state.info) state.info = await api("/api/research/pipeline/info");
+    if (!state.info) {
+      const host = document.getElementById("rp-form");
+      if (host) host.replaceChildren(el("p", { class: "hint", id: "rp-loading", text: "載入中：正在檢查這台電腦能不能用 XGBoost 與 GPU（第一次打開會實際啟動一次 GPU 測試，約十幾秒到半分鐘，請稍候）…" }));
+      state.info = await api("/api/research/pipeline/info");
+    }
     await refresh();
     if (state.job && state.job.state === "running") poll();
   }
