@@ -162,6 +162,9 @@ class PitchPolicyMethod(ResearchMethod):
         run = ctx.store.get_run(int(config["model_run_id"])) if ctx.store is not None else None
         if run is None or run["kind"] != "outcome_model_train" or run["status"] != "success":
             raise ConfigError(f"model_run_id {config['model_run_id']} is not a successful outcome_model_train run / model_run_id 不是成功的 outcome_model_train 紀錄")
+        if ctx.store.load_result(int(config["model_run_id"]))["extras"].get("model") == "sequence":
+            raise ConfigError("the sequence model cannot be the model behind the decision engine: its predictions need the earlier pitches of the plate appearance, which the situation grid "
+                              "does not have / 序列模型不能當決策引擎用的模型：它的預測需要打席內的前序投球，情境格沒有")
         groups = [g for g in GROUPS if ctx.store.load_artifact(int(config["model_run_id"]), f"outcome_model_{g}") is not None]
         if not groups:
             raise ConfigError("the model run stored no model: run it with save_package / 模型紀錄沒有保存模型，請用 save_package 執行")

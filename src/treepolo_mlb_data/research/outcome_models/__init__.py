@@ -20,15 +20,15 @@ def _load() -> None:
         return
     from .gbm_model import GbmModel
     from .logistic import LogisticModel
+    from .mixed import MixedModel
 
-    register(LogisticModel); register(GbmModel)
-    for module in ("mixed", "nn_embed", "sequence"):         # need PyTorch; they register themselves when it is installed
-        try:
-            __import__(f"{__name__}.{module}")
-        except ImportError as exc:
-            _UNAVAILABLE[module] = str(exc)
-        except Exception as exc:                              # a broken optional model must not take the others down
-            _UNAVAILABLE[module] = repr(exc)
+    register(LogisticModel); register(GbmModel); register(MixedModel)
+    try:                                                      # the neural networks need PyTorch; the module registers them when it can be imported
+        from . import torch_models  # noqa: F401
+    except ImportError as exc:
+        _UNAVAILABLE["torch"] = str(exc)
+    except Exception as exc:                                  # a broken optional model must not take the others down
+        _UNAVAILABLE["torch"] = repr(exc)
 
 
 def model_kinds() -> tuple[str, ...]:

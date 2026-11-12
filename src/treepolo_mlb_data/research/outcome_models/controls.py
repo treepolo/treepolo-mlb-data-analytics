@@ -67,6 +67,19 @@ PARAM_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("backfit_rounds", "int", default=1, minimum=1, maximum=10, label_zh="回頭重估效應的輪數", label_en="Back-fitting rounds",
                 help_zh="gbm 搭配球員效應時：>1 會用樹的輸出當偏移，回頭重估效應，再重訓練樹。", help_en="gbm with player effects: with more than 1, the effects are re-estimated given the trees."),
     ConfigField("bagging_reps", "int", default=1, minimum=1, maximum=200, label_zh="袋裝成員數（比賽層級 Poisson 重抽樣）", label_en="Bagging members (game-level Poisson bootstrap)"),
+    # the settings of the models that learn with PyTorch (nn_embed, sequence) and of the mixed-effects model
+    ConfigField("nn_learning_rate", "float", default=0.003, minimum=1e-6, maximum=1.0, label_zh="神經網路學習率", label_en="Neural-network learning rate"),
+    ConfigField("batch_size", "int", default=4096, minimum=16, label_zh="批次大小（顯存不足會自動減半）", label_en="Batch size (halved automatically when the GPU memory runs out)"),
+    ConfigField("epochs", "int", default=10, minimum=1, label_zh="輪數（神經網路）", label_en="Epochs (neural networks)"),
+    ConfigField("hidden_size", "int", default=64, minimum=2, label_zh="隱藏層大小", label_en="Hidden layer size"),
+    ConfigField("n_layers", "int", default=2, minimum=1, maximum=8, label_zh="全連接層數", label_en="Fully connected layers"),
+    ConfigField("embedding_dim", "int", default=8, minimum=1, label_zh="嵌入維度", label_en="Embedding dimension"),
+    ConfigField("dropout", "float", default=0.1, minimum=0.0, maximum=0.9, label_zh="丟棄率", label_en="Dropout"),
+    ConfigField("weight_decay", "float", default=1e-5, minimum=0.0, label_zh="權重衰減（一般權重）", label_en="Weight decay (ordinary weights)"),
+    ConfigField("nn_patience", "int", default=3, minimum=1, label_zh="早停：幾輪沒進步就停", label_en="Early stopping: epochs without improvement"),
+    ConfigField("em_rounds", "int", default=4, minimum=1, maximum=30, label_zh="混合效應：變異數估計輪數", label_en="Mixed effects: variance estimation rounds"),
+    ConfigField("sequence_cell", "choice", default="gru", choices=("gru", "transformer"), label_zh="序列模型的編碼器", label_en="Sequence encoder"),
+    ConfigField("sequence_length", "int", default=6, minimum=1, maximum=30, label_zh="序列模型看前面幾球", label_en="Previous pitches the sequence model looks at"),
 )
 
 MODEL_KINDS = ("logistic", "gbm", "mixed", "nn_embed", "sequence")

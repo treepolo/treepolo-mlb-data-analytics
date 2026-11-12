@@ -19,6 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+gpu = ["xgboost>=3.4,<4"]
+torch = ["torch>=2.4"]            # nn_embed and sequence; install the CUDA build from https://download.pytorch.org/whl/cu128 for a GPU
 
 [project.scripts]
 treepolo-mlb = "treepolo_mlb_data.cli:main"
