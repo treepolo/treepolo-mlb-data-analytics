@@ -12,9 +12,9 @@
 
 ## 0. 工作規則（每個工作包都適用）
 
-- 程式碼與資料在 `F:\treepolo-p6`（不變）。**Python 環境與所有安裝的套件改放 `D:\soft\treepolo-p6-env`**（見工作包 0）；`TEMP`、`TMP`、pip 快取指向 `D:\soft\treepolo-p6-tmp`。不寫 C:。D: 只能動 `D:\soft\treepolo-p6-env` 與 `D:\soft\treepolo-p6-tmp` 這兩個新資料夾，`D:\Vibe Coding\` 的舊專案不要碰。
+- 程式碼與資料在 `F:\treepolo-p6`。Python 環境暫時沿用 `F:\treepolo-p6\.venv`（位置待使用者決定，見工作包 0）；`TEMP`、`TMP`、pip 快取指向 `F:\treepolo-p6-tmp`。不寫 C:；`D:\Vibe Coding\` 的舊專案不要碰。
 - 分支 `claude/hello-rc9nc6`。開工前 `git pull origin claude/hello-rc9nc6`。推送失敗隔 2、4、8、16 秒重試。不要開 PR。
-- 啟用環境：`D:\soft\treepolo-p6-env\Scripts\activate`。安裝專案用 `pip install F:\treepolo-p6 --upgrade`，**不要用 `-e`**。安裝前先關掉網頁服務（否則檔案被鎖、會留下 `~reepolo...` 殘留目錄）。
+- 啟用環境：`F:\treepolo-p6\.venv\Scripts\activate`（工作包 0 決定後會改）。安裝專案用 `pip install F:\treepolo-p6 --upgrade`，**不要用 `-e`**。安裝前先關掉網頁服務（否則檔案被鎖、會留下 `~reepolo...` 殘留目錄）。
 - 跑測試要加 `PYTHONPATH=src`（PowerShell：`$env:PYTHONPATH='src'`），例如 `python -m pytest -q -p no:cacheprovider tests\test_xxx.py`。完整測試約 20–25 分鐘：`python -m pytest -q -p no:cacheprovider -m "not integration"`。
 - 不要用 `pkill -f` 或任何會比對到自己指令列的方式結束程序；要停自己開的程序，用它的 PID。
 - 不要在真實資料上跑研究，除非工作包明確要求（只有「冒煙」等級的確認可以，跑之前先告訴使用者）。工作包 C、E、F 完成時，各在真實資料上跑一次冒煙（RvR、少量資料），確認不會在真實資料上出錯，結果附在回報裡。
@@ -52,29 +52,22 @@
 
 | 包 | 內容 | 需要使用者先同意的事 |
 |---|---|---|
-| 0 | 在 `D:\soft\treepolo-p6-env` 建新的 Python 環境 | 無（使用者已同意放 D:\soft） |
+| 0 | Python 環境的位置（**待使用者決定，決定前不要做**） | 見 2.5 |
 | A | 拿掉所有判定與寫死的門檻，改顯示數字與三種資訊 | 無 |
-| B | 統一的「模型」介面；邏輯迴歸與梯度提升樹搬進來；偏差控制開關；參數搜尋改成適用所有模型 | 年份限制要不要保留（見 B.6） |
+| B | 統一的「模型」介面；邏輯迴歸與梯度提升樹搬進來；偏差控制開關；參數搜尋改成適用所有模型；拿掉年份限制 | 無 |
 | C | 決策引擎與情境查詢改用 B 訓練出來的模型（不再自己訓練 L0） | 無 |
 | D | 完整設定模式、設定檔匯入匯出 | 無 |
 | E | 比較模式、時間預估 | 無 |
-| F | 混合效應、神經網路＋嵌入、序列模型（PyTorch） | **要先問使用者是否同意安裝 PyTorch（CUDA 版約 2–3 GB，裝在 `D:\soft\treepolo-p6-env`）** |
+| F | 混合效應、神經網路＋嵌入、序列模型（PyTorch） | **要先問使用者是否同意安裝 PyTorch（CUDA 版約 2–3 GB，位置依工作包 0）** |
 | G | 文件與收尾 | 無 |
 
 順序照表。0 是環境；A 最小，先做；B、C 是核心；D、E 是介面；F 需要裝新套件。
 
 ---
 
-## 2.5 工作包 0：新的 Python 環境放在 D:\soft
+## 2.5 工作包 0：Python 環境的位置（待使用者決定）
 
-使用者要求：安裝的東西放 D: 的 `soft` 資料夾裡新建的獨立資料夾，不放外接的 F:。
-
-1. 建 `D:\soft\treepolo-p6-env`（Python 3.13，用 `F:\treepolo-p6\.venv` 當初的同一個 Python 3.13.7；**不要用系統預設的 3.14**）：`py -3.13 -m venv D:\soft\treepolo-p6-env`（若 `py` 找不到 3.13，先問使用者 3.13 裝在哪）。
-2. 建 `D:\soft\treepolo-p6-tmp`，`TEMP`、`TMP`、`PIP_CACHE_DIR` 指過去（只在該 shell 內設定）。
-3. 在新環境裝：專案（`pip install F:\treepolo-p6`）、xgboost（版本和舊環境相同，3.4.1）、pytest。確認 `python -c "import xgboost; print(xgboost.__version__)"` 與 GPU 測試（`gbm.cuda_works()` 回傳 True）。
-4. 網頁介面改用新環境啟動，確認能開、資料庫路徑仍是 `F:\treepolo-p6\data\statcast.sqlite3`。
-5. 舊的 `F:\treepolo-p6\.venv` **先不要刪**，回報時問使用者要不要刪（裡面還有兩個 `~reepolo` 開頭的安裝殘留）。
-6. 更新 `docs/research/P6_ENV.md` 的 Python 環境段落。
+使用者不要在 F:（外接硬碟）的專案資料夾裡放 Python 環境，也不希望每個專案各自重複下載一份套件。`D:\soft` 的規則是「一個軟體一個資料夾，資料夾以軟體命名，裡面的東西只給那個軟體用」。具體做法正在和雲端那邊討論，**這份文件更新之前不要動 Python 環境**，繼續用現在的 `F:\treepolo-p6\.venv` 做工作包 A。
 
 ## 3. 工作包 A：拿掉判定與門檻
 
@@ -174,11 +167,8 @@ class OutcomeModel:
 - 打分方式設定：依投手分折、依打者分折、依年份，可複選；輸出每組設定的分數，選最低者給後續步驟（不叫「通過」）。
 - 一鍵流程裡參數搜尋可以關掉（直接用完整設定裡填的參數）。
 
-### B.6 年份限制（要先問使用者）
-現在的程式有規則：建模只能用 2023–2024，2025、2026 保留給最後檢驗，違反會直接報錯（`research/guards.py`）。完整設定開放後，使用者可以自己選年份。**動工前問使用者**：
-- 保留這條規則（報錯）；
-- 改成提醒（顯示「這會用到保留年份」但允許）；
-- 拿掉。
+### B.6 年份限制：拿掉（使用者已決定）
+現在的程式規定建模只能用 2023–2024、2025 與 2026 保留給最後檢驗，違反就報錯（`research/guards.py` 的 `check_purpose`、`check_modeling_scope`，以及各方法裡的 `purpose` 欄位與相關檢查）。**新的訓練、比較、決策引擎、查詢、一鍵流程都不再套用這條規則**：任何年份組合都可以選。舊的研究方法（連投、前一球那些）不要改。介面上只顯示「目前選的訓練年份、評估年份」，不加警告。
 
 ### B.7 測試（假資料）
 - 用 `research/policy_worlds.py` 的 W4（投手好壞混淆）、W5（當天狀態混淆），並**新增一個世界**：某些投手的某一種球特別強，而且他們連投那一種球比較多，但連投本身沒有效果（就是使用者舉的例子）。`control_pitcher_pitch=effect`／`within` 時，模型的連投效果應回到 0 附近；只用 `control_pitcher=effect` 時則不會：
@@ -249,7 +239,7 @@ class OutcomeModel:
 
 ## 8. 工作包 F：混合效應、神經網路、序列模型
 
-**開始前先問使用者是否同意安裝 PyTorch**（深度學習套件，神經網路與序列模型需要它，混合效應模型也用它在 GPU 上估計；CUDA 版約 2–3 GB，裝在 `D:\soft\treepolo-p6-env`，下載快取在 `D:\soft\treepolo-p6-tmp`）。同意後再裝，並在 `pyproject.toml` 加成選用依賴（例如 `[torch]`），沒裝時這三種模型在介面上顯示「需要安裝 PyTorch」，不能選。
+**開始前先問使用者是否同意安裝 PyTorch**（深度學習套件，神經網路與序列模型需要它，混合效應模型也用它在 GPU 上估計；CUDA 版約 2–3 GB，裝在哪裡依工作包 0 的決定）。同意後再裝，並在 `pyproject.toml` 加成選用依賴（例如 `[torch]`），沒裝時這三種模型在介面上顯示「需要安裝 PyTorch」，不能選。
 
 三種模型都實作 B.1 的介面與 B.2 的偏差控制：
 - **混合效應（`mixed`）**：多類別邏輯迴歸，投手、打者（、投手×比賽）各一組隨機效應向量（每類一維），常態先驗，變異數由資料估計（經驗貝氏；可用 PyTorch 交替最佳化，或把變異數當超參數在驗證集上選）。這是最直接處理「投手好壞混淆」的模型。
