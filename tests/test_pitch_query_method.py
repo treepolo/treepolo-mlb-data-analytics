@@ -42,13 +42,14 @@ def setup(tmp_path_factory):
     mp.setattr(pm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
     mp.setattr(pm, "get_re_table", lambda ctx, scope: FakeRe(env.re_cnt))
     try:
-        league = service.run("league_model", {"scope": SCOPE, "groups": ["RvR"], "levels": ["L0", "L3"], "backend": BACKEND, "device": "cpu", "cold_folds": 3, "bootstrap_reps": 40,
-                                              "min_cell_swings": 15, "min_class_count": 20, "bagging_reps": 4, "save_package": True, **GBM})["run"]
-        policy = service.run("pitch_policy", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_eval": False, "replication_members": 0, "backend": BACKEND, "device": "cpu",
-                                              "min_count": 100, "lambda_grid": [0.0], "min_class_count": 20, "max_depth": 4, "min_leaf": 300, "learning_rate": 0.15, "max_iter": 50})["run"]
+        league = service.run("outcome_model_train", {"scope": SCOPE, "groups": ["RvR"], "model": "gbm", "backend": BACKEND, "device": "cpu", "split": "cold_only", "cold_by": ["pitcher"],
+                                                    "cold_folds": 3, "bootstrap_reps": 40, "min_class_count": 20, "bagging_reps": 4, "save_package": True, "control_pitcher": "effect",
+                                                    "replication_members": 0, **GBM})["run"]
+        policy = service.run("pitch_policy", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "model_run_id": league["id"], "cross_eval": False, "replication_members": 0,
+                                              "min_count": 100, "lambda_grid": [0.0]})["run"]
     finally:
         mp.undo()
-    query = service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "package_run_id": league["id"], "check_situations": 12, "check_samples": 10, "check_members": 2})["run"]
+    query = service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "package_run_id": league["id"], "check_situations": 12, "check_members": 2})["run"]
     return service, league, policy, query, d
 
 
@@ -73,20 +74,23 @@ def test_runtime_answers_with_names_and_descriptor_gains(setup):
     service, league, policy, query, d = setup
     meta = service.pitch_query_meta(query["id"])
     assert meta["groups"] == ["RvR"] and meta["players_available"] and meta["package_groups"] == ["RvR"] and "KC" in meta["pitch_types"]
-    gains = meta["descriptor_gains"]["RvR"]
-    assert gains and {g["measure"] for g in gains} == {"level_gain", "type_contrast"} and all(g["value"] is not None for g in gains) and meta["not_covered"]
-    assert "gates" not in meta and "tau" not in meta["tables"]["RvR"]
+    gains = meta["effect_gains"]["RvR"]
+    assert gains and {g["measure"] for g in gains} == {"effect_gain"} and all(g["value"] is not None for g in gains) and meta["not_covered"]
+    assert "gates" not in meta and "tau" not in meta["tables"]["RvR"] and "level" not in meta
     found = service.pitch_query_players(query["id"], "RvR", "pitcher", "Pitcher1")["players"]
     assert found and all("Pitcher1" in (p["name"] or "") or "1" in p["id"] for p in found) and found[0]["pitches"] > 0
     top = service.pitch_query_players(query["id"], "RvR", "batter", "")["players"]
     assert [p["pitches"] for p in top] == sorted((p["pitches"] for p in top), reverse=True)
     m0 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1"})
-    assert m0["mode"] == "M0" and len(m0["rows"]) == 9 and m0["descriptor_gains"] == gains and m0["comparisons"]["n"] > 0
+    assert m0["mode"] == "M0" and len(m0["rows"]) == 9 and m0["effect_gains"] == gains and m0["comparisons"]["n"] > 0
     pid = found[0]["id"]
-    m1 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": pid, "samples": "10", "members": "2"})
-    assert m1["mode"] == "M1" and m1["players"]["pitcher"]["name"] == f"Test Pitcher{pid}"          # personalised whatever the descriptor gains are: nothing is switched off
-    assert m1["descriptor_gains"] == gains and m1["notice"] == [] and m1["comparisons"]["n"] > 0
+    m1 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": pid, "members": "2"})
+    assert m1["mode"] == "M1" and m1["players"]["pitcher"]["name"] == f"Test Pitcher{pid}" and m1["players"]["pitcher"]["known"]          # personalised whatever the gains are: nothing is switched off
+    assert m1["effect_gains"] == gains and m1["notice"] == [] and m1["comparisons"]["n"] > 0
     assert all("detected" not in r and "evidence" not in r for r in m1["rows"])
+    stranger = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": "999999", "members": "2"})
+    assert stranger["mode"] == "M1" and not stranger["players"]["pitcher"]["known"] and stranger["notice"] and "league average" in stranger["notice"][0]       # unseen = the league average
+    assert max(abs(a["q"] - b["q"]) for a, b in zip(stranger["rows"], m0["rows"]) if a["q"] is not None and b["q"] is not None) < 1e-6
     with pytest.raises(ConfigError, match="group"):
         service.pitch_query(query["id"], {"group": "LvL", "balls": "0", "strikes": "0", "outs": "0"})
     with pytest.raises(ConfigError):
@@ -123,9 +127,9 @@ def test_method_guards(setup):
         service.run("pitch_query", {"scope": SCOPE, "policy_run_id": league["id"]})
     with pytest.raises(ConfigError, match="required"):
         service.run("pitch_query", {"scope": SCOPE})
-    with pytest.raises(ConfigError, match="league_model"):
+    with pytest.raises(ConfigError, match="outcome_model_train"):
         service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "package_run_id": policy["id"]})
-    again = service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "package_run_id": league["id"], "check_situations": 12, "check_samples": 10, "check_members": 2})
+    again = service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "package_run_id": league["id"], "check_situations": 12, "check_members": 2})
     assert again["reused"]
     only_m0 = service.run("pitch_query", {"scope": SCOPE, "policy_run_id": policy["id"], "with_names": False, "check_situations": 6})["run"]
     rt = service.query_runtime(only_m0["id"])

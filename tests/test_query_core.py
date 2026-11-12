@@ -6,12 +6,12 @@ import time
 import numpy as np
 import pytest
 
-from treepolo_mlb_data.research import gbm, league_core as lc, policy_build as pb, policy_core as pc, policy_methods as pm, policy_worlds as pw, query_core as qc
-from treepolo_mlb_data.research.profiles import PITCH_TYPES, ProfileModel
+from treepolo_mlb_data.research import gbm, outcome_model_methods as omm, outcome_models as om, policy_build as pb, policy_core as pc, policy_methods as pm, policy_worlds as pw, query_core as qc
+from treepolo_mlb_data.research.profiles import PITCH_TYPES
 from treepolo_mlb_data.research.synthetic import simulate_players
 
 BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
-PARAMS = dict(max_depth=4, min_leaf=300, learning_rate=0.15, max_iter=60, l2=1.0)
+PARAMS = dict(max_depth=4, min_leaf=300, learning_rate=0.15, max_iter=60, l2=1.0, backend=BACKEND, device="cpu")
 CONFIG = {"cell_confidence": 0.99, "marginal_shift": 0.10, "min_count": 100, "min_share": 0.05, "trust_region": 0.10}
 
 
@@ -25,22 +25,18 @@ def p7():
 
 @pytest.fixture(scope="module")
 def built(p7):
-    """A situation table (level L0) and a model package (level L3, with descriptors) fitted on the same pitches."""
+    """A situation table (the league-average player of the model) and the trained model itself (player effects for pitchers and batters), on the same pitches."""
 
     shape = pc.Shape(); d = p7
-    members0, classes0 = pb.fit_outcome_members(d, backend=BACKEND, device="cpu", params=PARAMS, reps=4, seed=1)
-    tensor = pb.outcome_tensor(members0, classes0, shape, "RvR")
+    model = om.new_model("gbm").fit(d, None, {**PARAMS, "control_pitcher": "effect", "control_batter": "effect", "bagging_reps": 4, "seed": 1})
+    model.group = "RvR"
+    tensor = pb.model_tensor(model, shape, "RvR", effects="population")
     obs, support, n = pb.usage_from_counts(d, shape, min_count=100)
     env = pw.build_world("W0").env
     an = pb.analyze(pb.members_dynamics(tensor, obs, support, n), env, shape, kinds=("observed", "dp_trust"))
     arrays = pm.situation_arrays("RvR", an, tensor, env, CONFIG)
     table = qc.SituationTable.from_rows(pm.pack_arrays(arrays))
-    profile = ProfileModel().fit(d)
-    y, classes, keep = lc.encode_outcome(d["outcome"], __import__("treepolo_mlb_data.research.modeling", fromlist=["x"]).DEFAULT_CLASS_MERGE)
-    x, _ = lc.level_matrix(profile, d, "L3", "outcome", history=True)
-    fit = lc.fit_predict_level(BACKEND, "cpu", PARAMS, x[keep], y[keep], np.asarray(d["game_pk"])[keep], x[:2], len(classes), reps=4, seed=2)
-    package = qc.PackageModel({"L3": fit.members}, profile, {"group": "RvR", "classes": list(classes), "levels": ["L3"], "target": "outcome"})
-    return table, package, env
+    return table, model, env
 
 
 def test_bases_parsing_and_state_errors(built):
@@ -93,61 +89,55 @@ def test_m0_rows_follow_the_table_and_the_closed_forms(built):
     assert table.lookup(0, 0, 2, 7, "none", 1)["rows"][0]["action"] == "FF"
 
 
-def test_player_queries_use_the_descriptors(built, p7):
-    table, package, env = built
-    pq = qc.PlayerQuery(table, package, env)
-    ids, n = package.profile.players("pitcher", "RvR")
+def test_player_queries_use_the_effects_of_the_named_pitcher(built, p7):
+    table, model, env = built
+    pq = qc.PlayerQuery(table, model, env)
+    ids, n = model.players("pitcher")
     velo = {int(i): float(np.mean(p7["velocity_truth"][p7["pitcher"] == i])) for i in ids}
     fast, slow = max(velo, key=velo.get), min(velo, key=velo.get)
     started = time.monotonic()
-    a = pq.query(1, 1, 0, "000", "SL", 1, pitcher=fast, samples=30, members=4, intervals=2)
+    a = pq.query(1, 1, 0, "000", "SL", 1, pitcher=fast, members=4)
     elapsed = time.monotonic() - started
-    b = pq.query(1, 1, 0, "000", "SL", 1, pitcher=slow, samples=30, members=4, intervals=2)
-    assert a["mode"] == "M1" and a["players"]["pitcher"]["pitches"] > 0 and 0 < a["players"]["pitcher"]["shrinkage"] < 1
+    b = pq.query(1, 1, 0, "000", "SL", 1, pitcher=slow, members=4)
+    assert a["mode"] == "M1" and a["players"]["pitcher"]["pitches"] > 0 and 0 < a["players"]["pitcher"]["shrinkage"] < 1 and a["players"]["pitcher"]["known"]
     ra = {r["action"]: r for r in a["rows"]}; rb = {r["action"]: r for r in b["rows"]}
     assert ra["FF"]["supported"] and rb["FF"]["supported"]
-    assert ra["FF"]["outcomes"]["whiff"] > rb["FF"]["outcomes"]["whiff"]          # P7: faster fastballs get more whiffs, and the descriptor carries the speed
-    arsenal_a = set(a["players"]["pitcher"]["arsenal"])
-    assert all(ra[t]["supported"] == (t in arsenal_a and pq._arsenal_mask(fast, 0.05, 100)[PITCH_TYPES.index(t)] and table.arrays["support"][a["state"], PITCH_TYPES.index(t)]) for t in PITCH_TYPES)
+    assert ra["FF"]["outcomes"]["whiff"] > rb["FF"]["outcomes"]["whiff"]          # P7: faster fastballs get more whiffs, and the pitcher's own effect carries it
+    arsenal_a = a["players"]["pitcher"]["arsenal"]
+    assert all(ra[t]["supported"] == (t in arsenal_a and pq._arsenal_mask(arsenal_a, 0.05, 100)[PITCH_TYPES.index(t)] and table.arrays["support"][a["state"], PITCH_TYPES.index(t)]) for t in PITCH_TYPES)
     assert elapsed < 30
-    again = pq.query(1, 1, 0, "000", "SL", 1, pitcher=fast, samples=30, members=4, intervals=2)
+    again = pq.query(1, 1, 0, "000", "SL", 1, pitcher=fast, members=4)
     assert [r["q"] for r in again["rows"]] == [r["q"] for r in a["rows"]]           # same seed, same answer
 
 
 def test_batter_and_pair_queries(built, p7):
-    table, package, env = built
-    pq = qc.PlayerQuery(table, package, env)
-    bats, nb = package.profile.players("batter", "RvR")
+    table, model, env = built
+    pq = qc.PlayerQuery(table, model, env)
+    bats, nb = model.players("batter")
     chase = {int(i): float(np.mean(p7["outcome"][p7["batter"] == i] == "whiff")) for i in bats}
     hi, lo = max(chase, key=chase.get), min(chase, key=chase.get)
-    m2h = pq.query(0, 2, 1, "000", "FF", 2, batter=hi, samples=30, members=4, intervals=2)
-    m2l = pq.query(0, 2, 1, "000", "FF", 2, batter=lo, samples=30, members=4, intervals=2)
+    m2h = pq.query(0, 2, 1, "000", "FF", 2, batter=hi, members=4)
+    m2l = pq.query(0, 2, 1, "000", "FF", 2, batter=lo, members=4)
     assert m2h["mode"] == "M2" and m2h["players"]["batter"]["pitches"] > 0
     qh = np.mean([r["outcomes"]["whiff"] for r in m2h["rows"] if r["supported"]]); ql = np.mean([r["outcomes"]["whiff"] for r in m2l["rows"] if r["supported"]])
     assert qh > ql                                                                     # the batter who whiffs more is predicted to whiff more
-    pit = int(package.profile.players("pitcher", "RvR")[0][0])
+    pit = int(model.players("pitcher")[0][0])
     m3 = pq.query(0, 2, 1, "000", "FF", 2, pitcher=pit, batter=hi, members=4)
     assert m3["mode"] == "M3" and m3["sampling"]["pairs"] == 1 and set(m3["players"]) == {"pitcher", "batter"}
     assert any(r["supported"] for r in m3["rows"])
-    with pytest.raises(qc.QueryError, match="no pitches"):
-        pq.query(1, 1, 0, "000", "SL", 1, pitcher=-5)
-    with pytest.raises(qc.QueryError, match="no level"):
-        pq.query(1, 1, 0, "000", "SL", 1, pitcher=pit, level="L2")
-    assert pq.query(1, 1, 0, "000", "SL", 1)["mode"] == "M0"
+    stranger = pq.query(1, 1, 0, "000", "SL", 1, pitcher=-5)                          # a player the model has not seen is the league average, said so, not an error
+    assert stranger["mode"] == "M1" and not stranger["players"]["pitcher"]["known"] and stranger["notice"]
+    m0 = pq.query(1, 1, 0, "000", "SL", 1)
+    assert m0["mode"] == "M0" and max(abs(x["q"] - y["q"]) for x, y in zip(stranger["rows"], m0["rows"]) if x["q"] is not None and y["q"] is not None) < 1e-6
 
 
-def test_package_artifact_round_trip(p7):
-    """league_model's package carries the descriptors and a description, and the loader rebuilds a working predictor."""
+def test_model_artifact_round_trip(built, p7):
+    """The stored model (the artifact of outcome_model_train) loads back into a model that answers the same."""
 
-    from treepolo_mlb_data.research.league_methods import LeagueModelMethod
-
-    profile = ProfileModel().fit(p7)
-    y, classes, keep = lc.encode_outcome(p7["outcome"], __import__("treepolo_mlb_data.research.modeling", fromlist=["x"]).DEFAULT_CLASS_MERGE)
-    x, _ = lc.level_matrix(profile, p7, "L1", "outcome", history=True)
-    fit = lc.fit_predict_level(BACKEND, "cpu", PARAMS, x[keep][:20000], y[keep][:20000], np.asarray(p7["game_pk"])[keep][:20000], x[:5], len(classes), reps=2, seed=1)
-    art = LeagueModelMethod._package("RvR", {"models": {"L1": fit.members}, "classes": classes}, {"target": "outcome", "backend": BACKEND, "split": "holdout_years", "train_years": [2023]}, profile)
-    pack = qc.PackageModel.from_rows([dict(r) for r in art.rows])
-    assert pack.meta["group"] == "RvR" and pack.meta["levels"] == ["L1"] and len(pack.members["L1"]) == 2 and pack.profile is not None
-    assert np.allclose(pack.members["L1"][0].predict_proba(x[:5]), fit.members[0].predict_proba(x[:5]))
-    ids, n = pack.profile.players("pitcher", "RvR")
-    assert len(ids) == 40 and n.sum() > 0
+    table, model, env = built
+    loaded = omm.load_model(omm.pack_bytes(model.to_bytes()))
+    rows = {k: v[:200] for k, v in p7.items() if isinstance(v, np.ndarray) and len(v) >= 200}
+    assert np.allclose(loaded.predict_proba(rows, effects="specific"), model.predict_proba(rows, effects="specific"), atol=1e-7)
+    assert loaded.classes == model.classes and len(loaded.members) == 4
+    ids, n = loaded.players("pitcher")
+    assert len(ids) == 40 and n.sum() > 0 and loaded.player_info("pitcher", int(ids[0]))["known"] and not loaded.player_info("pitcher", 123456789)["known"]

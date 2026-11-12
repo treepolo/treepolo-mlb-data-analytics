@@ -60,6 +60,46 @@ class OutcomeModel:
         self.loc_std: dz.Standardizer | None = None
         self.pool: dz.LocationPool | None = None
         self.info: dict[str, Any] = {}
+        self.group: str | None = None                  # the handedness group this model was trained for (set by the research method)
+        self.roster: dict[str, dict[int, dict[str, Any]]] = {"pitcher": {}, "batter": {}}
+
+    # ------------------------------------------------------------------------------------------------ who the model has seen
+    def players(self, side: str) -> tuple[np.ndarray, np.ndarray]:
+        """(ids, pitches) of the players of ``side`` the model was trained on, most pitches first."""
+
+        items = sorted(self.roster[side].items(), key=lambda kv: -kv[1]["n"])
+        return np.array([k for k, _ in items], dtype=np.int64), np.array([v["n"] for _, v in items], dtype=np.int64)
+
+    def player_info(self, side: str, ident: Any) -> dict[str, Any]:
+        """Pitches seen, the pitch-type counts of a pitcher, and how much of his own data the effect uses (n / (n + penalty); None without effects). ``known`` is False for a player
+        the model has not seen: his answers equal the league average."""
+
+        try:
+            key = int(ident)
+        except (TypeError, ValueError):
+            return {"id": ident, "side": side, "pitches": 0, "known": False, "arsenal": {}, "shrinkage": None}
+        entry = self.roster[side].get(key)
+        n = 0 if entry is None else int(entry["n"])
+        penalty = None
+        if side in self.groups and not self.groups[side]:
+            penalty = float(self.settings.get(f"effect_penalty_{side}", 0.0))
+        elif self.groups.get(side):
+            penalty = 0.0
+        return {"id": key, "side": side, "pitches": n, "known": entry is not None, "arsenal": {} if entry is None else dict(entry.get("arsenal", {})),
+                "shrinkage": None if penalty is None or n == 0 else (n / (n + penalty) if (n + penalty) > 0 else None)}
+
+    def _build_roster(self, sub: Mapping[str, np.ndarray]) -> None:
+        typ = dz.type_index(sub["pitch_type"])
+        pit = np.asarray(sub["pitcher"]).astype(np.int64)
+        roster: dict[str, dict[int, dict[str, Any]]] = {"pitcher": {}, "batter": {}}
+        keys, cnt = np.unique(pit * 16 + typ, return_counts=True)
+        for k, c in zip(keys.tolist(), cnt.tolist()):
+            p, t = k // 16, k % 16
+            entry = roster["pitcher"].setdefault(int(p), {"n": 0, "arsenal": {}})
+            entry["n"] += int(c); entry["arsenal"][PITCH_TYPES[t]] = int(c)
+        ids, n = np.unique(np.asarray(sub["batter"]).astype(np.int64), return_counts=True)
+        roster["batter"] = {int(i): {"n": int(c)} for i, c in zip(ids.tolist(), n.tolist())}
+        self.roster = roster
 
     # ------------------------------------------------------------------------------------------------ training
     def fit(self, train: Mapping[str, np.ndarray], valid: Mapping[str, np.ndarray] | None = None, settings: Mapping[str, Any] | None = None,
@@ -112,6 +152,8 @@ class OutcomeModel:
             if missing:
                 raise ConfigError(f"the data lacks the columns {missing} that the effect {g} needs / 資料缺少效應 {g} 需要的欄位 {missing}")
         self.indexes = dz.fit_effect_indexes(sub, list(self.groups))
+        if "pitcher" in sub and "batter" in sub:
+            self._build_roster(sub)
         self.profile = ProfileModel().fit(sub) if "descriptors" in (s["control_pitcher"], s["control_batter"]) else None
         self.desc_std = None
         self.loc_std = self.pool = None

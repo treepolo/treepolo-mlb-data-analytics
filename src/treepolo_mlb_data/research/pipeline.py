@@ -1,4 +1,4 @@
-"""One-click research pipeline: model settings search -> league model -> fixed-effects anchor -> decision engine and situation table -> query tool.
+"""One-click research pipeline: model settings search (can be skipped) -> trained outcome model -> fixed-effects anchor -> decision engine and situation table -> query tool.
 
 Each step is an ordinary research run, so an identical step that already exists is reused: pressing start again after a failure (or after the data did not change)
 continues from where it stopped. The job runs in a background thread; ``status()`` is what the web page polls."""
@@ -17,7 +17,7 @@ TIERS: dict[str, dict[str, Any]] = {
     "standard": {"label": "標準（約 3 小時，正式結果）", "trials": 8, "folds": 5, "tune_rows": 500_000, "members": 30, "cross_members": 5, "max_iter": 300, "bootstrap_reps": 200},
     "smoke": {"label": "冒煙（幾分鐘，只確認跑得通）", "trials": 2, "folds": 3, "tune_rows": 60_000, "members": 3, "cross_members": 2, "max_iter": 60, "bootstrap_reps": 50, "hidden": False},
 }
-STEPS = (("search", "param_search", "模型參數搜尋"), ("model", "league_model", "訓練全聯盟模型"), ("anchor", "action_effects", "固定效應對照答案"),
+STEPS = (("search", "param_search", "模型參數搜尋"), ("model", "outcome_model_train", "訓練模型"), ("anchor", "action_effects", "固定效應對照答案"),
          ("policy", "pitch_policy", "決策引擎與情境表"), ("query", "pitch_query", "查詢工具與驗收"))
 
 
@@ -45,7 +45,18 @@ def normalize_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
     device = str(raw.get("device") or "auto")
     years = [int(y) for y in (raw.get("years") or [2023, 2024])]
     overrides = dict(raw.get("overrides") or {})
-    return {"tier": tier, "groups": groups, "backend": backend, "device": device, "years": sorted(years), "seed": int(raw.get("seed", 20240601)), "overrides": overrides}
+    from .outcome_models import controls as ctl
+
+    model = str(raw.get("model") or "gbm")
+    if model not in ctl.MODEL_KINDS:
+        raise ConfigError(f"model must be one of {list(ctl.MODEL_KINDS)} / model 必須是 {list(ctl.MODEL_KINDS)} 其中之一")
+    controls = dict(raw.get("controls") or {})
+    choices = {f.name: f.choices for f in ctl.CONTROL_FIELDS if f.type == "choice"}
+    for name, value in controls.items():
+        if name not in choices or value not in choices[name]:
+            raise ConfigError(f"controls: {name}={value!r} is not valid / controls：{name}={value!r} 不合法")
+    return {"tier": tier, "groups": groups, "backend": backend, "device": device, "years": sorted(years), "seed": int(raw.get("seed", 20240601)), "overrides": overrides,
+            "model": model, "controls": controls, "search": bool(raw.get("search", True))}
 
 
 def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
@@ -53,19 +64,20 @@ def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, An
     scope = {"game_years": settings["years"], "game_types": ["R"]}
     common = {"scope": scope, "groups": settings["groups"], "seed": settings["seed"]}
     machine = {"backend": settings["backend"], "device": settings["device"]}
+    model = {"model": settings["model"], **settings["controls"]}
     best = context.get("best_params", {})
     if step == "search":
-        cfg = {**common, **machine, "trials": t["trials"], "folds": t["folds"], "tune_rows": t["tune_rows"], "max_iter": t["max_iter"], "max_rows": 3_500_000}
+        cfg = {**common, **machine, **model, "trials": t["trials"], "folds": t["folds"], "tune_rows": t["tune_rows"], "max_iter": t["max_iter"], "max_rows": 3_500_000}
     elif step == "model":
-        cfg = {**common, **machine, **best, "max_iter": t["max_iter"], "levels": ["L0", "L1", "L2", "L3"], "bagging_reps": t["members"], "bag_levels": ["L3"], "cold_by": ["pitcher", "batter"],
-               "cold_folds": t["folds"], "split": "cold_only", "bootstrap_reps": t["bootstrap_reps"], "save_package": True, "max_rows": 3_500_000}
+        cfg = {**common, **machine, **model, **best, "max_iter": t["max_iter"], "bagging_reps": t["members"], "cold_by": ["pitcher", "batter"], "cold_folds": t["folds"], "split": "cold_only",
+               "bootstrap_reps": t["bootstrap_reps"], "save_package": True, "replication_members": 0, "max_rows": 3_500_000}
     elif step == "anchor":
         cfg = {"scope": scope, "groups": settings["groups"], "re_scope": scope, "max_rows": 3_500_000}       # the anchor has no random part
     elif step == "policy":
-        cfg = {**common, **machine, **best, "max_iter": t["max_iter"], "re_scope": scope, "members": t["members"], "cross_members": t["cross_members"], "cross_eval": True,
+        cfg = {**common, "re_scope": scope, "model_run_id": context["model_run_id"], "cross_members": t["cross_members"], "replication_members": min(3, t["cross_members"]), "cross_eval": True,
                "anchor_run_id": context["anchor_run_id"], "max_rows": 3_500_000}
     else:
-        cfg = {"scope": scope, "policy_run_id": context["policy_run_id"], "package_run_id": context["model_run_id"], "level": "L3", "seed": settings["seed"]}
+        cfg = {"scope": scope, "policy_run_id": context["policy_run_id"], "package_run_id": context["model_run_id"], "seed": settings["seed"]}
     cfg.update(settings["overrides"].get(step, {}))
     return cfg
 
@@ -123,6 +135,10 @@ class PipelineManager:
                 if self._cancel.is_set():
                     self._update(state="cancelled", finished_at=_now()); return
                 started = time.monotonic()
+                if sid == "search" and not settings["search"]:                 # the settings typed in the full settings mode are used as they are
+                    self._update(i, status="done", message="略過：使用設定裡填的參數", seconds=0.0, fraction=1.0, reused=False)
+                    context["best_params"] = {}
+                    continue
                 self._update(i, status="running", message="")
                 cfg = step_config(sid, settings, context)
 
@@ -170,18 +186,22 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
         return next((s["rows"] for s in result["sections"] if s["title"].startswith(prefix)), [])
 
     policy_extras = service.store.load_result(context["policy_run_id"])["extras"] if context.get("policy_run_id") else {}
-    out: dict[str, Any] = {"best_params": context.get("best_params"), "groups": {}, "replication": policy_extras.get("replication")}
+    model_extras = service.store.load_result(context["model_run_id"])["extras"] if context.get("model_run_id") else {}
+    from .outcome_models import controls as ctl
+
+    out: dict[str, Any] = {"best_params": context.get("best_params") or None, "groups": {}, "replication": policy_extras.get("replication"),
+                           "model": {"kind": model_extras.get("model"), "controls": {k: v for k, v in (model_extras.get("controls") or {}).items() if v != ctl.CONTROL_DEFAULTS.get(k)}}}
     for g in settings["groups"]:
         r1 = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("states")), None)
         start = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("start")), None)
         values = [r for r in rows(context.get("policy_run_id"), "Policy value") if r["group"] == g]
-        gains = [r for r in rows(context.get("model_run_id"), "Descriptor gain") if r["group"] == g]
+        gains = [r for r in rows(context.get("model_run_id"), "Effect gain") if r["group"] == g]
         marg = [r for r in rows(context.get("policy_run_id"), "Marginal value") if r["group"] == g]
         out["groups"][g] = {
             # how far the engine's observed-play value is from the run expectancy table: numbers only (0 = identical)
             "r1": {"median_abs_diff": r1 and r1["median_abs_diff"], "max_abs_diff": r1 and r1["max_abs_diff"], "start_diff": start and start["median_abs_diff"]},
             "policies": [{"policy": v["policy"], "kind": v["kind"], "saving_pa": v["saving_pa"], "lo": v["lo"], "hi": v["hi"], "saving_per_team_season": v["saving_per_team_season"]} for v in values],
-            "descriptor_gains": [{k: r[k] for k in ("side", "comparison", "measure", "mode", "value", "lo", "hi", "n")} for r in gains],
+            "effect_gains": [{"mode": r["mode"], "comparison": r["comparison"], "value": r["delta_logloss"], "lo": r["lo"], "hi": r["hi"], "n": r["n"]} for r in gains],
             "actions": [{"action": m["action"], "advantage": m["advantage"], "adv_lo": m["adv_lo"], "adv_hi": m["adv_hi"], "marginal": m["marginal"], "supported_share": m["supported_share"]} for m in marg],
             "comparisons": {section: per_group[g] for section, per_group in (policy_extras.get("comparisons") or {}).items() if g in per_group},
         }

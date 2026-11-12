@@ -5,7 +5,7 @@
   const ROUTE = "research-query";
   const PITCH_TYPES = ["FF", "SI", "FC", "SL", "ST", "CH", "CU", "FS", "KC"];
   const FLAG_LABEL = { sufficient: "資料充足", extrapolated: "外推", unsupported: "不支持" };
-  const MEASURE_LABEL = { level_gain: "對數損失改善", type_contrast: "球種對比預測改善" };
+  const MODE_LABEL = { season: "留出年份", cold_pitcher: "沒見過的投手", cold_batter: "沒見過的打者", season_new_pitcher: "留出年份裡的新投手", season_new_batter: "留出年份裡的新打者" };
   const state = { runs: [], runId: null, meta: null, pitcher: null, batter: null, result: null, svg: null };
 
   function el(tag, props = {}, ...children) {
@@ -135,10 +135,10 @@
     if (!r) { host.replaceChildren(); return; }
     const parts = [];
     const modeText = { M0: "M0 聯盟平均", M1: "M1 特定投手 × 平均打者", M2: "M2 平均投手 × 特定打者", M3: "M3 特定投手 × 特定打者" }[r.mode] || r.mode;
-    parts.push(el("div", { class: "rq-banner", id: "rq-banner", text: `${modeText}　分組 ${r.group}${r.level ? `　特徵階 ${r.level}` : ""}` }));
+    parts.push(el("div", { class: "rq-banner", id: "rq-banner", text: `${modeText}　分組 ${r.group}` }));
     Object.entries(r.players || {}).forEach(([side, info]) => {
       const shrink = info.shrinkage == null ? "" : `；個人資料權重 own-data weight ${(info.shrinkage * 100).toFixed(0)}%（愈低愈接近聯盟平均）`;
-      const thin = info.pitches < 300 ? "　⚠ 資料量少，描述幾乎等於聯盟平均" : "";
+      const thin = info.known === false ? "　⚠ 模型沒有這位球員的資料，答案等於聯盟平均" : (info.pitches < 300 ? "　⚠ 資料量少，個別效應幾乎等於聯盟平均" : "");
       parts.push(el("div", { class: "rq-banner", text: `${side === "pitcher" ? "投手" : "打者"} ${info.name || info.id}：${info.pitches} 球${shrink}${thin}` }));
     });
     (r.notice || []).forEach(text => parts.push(el("div", { class: "rq-notice", text })));
@@ -146,10 +146,10 @@
     parts.push(table(r));
     parts.push(el("div", { class: "hint", id: "rq-overlap-note", text: "區間重疊群組：同一個字母代表它們的 Q 區間互相重疊，資料分不出這幾種球的高低（這是描述，不是判定）。" }));
     if (r.comparisons) parts.push(el("div", { class: "hint", id: "rq-chance", text: `這個答案比較了 ${r.comparisons.n} 種球；在 ${(r.comparisons.confidence * 100).toFixed(0)}% 區間下，就算全部其實沒差，純靠運氣也預期約 ${r.comparisons.expected_by_chance.toFixed(2)} 個「相對一般配球」的區間不含 0；實際有 ${r.comparisons.found} 個。` }));
-    if ((r.descriptor_gains || []).length) {
-      parts.push(el("div", { class: "hint", id: "rq-gains-note", text: "球員描述的預測增益（建模時，對沒見過的球員；正值＝加了球員描述比較準；只列數字，不會因此關掉個別化）：" }));
-      parts.push(el("table", { class: "rq-gains", id: "rq-gains" }, el("thead", {}, el("tr", {}, ...["邊", "比較", "指標", "模式", "數值", "區間", "樣本數"].map(h => el("th", { text: h })))),
-        el("tbody", {}, ...r.descriptor_gains.map(x => el("tr", {}, el("td", { text: x.side || "—" }), el("td", { text: x.comparison || x.gate || "—" }), el("td", { text: MEASURE_LABEL[x.measure] || x.measure || "—" }), el("td", { text: x.mode || "—" }),
+    if ((r.effect_gains || []).length) {
+      parts.push(el("div", { class: "hint", id: "rq-gains-note", text: "球員描述或效應的預測增益（建模時，對「全部控制都關掉」的同一個模型；沒見過的球員、沒訓練過的年份；正值＝加了控制比較準；只列數字，不會因此關掉個別化）：" }));
+      parts.push(el("table", { class: "rq-gains", id: "rq-gains" }, el("thead", {}, el("tr", {}, ...["評估對象", "比較", "數值（對數損失改善）", "區間", "樣本數"].map(h => el("th", { text: h })))),
+        el("tbody", {}, ...r.effect_gains.map(x => el("tr", {}, el("td", { text: MODE_LABEL[x.mode] || x.mode || "—" }), el("td", { text: x.comparison || "—" }),
           el("td", { text: num(x.value, 5) }), el("td", { text: x.lo == null ? "—" : `[${num(x.lo, 5)}, ${x.hi == null ? "—" : num(x.hi, 5)}]` }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
     }
     const charts = window.TreepoloResearchCharts;

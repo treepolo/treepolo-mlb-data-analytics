@@ -145,9 +145,12 @@ def overlap_groups(lo: np.ndarray, hi: np.ndarray, supported: np.ndarray) -> lis
     return out
 
 
-# ------------------------------------------------------------------------------------------------ the model package
+# ------------------------------------------------------------------------------------------------ the old league_model package (reading only)
 @dataclass
 class PackageModel:
+    """The bagged members and the player descriptors that the old ``league_model`` method stores with ``save_package``. Situation queries no longer use it (they ask the model
+    of ``outcome_model_train``); it stays so that the stored runs of the old method can still be read."""
+
     members: dict[str, list[gbm.FittedGbm]]
     profile: Any
     meta: dict[str, Any]
@@ -166,6 +169,7 @@ class PackageModel:
         return PackageModel(members, profile, meta)
 
 
+# ------------------------------------------------------------------------------------------------ player queries (M1-M3)
 @dataclass
 class PlayerInfo:
     id: Any
@@ -173,61 +177,43 @@ class PlayerInfo:
     pitches: int
     shrinkage: float | None
     arsenal: dict[str, int] = field(default_factory=dict)
+    known: bool = True
 
 
 class PlayerQuery:
-    """M1-M3 for one handedness group."""
+    """M1-M3 for one handedness group: the trained outcome model is asked about the named players with ``effects="specific"`` (a player it has not seen, or one who is not
+    named, counts as the league average), and the plate appearance is solved once for every bagged member. The interval is the spread of the members."""
 
-    def __init__(self, table: SituationTable, package: PackageModel, env: pc.Environment | None = None):
-        if package.profile is None:
-            raise QueryError("the model package has no player descriptors / 模型包沒有球員描述")
-        if package.meta["group"] != table.group:
-            raise QueryError("the table and the model package belong to different groups / 情境表與模型包的分組不同")
-        self.table, self.package, self.shape = table, package, table.shape
+    def __init__(self, table: SituationTable, model: Any, env: pc.Environment | None = None):
+        if model.group is not None and model.group != table.group:
+            raise QueryError("the table and the model belong to different groups / 情境表與模型的分組不同")
+        if not set(model.classes) <= set(pc.OUTCOMES):
+            raise QueryError("the model has outcome classes the decision engine does not know / 模型的結果類別決策引擎不認得")
+        self.table, self.model, self.shape = table, model, table.shape
         a = table.arrays
         self.env = env or pc.Environment(re_pa=a["re_pa"], re_cnt=a["re_cnt"], jbip=a["jbip"], start=a["start"])
         dyn = pc.Dynamics(P=a["p_outcome"].copy(), obs=a["obs"].copy(), support=a["support"].astype(bool), n=a["n"])
         self._base_obs, self._base_support, self._base_P = a["obs"], a["support"].astype(bool), a["p_outcome"]
         self.engine = pc.Engine(self.shape, dyn, self.env)
-        self.classes = package.meta["classes"]
+        self.classes = list(model.classes)
 
     # --- who exists
     def player_info(self, side: str, ident: Any) -> PlayerInfo:
-        prof = self.package.profile; group = self.table.group
-        ids, n = prof.players(side, group)
-        pos = np.nonzero(ids == ident)[0]
-        if not len(pos):
-            raise QueryError(f"{side} {ident} has no pitches in group {group} / {side} {ident} 在分組 {group} 沒有資料")
-        pitches = int(n[pos[0]])
-        name = "p_whiff_per_swing" if side == "pitcher" else "b_swing_rate"
-        k = float(prof.k_group.get(name, 50.0))
-        arsenal = prof.pitcher_arsenal(ident, group) if side == "pitcher" else {}
-        return PlayerInfo(ident, side, pitches, pitches / (pitches + k) if pitches + k > 0 else None, arsenal)
+        i = self.model.player_info(side, ident)
+        return PlayerInfo(i["id"], side, i["pitches"], i["shrinkage"], i["arsenal"], i["known"])
 
-    def _draw(self, side: str, n: int, rng: np.random.Generator, min_pitches: int) -> np.ndarray:
-        ids, cnt = self.package.profile.players(side, self.table.group)
-        keep = cnt >= min_pitches
-        if keep.sum() == 0:
-            keep = cnt > 0
-        ids, cnt = ids[keep], cnt[keep].astype(float)
-        return rng.choice(ids, size=n, p=cnt / cnt.sum())
-
-    def _arsenal_mask(self, pitcher: Any, min_share: float, min_count: int) -> np.ndarray:
-        arsenal = self.package.profile.pitcher_arsenal(pitcher, self.table.group)
+    def _arsenal_mask(self, arsenal: Mapping[str, int], min_share: float, min_count: int) -> np.ndarray:
         total = sum(arsenal.values())
         return np.array([arsenal.get(t, 0) >= min_count and arsenal.get(t, 0) >= min_share * max(total, 1) for t in PITCH_TYPES])
 
     # --- the query
-    def query(self, balls: int, strikes: int, outs: int, bases: Any, prev: str, streak: int, *, pitcher: Any = None, batter: Any = None, level: str = "L3",
-              samples: int = 100, members: int = 10, intervals: int = 5, seed: int = 20240601, min_pitches: int = 300, max_rows: int = 600_000) -> dict[str, Any]:
-        """M0 (nobody named) is the table lookup. Otherwise: sample pairs of players (the named player fixed, the other drawn by how many pitches he saw), predict the
-        outcome probabilities of the plate appearance's states with the group's league model, solve each pair, average. The interval is the spread of ``intervals``
-        independent groups of pairs, each predicted by its own subset of the bagged members (M3: the spread of the members)."""
+    def query(self, balls: int, strikes: int, outs: int, bases: Any, prev: str, streak: int, *, pitcher: Any = None, batter: Any = None, members: int | None = None,
+              seed: int = 20240601, **_unused: Any) -> dict[str, Any]:
+        """M0 (nobody named) is the table lookup. Otherwise the model predicts the outcome probabilities of every state of the plate appearance for the named players, and the
+        plate appearance is solved for each bagged member (``members`` limits how many are used)."""
 
         if pitcher is None and batter is None:
             return self.table.lookup(balls, strikes, outs, bases, prev, streak)
-        if level not in self.package.members:
-            raise QueryError(f"the package has no level {level}; available {sorted(self.package.members)} / 模型包沒有階 {level}")
         base = parse_bases(bases)
         state = self.table.state(balls, strikes, outs, base, prev, streak)
         mode = "M3" if pitcher is not None and batter is not None else ("M1" if pitcher is not None else "M2")
@@ -236,60 +222,37 @@ class PlayerQuery:
             infos["pitcher"] = self.player_info("pitcher", pitcher)
         if batter is not None:
             infos["batter"] = self.player_info("batter", batter)
-        rng = np.random.default_rng(seed)
-        n_pairs = 1 if mode == "M3" else int(samples)
-        pit = np.full(n_pairs, pitcher, dtype=object) if pitcher is not None else self._draw("pitcher", n_pairs, rng, min_pitches).astype(object)
-        bat = np.full(n_pairs, batter, dtype=object) if batter is not None else self._draw("batter", n_pairs, rng, min_pitches).astype(object)
         sh = self.shape
         b, k, o, bs, p, r = sh.coords()
         # the states of this plate appearance: outs and bases do not change inside it
         active = np.nonzero((o == outs) & (bs == base) & ((p == sh.none) == ((b == 0) & (k == 0))) & ((p != sh.none) | (r == 0)))[0]
         n_act = len(active)
-        avail = len(self.package.members[level])
-        use_members = max(1, min(int(members), avail))
-        results: list[tuple[int, dict[str, np.ndarray]]] = []
-        if mode == "M3":
-            cols = self._cols(active, pit, bat)
-            x, _ = lc.level_matrix(self.package.profile, cols, level, "outcome", history=False)
-            for g in range(use_members):
-                proba = self.package.members[level][g].predict_proba(x).reshape(n_act, sh.n_actions, -1)
-                results.append((g, self._solve_pair(proba, active, state, pit[0])))
-            K = use_members
-        else:
-            K = max(1, min(int(intervals), n_pairs, use_members))
-            per_group = max(1, use_members // K)
-            batch = max(1, max_rows // (n_act * sh.n_actions))
-            for j0 in range(0, n_pairs, batch):
-                idx = np.arange(j0, min(n_pairs, j0 + batch))
-                cols = self._cols(active, pit[idx], bat[idx])
-                x, _ = lc.level_matrix(self.package.profile, cols, level, "outcome", history=False)
-                group_of = idx % K
-                for g in np.unique(group_of):
-                    chosen = [(g * per_group + t) % avail for t in range(per_group)]
-                    mine = np.repeat(group_of == g, n_act * sh.n_actions)
-                    proba = np.mean([self.package.members[level][m].predict_proba(x[mine]) for m in chosen], axis=0)
-                    proba = proba.reshape(-1, n_act, sh.n_actions, proba.shape[-1])
-                    for jj, pair in enumerate(idx[group_of == g]):
-                        results.append((int(g), self._solve_pair(proba[jj], active, state, pit[pair])))
-        return self._assemble(mode, state, results, K, infos, level, n_pairs, use_members)
+        pid = infos["pitcher"].id if "pitcher" in infos and infos["pitcher"].known else -1          # not named or not seen: the league-average player
+        bid = infos["batter"].id if "batter" in infos and infos["batter"].known else -1
+        proba = self.model.predict_members(self._cols(active, int(pid), int(bid)), effects="specific", seed=seed)          # [members, n_act * A, classes]
+        use = proba.shape[0] if members is None else max(1, min(int(members), proba.shape[0]))
+        arsenal = infos["pitcher"].arsenal if "pitcher" in infos else {}
+        results = [(g, self._solve_pair(proba[g].reshape(n_act, sh.n_actions, -1), active, state, arsenal)) for g in range(use)]
+        out = self._assemble(mode, state, results, use, infos, None, 1, use)
+        out["notice"] = [f"{'投手' if s == 'pitcher' else '打者'} {i.id}：模型沒有這位球員的資料，答案等於聯盟平均 / no data for this {s}: the answer is the league average"
+                         for s, i in infos.items() if not i.known]
+        return out
 
-    def _cols(self, active: np.ndarray, pitchers: np.ndarray, batters: np.ndarray) -> dict[str, np.ndarray]:
-        """Feature columns of every (active state, pitch type) row, repeated for each sampled pair of players."""
+    def _cols(self, active: np.ndarray, pitcher: int, batter: int) -> dict[str, np.ndarray]:
+        """Feature columns of every (active state, pitch type) row, with the pitcher and the batter filled in (-1 = nobody: the league average)."""
 
         sh = self.shape
         b, k, o, bs, p, r = (c[active] for c in sh.coords())
         A = sh.n_actions
         rows = np.repeat(np.arange(len(active)), A); act = np.tile(np.arange(A), len(active))
         same = (p[rows] == act) & (p[rows] < A)
-        one = dict(game_pk=np.zeros(len(rows), dtype=np.int64), balls=b[rows].astype(float), strikes=k[rows].astype(float), outs_when_up=o[rows].astype(float), bases=bs[rows],
-                   streak_pos=np.where(same, np.minimum(r[rows] + 2, 3), 1).astype(float), prev1_pitch_type=np.array(list(PITCH_TYPES) + ["none"])[np.minimum(p[rows], A)],
-                   pitch_type=np.array(PITCH_TYPES)[act], group=np.full(len(rows), self.table.group))
-        cols = {key: np.tile(v, len(pitchers)) for key, v in one.items()}
-        cols["pitcher"] = np.repeat(np.asarray(pitchers, dtype=object), len(rows)); cols["batter"] = np.repeat(np.asarray(batters, dtype=object), len(rows))
-        return cols
+        return dict(game_pk=np.zeros(len(rows), dtype=np.int64), balls=b[rows].astype(float), strikes=k[rows].astype(float), outs_when_up=o[rows].astype(float), bases=bs[rows],
+                    streak_pos=np.where(same, np.minimum(r[rows] + 2, 3), 1).astype(float), prev1_pitch_type=np.array(list(PITCH_TYPES) + ["none"])[np.minimum(p[rows], A)],
+                    pitch_type=np.array(PITCH_TYPES)[act], group=np.full(len(rows), self.table.group), pitcher=np.full(len(rows), pitcher, dtype=np.int64),
+                    batter=np.full(len(rows), batter, dtype=np.int64))
 
-    def _solve_pair(self, proba: np.ndarray, active: np.ndarray, state: int, pitcher: Any) -> dict[str, np.ndarray]:
-        """Outcome probabilities [n_act, A, classes of the package] -> the numbers at the queried state for one pair of players."""
+    def _solve_pair(self, proba: np.ndarray, active: np.ndarray, state: int, arsenal: Mapping[str, int]) -> dict[str, np.ndarray]:
+        """Outcome probabilities [n_act, A, classes of the model] -> the numbers at the queried state for one member."""
 
         sh, meta = self.shape, self.table.meta
         P = np.zeros((len(active), sh.n_actions, pc.C))
@@ -297,7 +260,7 @@ class PlayerQuery:
             P[:, :, pc.OC[name]] = proba[:, :, ci]
         P /= P.sum(axis=2, keepdims=True)
         sup = self._base_support[active].copy()
-        mask = self._arsenal_mask(pitcher, meta["min_share"], int(meta["min_count"]))     # the pitcher's own arsenal limits what he can throw
+        mask = self._arsenal_mask(arsenal, meta["min_share"], int(meta["min_count"])) if arsenal else np.zeros(len(PITCH_TYPES), dtype=bool)      # the pitcher's own arsenal limits what he can throw
         if mask.any():
             sup &= mask[None, :]
         dyn = self.engine.dyn
@@ -358,9 +321,8 @@ class PlayerQuery:
         for row, share in zip(rows, sup_share):
             row["pair_support_share"] = float(share)
         return {"mode": mode, "group": self.table.group, "state": state, "level": level, "rows": rows, "comparisons": self.table.comparisons(rows),
-                "players": {s: {"id": str(i.id), "pitches": i.pitches, "shrinkage": i.shrinkage, "arsenal": i.arsenal} for s, i in infos.items()},
-                "sampling": {"pairs": n_pairs, "members": n_members, "intervals": K,
-                             "note": "interval = spread of the members (one pair)" if mode == "M3" else "interval = spread of independent groups of sampled pairs, each with its own members"},
+                "players": {s: {"id": str(i.id), "pitches": i.pitches, "shrinkage": i.shrinkage, "arsenal": i.arsenal, "known": i.known} for s, i in infos.items()},
+                "sampling": {"pairs": n_pairs, "members": n_members, "intervals": K, "note": "interval = spread of the bagged members of the trained model"},
                 "not_covered": list(NOT_COVERED)}
 
 

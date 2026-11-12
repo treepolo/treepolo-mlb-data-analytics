@@ -12,13 +12,13 @@ import zlib
 from typing import Any
 
 from .config_schema import ConfigError, ConfigField
-from .guards import check_modeling_scope, check_purpose, scope_years
-from .league_methods import GROUPS, DIGITS, LeagueModelMethod, fetch_columns
+from .guards import scope_years
+from .league_methods import GROUPS, DIGITS, fetch_columns
 from .methods import ArtifactData, ResearchContext, ResearchMethod, ResearchResult, register_method
 from .re_source import get_re_table, re_method_inputs
 from .scope import normalize_scope
 from .sections import make_section
-from .sequencing_methods import BUNT_POLICY, FILTERS, PURPOSE, RE_SCOPE, _check_filters
+from .sequencing_methods import BUNT_POLICY, FILTERS, RE_SCOPE, _check_filters
 
 
 class _Lazy:
@@ -108,12 +108,14 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 3     # 3: no detection verdicts or tau; all cells listed; comparison counts; per-year replication. 2: situation table keeps float64 arrays, counts, the environment and home-run bounds
+    version = 4     # 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
     fields = (
-        PURPOSE, BUNT_POLICY, FILTERS, RE_SCOPE,
+        BUNT_POLICY, FILTERS, RE_SCOPE,
+        ConfigField("model_run_id", "int", default=0, minimum=0, label_zh="outcome_model_train 紀錄編號（被拿來算期望失分的模型）", label_en="outcome_model_train run id (the model behind the expected runs)",
+                    help_zh="需要用 save_package 執行過。模型用了哪些偏差控制，情境表就是在那些假設下算的。", help_en="Needs a run made with save_package. The situation table is computed under the controls that model used."),
         ConfigField("confidence", "float", default=0.95, minimum=0.5, maximum=0.999, label_zh="整體數字的信賴水準", label_en="Confidence level of the overall numbers"),
         ConfigField("cell_confidence", "float", default=0.99, minimum=0.5, maximum=0.999, label_zh="情境格的信賴水準", label_en="Confidence level of the situation cells"),
         ConfigField("groups", "str_list", default=list(GROUPS), label_zh="分組（各自求解，不合併）", label_en="Groups (solved separately)"),
@@ -121,24 +123,13 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("trust_region", "float", default=0.10, minimum=0.0, maximum=1.0, label_zh="信賴區域（份額最多移動）", label_en="Trust region (largest share move)"),
         ConfigField("marginal_shift", "float", default=0.10, minimum=0.0, maximum=0.5, label_zh="邊際價值的移動量", label_en="Share moved for the marginal value"),
         ConfigField("lambda_grid", "json", default=[0.0, 0.5, 1.0, 2.0], label_zh="全壘打懲罰 λ 網格", label_en="Home-run penalty grid"),
-        ConfigField("members", "int", default=30, minimum=2, maximum=200, label_zh="袋裝成員數", label_en="Bagged members"),
         ConfigField("replication_members", "int", default=3, minimum=0, maximum=50, label_zh="換年份重看：每個年份單獨訓練的成員數（0＝不做）", label_en="Per-year replication: members per single year (0 = skip)",
                     help_zh="資料有兩個以上年份時，每個年份各自單獨訓練一份模型，並排列出各年份的估計；只並排數字，不做同號就算重現的判定。",
                     help_en="With two or more years, a model is trained on each year alone and the estimates are listed side by side; numbers only."),
         ConfigField("cross_eval", "bool", default=True, label_zh="交叉評估（一季選、另一季評）", label_en="Cross evaluation (choose on one season, judge on the other)"),
         ConfigField("cross_members", "int", default=5, minimum=1, maximum=50, label_zh="交叉評估每季成員數", label_en="Members per season for the cross evaluation"),
-        ConfigField("backend", "choice", default="hgb", choices=("xgboost", "hgb"), label_zh="訓練後端", label_en="Backend"),
-        ConfigField("device", "choice", default="auto", choices=("auto", "cpu", "cuda"), label_zh="裝置", label_en="Device"),
-        ConfigField("max_depth", "int", default=4, minimum=1, maximum=30, label_zh="樹深", label_en="Tree depth"),
-        ConfigField("min_leaf", "int", default=1000, minimum=1, label_zh="葉節點最小樣本", label_en="Minimum samples per leaf"),
-        ConfigField("learning_rate", "float", default=0.1, minimum=1e-4, maximum=1.0, label_zh="學習率", label_en="Learning rate"),
-        ConfigField("l2", "float", default=1.0, minimum=0.0, label_zh="L2 正則化", label_en="L2 regularisation"),
-        ConfigField("max_iter", "int", default=150, minimum=1, label_zh="棵數", label_en="Boosting rounds"),
-        ConfigField("early_stopping_rounds", "int", default=20, minimum=1, label_zh="早停輪數（xgboost）", label_en="Early-stopping rounds (xgboost)"),
         ConfigField("min_share", "float", default=0.05, minimum=0.0, maximum=1.0, label_zh="支持規則：最小份額", label_en="Support rule: minimum share"),
         ConfigField("min_count", "int", default=300, minimum=1, label_zh="支持規則：最小球數", label_en="Support rule: minimum pitches"),
-        ConfigField("class_merge", "json", default=None, label_zh="結果類別對照（預設同 P5）", label_en="Outcome class map (default as P5)"),
-        ConfigField("min_class_count", "int", default=50, minimum=1, label_zh="類別最小樣本", label_en="Minimum rows per class"),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
                     help_zh="用該紀錄的 J_BIP 取代描述性估計，並做錨點一致性檢查（計畫 3.6）。", help_en="Uses its J_BIP instead of the descriptive estimate and runs the anchor consistency check."),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
@@ -154,22 +145,27 @@ class PitchPolicyMethod(ResearchMethod):
         grid = config["lambda_grid"]
         if not isinstance(grid, list) or not grid or not all(isinstance(x, (int, float)) and x >= 0 for x in grid):
             raise ConfigError("lambda_grid must be a non-empty list of non-negative numbers / lambda_grid 必須是非負數的非空列表")
-        if config["class_merge"] is None:
-            from . import modeling as md
-
-            config["class_merge"] = dict(md.DEFAULT_CLASS_MERGE)
         _check_filters(config["filters"])
-        check_purpose(ctx.scope, config["purpose"])
         config["re_scope"] = normalize_scope(config["re_scope"], required=True)
-        check_modeling_scope(config["re_scope"], config["purpose"], "re_scope")
-        from . import gbm as gbm_module
-
-        try:
-            gbm_module.resolve_device(config["backend"], config["device"])
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
+        model_run = self._model_run(ctx, config)
+        if set(config["groups"]) - set(model_run.get("groups") or config["groups"]):
+            raise ConfigError(f"the model run has no model for groups {sorted(set(config['groups']) - set(model_run['groups']))} / 模型紀錄沒有這些分組的模型")
         if config["anchor_run_id"]:
             self._anchor_run(ctx, config)
+
+    @staticmethod
+    def _model_run(ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
+        """The ``outcome_model_train`` run behind the situation table (and the groups it has a stored model for)."""
+
+        if not config["model_run_id"]:
+            raise ConfigError("model_run_id is required: train a model with outcome_model_train first / 需要 model_run_id：請先用 outcome_model_train 訓練模型")
+        run = ctx.store.get_run(int(config["model_run_id"])) if ctx.store is not None else None
+        if run is None or run["kind"] != "outcome_model_train" or run["status"] != "success":
+            raise ConfigError(f"model_run_id {config['model_run_id']} is not a successful outcome_model_train run / model_run_id 不是成功的 outcome_model_train 紀錄")
+        groups = [g for g in GROUPS if ctx.store.load_artifact(int(config["model_run_id"]), f"outcome_model_{g}") is not None]
+        if not groups:
+            raise ConfigError("the model run stored no model: run it with save_package / 模型紀錄沒有保存模型，請用 save_package 執行")
+        return {**run, "groups": groups}
 
     @staticmethod
     def _anchor_run(ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
@@ -179,17 +175,16 @@ class PitchPolicyMethod(ResearchMethod):
         return run
 
     def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
-        out = re_method_inputs(ctx, config)
+        out = {**re_method_inputs(ctx, config), "model_run_key": self._model_run(ctx, config)["run_key"]}
         if config["anchor_run_id"]:
             out = {**out, "anchor_run_key": self._anchor_run(ctx, config)["run_key"]}
         return out
 
     # ------------------------------------------------------------------------------------------------ run
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
-        from . import gbm as gbm_module
+        from .outcome_model_methods import load_model
 
         years = scope_years(ctx.scope)
-        device = gbm_module.resolve_device(config["backend"], config["device"])
         re = get_re_table(ctx, config["re_scope"])
         cols_all = fetch_columns(ctx, config, config["groups"], years, re_by_state=re.re_by_state)
         shape = pc.Shape()
@@ -201,16 +196,13 @@ class PitchPolicyMethod(ResearchMethod):
             if len(sel) == 0:
                 raise ConfigError(f"Group {group} has no rows / 分組 {group} 沒有資料")
             cols = lc.take(cols_all, sel)
-            LeagueModelMethod._check_classes(cols, {**config, "target": "outcome"}, group)
             env = build_environment(cols, re.re_by_state, shape)
             anchor = self._load_anchor(ctx, config, group)
             if anchor is not None:
                 env.jbip = np.where(np.isfinite(anchor["jbip"]) & (anchor["jbip"] != 0), anchor["jbip"], env.jbip)
-            params = dict(max_depth=config["max_depth"], min_leaf=config["min_leaf"], learning_rate=config["learning_rate"], l2=config["l2"],
-                          max_iter=config["max_iter"], early_stopping_rounds=config["early_stopping_rounds"])
-            members, classes = pb.fit_outcome_members(cols, backend=config["backend"], device=device, params=params, reps=config["members"], seed=config["seed"],
-                                                      merge=config["class_merge"])
-            tensor = pb.outcome_tensor(members, classes, shape, group)
+            model = load_model(ctx.store.load_artifact(int(config["model_run_id"]), f"outcome_model_{group}")["rows"])           # the model the user trained, with its controls
+            model.group = group
+            tensor = pb.model_tensor(model, shape, group, effects="population")
             obs, support, n = pb.usage_from_counts(cols, shape, min_share=config["min_share"], min_count=config["min_count"])
             dyns = pb.members_dynamics(tensor, obs, support, n)
             kinds = tuple(k for k in pc.POLICIES if k in config["policies"])
@@ -218,7 +210,7 @@ class PitchPolicyMethod(ResearchMethod):
             r1_rows += self._r1(group, cols, an, env, shape)
             value_rows += self._values(group, an, config)
             if config["cross_eval"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
-                value_rows += self._cross(group, cols, classes, env, shape, obs, support, n, params, config, device, kinds)
+                value_rows += self._cross(group, cols, model, env, shape, obs, support, n, config, kinds)
             risk_rows += self._risk(group, dyns, env, shape, config)
             m_rows, s_rows = self._marginals(group, an, config)
             marg_rows += m_rows; support_rows += s_rows
@@ -231,12 +223,13 @@ class PitchPolicyMethod(ResearchMethod):
                 anchor_rows += summary_rows; anchor_cell_rows += cell_rows
                 comparisons["anchor"][group] = pc.chance_row(sum(r["cells"] for r in summary_rows), 0.95, sum(r["outside_anchor_interval"] for r in summary_rows), "outside_anchor_interval")
             if config["replication_members"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
-                replication_rows += self._replicate(group, cols, env, shape, obs, support, n, params, config, device)
+                replication_rows += self._replicate(group, cols, model, env, shape, obs, support, n, config)
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config, env))
-        extras = {"scope": ctx.scope, "purpose": config["purpose"], "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "backend": config["backend"], "device": device,
-                  "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)", "mode": "M0 league average (level L0)",
-                  "comparisons": {k: v for k, v in comparisons.items() if v}}
+        model_extras = ctx.store.load_result(int(config["model_run_id"]))["extras"]
+        extras = {"scope": ctx.scope, "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "model_run_id": config["model_run_id"], "model": model_extras.get("model"),
+                  "model_controls": model_extras.get("controls"), "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)",
+                  "mode": f"M0 league average player of the {model_extras.get('model')} model", "comparisons": {k: v for k, v in comparisons.items() if v}}
         sections = (
             make_section("R1 對照（觀察到的配球重現得分期望值）", ("group", "item", "n_states", "median_abs_diff", "max_abs_diff", "value"), r1_rows, ("group", "item"), "duckdb", DIGITS),
             make_section("Policy value 政策價值（每打席）", ("group", "policy", "kind", "start_value", "saving_pa", "lo", "hi", "saving_per_pitch", "saving_per_team_season", "hr_probability",
@@ -305,16 +298,16 @@ class PitchPolicyMethod(ResearchMethod):
         return rows
 
     @staticmethod
-    def _cross(group, cols, classes, env, shape, obs, support, n, params, config, device, kinds):
-        """Winner's-curse-free saving (plan 4.3): choose the policy on the dynamics fitted to one season, judge it on the other, both directions."""
+    def _cross(group, cols, model, env, shape, obs, support, n, config, kinds):
+        """Winner's-curse-free saving (plan 4.3): choose the policy on the dynamics fitted to one season, judge it on the other, both directions. The same model with the same controls is
+        trained on each season alone."""
 
         years = sorted(int(y) for y in np.unique(cols["game_year"]))
         sets = []
         for y in (years[0], years[-1]):
             sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            mem, cls = pb.fit_outcome_members(sub, backend=config["backend"], device=device, params=params, reps=max(config["cross_members"], 2), seed=config["seed"] + y,
-                                              merge=config["class_merge"])
-            sets.append(pb.members_dynamics(pb.outcome_tensor(mem, cls, shape, group), obs, support, n))
+            alone = PitchPolicyMethod._train_like(model, sub, max(config["cross_members"], 2), config["seed"] + y)
+            sets.append(pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n))
         rows = []
         for kind in kinds:
             if kind in ("observed",):
@@ -426,7 +419,15 @@ class PitchPolicyMethod(ResearchMethod):
                                      "n": int(an.extras["n_cell"][ctx_mask & (o == 0) & (base == 0), a].sum()) if an.extras.get("n_cell") is not None else 0})
         return rows
 
-    def _replicate(self, group, cols, env, shape, obs, support, n, params, config, device):
+    @staticmethod
+    def _train_like(model, rows, members: int, seed: int):
+        """A new model of the same kind, with the same settings and controls as ``model``, trained on ``rows`` alone with ``members`` bagged members."""
+
+        from .outcome_models import new_model
+
+        return new_model(model.name).fit(rows, None, {**model.settings, "bagging_reps": int(members), "seed": int(seed)}, None, classes=model.classes)
+
+    def _replicate(self, group, cols, model, env, shape, obs, support, n, config):
         """Per year: an outcome model trained on that year alone (``replication_members`` bagged members), the same marginal and direction numbers from it, side by side.
         The usage shares and the support rule come from all the years (what pitchers did), only the outcome model is per year. Numbers only: nothing is judged to have replicated."""
 
@@ -434,9 +435,8 @@ class PitchPolicyMethod(ResearchMethod):
         out = []
         for y in years:
             sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            members, classes = pb.fit_outcome_members(sub, backend=config["backend"], device=device, params=params, reps=max(int(config["replication_members"]), 2),
-                                                      seed=config["seed"] + 1000 + y, merge=config["class_merge"])
-            dyns = pb.members_dynamics(pb.outcome_tensor(members, classes, shape, group), obs, support, n)
+            alone = self._train_like(model, sub, max(int(config["replication_members"]), 2), config["seed"] + 1000 + y)
+            dyns = pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n)
             an = pb.analyze(dyns, env, shape, kinds=("observed",), trust=config["trust_region"], delta=config["marginal_shift"])
             m_rows, _ = self._marginals(group, an, config)
             for r in m_rows:

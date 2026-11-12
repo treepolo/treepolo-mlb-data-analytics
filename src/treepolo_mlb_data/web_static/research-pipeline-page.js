@@ -129,17 +129,21 @@
     const s = job.summary;
     if (!s) return [];
     const out = [];
-    if (s.best_params) out.push(el("div", { class: "hint", id: "rp-best", text: `選到的模型設定：樹深 ${s.best_params.max_depth}、葉節點 ${s.best_params.min_leaf}、學習率 ${s.best_params.learning_rate}、L2 ${s.best_params.l2}` }));
+    if (s.model && s.model.kind) {
+      const used = Object.entries(s.model.controls || {}).map(([k, v]) => `${CONTROL_LABEL[k] || k}＝${v}`);
+      out.push(el("div", { class: "hint", id: "rp-model", text: `用的模型：${MODEL_LABEL[s.model.kind] || s.model.kind}；偏差控制：${used.length ? used.join("、") : "沒有（全部關閉）"}。決策引擎與情境表是在這些假設下算的。` }));
+    }
+    if (s.best_params) out.push(el("div", { class: "hint", id: "rp-best", text: `選到的模型設定：${Object.entries(s.best_params).map(([k, v]) => `${PARAM_LABEL[k] || k} ${v}`).join("、")}` }));
     Object.entries(s.groups).forEach(([group, g]) => {
       const r1 = g.r1;
       const card = el("div", { class: "rp-card", "data-group": group }, el("h4", { text: `${group}` }),
         el("div", { class: "hint", text: `引擎對照（照實際配球算出的期望失分，和真實資料統計出的得分期望值表差多少；0＝完全一致）：各狀態中位數差 ${num(r1.median_abs_diff)}、最大差 ${num(r1.max_abs_diff)}、打席起點差 ${num(r1.start_diff)}` }));
       if (g.policies.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["政策", "算法", "每打席少失分", "區間", "每隊每季少失分"].map(h => el("th", { text: h })))),
         el("tbody", {}, ...g.policies.map(p => el("tr", {}, el("td", { text: p.policy }), el("td", { text: p.kind }), el("td", { text: num(p.saving_pa) }), el("td", { text: p.lo == null ? "—" : `[${num(p.lo)}, ${num(p.hi)}]` }), el("td", { text: num(p.saving_per_team_season, 1) }))))));
-      if (g.descriptor_gains.length) {
-        card.append(el("div", { class: "hint", text: "球員描述的預測增益（沒見過的球員；正值＝加了球員描述比較準；只列數字，不下判斷）：" }));
-        card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["邊", "比較", "指標", "模式", "數值", "區間", "樣本數"].map(h => el("th", { text: h })))),
-          el("tbody", {}, ...g.descriptor_gains.map(x => el("tr", {}, el("td", { text: x.side }), el("td", { text: x.comparison }), el("td", { text: MEASURE_LABEL[x.measure] || x.measure }), el("td", { text: x.mode }),
+      if (g.effect_gains.length) {
+        card.append(el("div", { class: "hint", text: "球員描述或效應的預測增益（對「全部控制都關掉」的同一個模型；沒見過的球員、沒訓練過的年份；正值＝加了控制比較準；只列數字，不下判斷）：" }));
+        card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["評估對象", "比較", "數值（對數損失改善）", "區間", "樣本數"].map(h => el("th", { text: h })))),
+          el("tbody", {}, ...g.effect_gains.map(x => el("tr", {}, el("td", { text: MODE_LABEL[x.mode] || x.mode }), el("td", { text: x.comparison }),
             el("td", { text: num(x.value, 5) }), el("td", { text: x.lo == null ? "—" : `[${num(x.lo, 5)}, ${num(x.hi, 5)}]` }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
       }
       if (g.actions.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["球種", "相對一般配球", "區間", "多投 10pp 的變化"].map(h => el("th", { text: h })))),
@@ -151,7 +155,11 @@
     return out;
   }
 
-  const MEASURE_LABEL = { level_gain: "對數損失改善", type_contrast: "球種對比預測改善" };
+  const MODE_LABEL = { season: "留出年份", cold_pitcher: "沒見過的投手", cold_batter: "沒見過的打者", season_new_pitcher: "留出年份裡的新投手", season_new_batter: "留出年份裡的新打者" };
+  const MODEL_LABEL = { logistic: "邏輯迴歸", gbm: "梯度提升樹", mixed: "混合效應", nn_embed: "神經網路＋嵌入", sequence: "序列模型" };
+  const CONTROL_LABEL = { control_pitcher: "投手整體", control_pitcher_pitch: "投手×球種", control_batter_pitch: "打者×球種", control_day: "當天狀態", control_batter: "打者整體", control_survival: "存活偏誤",
+    control_location: "球的位置", control_day_pitch: "當天×球種" };
+  const PARAM_LABEL = { max_depth: "樹深", min_leaf: "葉節點", learning_rate: "學習率", l2: "L2" };
   const SECTION_LABEL = { marginal: "邊際價值摘要（各球種）", direction: "方向圖（情境×球種）", anchor: "錨點對照（模型效果對固定效應效果）" };
   function chanceText(section, c) {
     const what = c.what === "outside_anchor_interval" ? "模型效果落在對照區間之外" : "區間不含 0";

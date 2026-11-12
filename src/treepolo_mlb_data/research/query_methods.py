@@ -39,17 +39,15 @@ def _run_of_kind(ctx: ResearchContext, run_id: int, kind: str) -> dict[str, Any]
 
 class PitchQueryMethod(ResearchMethod):
     kind = "pitch_query"
-    version = 2     # 2: answers no longer switch personalisation off by a gate; rows carry no detected/evidence; comparison counts and descriptor gains are attached
+    version = 3     # 3: player queries ask an outcome_model_train model (effects="specific"); no sampled pairs, no level. 2: no gates; comparison counts attached
     label_zh = "情境查詢工具（驗收與球員名稱）"
     label_en = "Situation query tool (acceptance and player names)"
     requires_scope = True
     fields = (
         ConfigField("policy_run_id", "int", default=0, minimum=0, label_zh="pitch_policy 紀錄編號（情境表）", label_en="pitch_policy run id (situation table)"),
-        ConfigField("package_run_id", "int", default=0, minimum=0, label_zh="league_model 紀錄編號（模型包；0＝只有 M0）", label_en="league_model run id (model package; 0 = M0 only)",
-                    help_zh="需要用 save_package 執行過，才能查詢特定投手與打者（M1–M3）。", help_en="Needs a run made with save_package for named players (M1-M3)."),
-        ConfigField("level", "choice", default="L3", choices=("L1", "L2", "L3"), label_zh="個別化用的特徵階", label_en="Descriptor level for player queries"),
+        ConfigField("package_run_id", "int", default=0, minimum=0, label_zh="outcome_model_train 紀錄編號（模型；0＝只有 M0）", label_en="outcome_model_train run id (model; 0 = M0 only)",
+                    help_zh="需要用 save_package 執行過，才能查詢特定投手與打者（M1–M3）；查詢用的就是決策引擎用的那個模型。", help_en="Needs a run made with save_package; the same model the decision engine used."),
         ConfigField("check_situations", "int", default=20, minimum=3, maximum=200, label_zh="驗收情境數（含外推與不支持）", label_en="Situations to check (incl. extrapolated and unsupported)"),
-        ConfigField("check_samples", "int", default=20, minimum=2, maximum=200, label_zh="驗收時 M1/M2 的抽樣球員數", label_en="Sampled players in the M1/M2 checks"),
         ConfigField("check_members", "int", default=4, minimum=1, maximum=60, label_zh="驗收時使用的袋裝成員數", label_en="Bagged members in the checks"),
         ConfigField("with_names", "bool", default=True, label_zh="建立球員名稱對照（投手 player_name、打者從 des 擷取）", label_en="Build the player-name table"),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
@@ -60,16 +58,16 @@ class PitchQueryMethod(ResearchMethod):
             raise ConfigError("policy_run_id is required / 需要 policy_run_id")
         _run_of_kind(ctx, config["policy_run_id"], "pitch_policy")
         if config["package_run_id"]:
-            _run_of_kind(ctx, config["package_run_id"], "league_model")
+            _run_of_kind(ctx, config["package_run_id"], "outcome_model_train")
 
     def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
         out = {"policy_run_key": _run_of_kind(ctx, config["policy_run_id"], "pitch_policy")["run_key"]}
         if config["package_run_id"]:
-            out["package_run_key"] = _run_of_kind(ctx, config["package_run_id"], "league_model")["run_key"]
+            out["package_run_key"] = _run_of_kind(ctx, config["package_run_id"], "outcome_model_train")["run_key"]
         return out
 
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
-        rt = QueryRuntime(ctx.store, policy_run_id=config["policy_run_id"], package_run_id=config["package_run_id"], level=config["level"])
+        rt = QueryRuntime(ctx.store, policy_run_id=config["policy_run_id"], package_run_id=config["package_run_id"])
         rng = np.random.default_rng(config["seed"])
         accept, latency, sources = [], [], []
         for group in rt.groups():
@@ -92,7 +90,7 @@ class PitchQueryMethod(ResearchMethod):
             make_section("Names 名稱涵蓋", ("side", "name", "id", "value"), names_rows, ("side", "name"), "duckdb", DIGITS),
             make_section("Sources 來源", ("group", "policy_run_id", "package_run_id", "members", "mode"), sources, ("group",), "duckdb", DIGITS),
         )
-        return ResearchResult(sections=sections, extras={"policy_run_id": config["policy_run_id"], "package_run_id": config["package_run_id"] or None, "level": config["level"],
+        return ResearchResult(sections=sections, extras={"policy_run_id": config["policy_run_id"], "package_run_id": config["package_run_id"] or None,
                                                          "groups": rt.groups(), "names": extras_names}, artifacts=tuple(artifacts))
 
     @staticmethod
@@ -135,11 +133,11 @@ class PitchQueryMethod(ResearchMethod):
         """M1, M2 and M3 on a random pitcher and batter: repeatable, probabilities add to one, intervals ordered; the time each takes."""
 
         pq = rt.player_query(group)
-        pit = int(rng.choice(pq.package.profile.players("pitcher", group)[0])); bat = int(rng.choice(pq.package.profile.players("batter", group)[0]))
+        pit = int(rng.choice(pq.model.players("pitcher")[0])); bat = int(rng.choice(pq.model.players("batter")[0]))
         accept, latency = [], []
         for mode, kw in (("M1", {"pitcher": pit}), ("M2", {"batter": bat}), ("M3", {"pitcher": pit, "batter": bat})):
             t0 = time.monotonic()
-            args = dict(samples=config["check_samples"], members=config["check_members"], level=config["level"], seed=config["seed"], **kw)
+            args = dict(members=config["check_members"], seed=config["seed"], **kw)
             first = pq.query(0, 0, 1, "000", "none", 1, **args)
             seconds = time.monotonic() - t0
             second = pq.query(0, 0, 1, "000", "none", 1, **args)
@@ -155,8 +153,8 @@ class PitchQueryMethod(ResearchMethod):
 class QueryRuntime:
     """Answers queries from the stored runs behind one ``pitch_query`` run (tables and packages are loaded when first needed)."""
 
-    def __init__(self, store, *, policy_run_id: int, package_run_id: int = 0, level: str = "L3", query_run_id: int | None = None):
-        self.store, self.policy_run_id, self.package_run_id, self.level, self.query_run_id = store, int(policy_run_id), int(package_run_id or 0), level, query_run_id
+    def __init__(self, store, *, policy_run_id: int, package_run_id: int = 0, query_run_id: int | None = None):
+        self.store, self.policy_run_id, self.package_run_id, self.query_run_id = store, int(policy_run_id), int(package_run_id or 0), query_run_id
         self._tables: dict[str, qc.SituationTable] = {}; self._queries: dict[str, qc.PlayerQuery] = {}; self._lock = threading.RLock()
         self._names: dict[str, dict[str, str]] | None = None
 
@@ -179,29 +177,38 @@ class QueryRuntime:
             return self._tables[group]
 
     def has_package(self, group: str) -> bool:
-        return bool(self.package_run_id) and self.store.load_artifact(self.package_run_id, f"model_package_{group}") is not None
+        return bool(self.package_run_id) and self.store.load_artifact(self.package_run_id, f"outcome_model_{group}") is not None
 
     def player_query(self, group: str) -> qc.PlayerQuery:
         with self._lock:
             if group not in self._queries:
                 if not self.has_package(group):
-                    raise qc.QueryError(f"no model package for group {group}: only league-average (M0) queries are available / 沒有分組 {group} 的模型包，只能做聯盟平均（M0）查詢")
-                package = qc.PackageModel.from_rows(self.store.load_artifact(self.package_run_id, f"model_package_{group}")["rows"])
-                self._queries[group] = qc.PlayerQuery(self.table(group), package)
+                    raise qc.QueryError(f"no model for group {group}: only league-average (M0) queries are available / 沒有分組 {group} 的模型，只能做聯盟平均（M0）查詢")
+                from .outcome_model_methods import load_model
+
+                model = load_model(self.store.load_artifact(self.package_run_id, f"outcome_model_{group}")["rows"])
+                model.group = group
+                self._queries[group] = qc.PlayerQuery(self.table(group), model)
             return self._queries[group]
 
-    # --- how much the player descriptors helped in the model run (numbers only; they do not switch anything off)
-    def descriptor_gains(self, group: str) -> list[dict[str, Any]]:
-        """The rows of the model run's "Descriptor gain 球員描述的預測增益" section for ``group``. A model run from before that section existed has a "Gates" section
-        instead: its numbers (value, lower bound) are returned the same way and its pass/fail column is dropped."""
+    # --- how much the controls of the model helped (numbers only; they do not switch anything off)
+    def effect_gains(self, group: str) -> list[dict[str, Any]]:
+        """The rows of the model run's "Effect gain" section for ``group`` (the gain of the model with its controls over the same model without any, on players it had not
+        seen and on years it had not trained on). A model run from before that section existed has "Descriptor gain" or "Gates": its numbers are returned the same way."""
 
         if not self.package_run_id:
             return []
         result = self.store.load_result(self.package_run_id)
-        for prefix in ("Descriptor gain", "Gates"):
+        for prefix in ("Effect gain", "Descriptor gain", "Gates"):
             rows = next((s["rows"] for s in result["sections"] if s["title"].startswith(prefix)), None)
             if rows is not None:
-                return [{k: r.get(k) for k in ("side", "comparison", "gate", "measure", "mode", "value", "lo", "hi", "n")} for r in rows if r["group"] == group]
+                out = []
+                for r in rows:
+                    if r["group"] != group:
+                        continue
+                    out.append({"mode": r.get("mode"), "comparison": r.get("comparison") or r.get("gate"), "measure": r.get("measure") or ("effect_gain" if prefix == "Effect gain" else None),
+                                "value": r["delta_logloss"] if "delta_logloss" in r else r.get("value"), "lo": r.get("lo"), "hi": r.get("hi"), "n": r.get("n")})
+                return out
         return []
 
     # --- names
@@ -217,7 +224,7 @@ class QueryRuntime:
         """Players of ``group`` whose id or name contains ``text`` (empty text: the ones with most pitches)."""
 
         pq = self.player_query(group)
-        ids, n = pq.package.profile.players(side, group)
+        ids, n = pq.model.players(side)
         names = self.names().get(side, {})
         text = (text or "").strip().lower()
         order = np.argsort(-n)
@@ -241,16 +248,14 @@ class QueryRuntime:
         pitcher = _as_id(pitcher); batter = _as_id(batter)
         if pitcher is None and batter is None:
             res = table.lookup(balls, strikes, outs, bases, prev, streak)
-            res["descriptor_gains"] = self.descriptor_gains(group)
+            res["effect_gains"] = self.effect_gains(group)
             return res
         pq = self.player_query(group)
-        res = pq.query(balls, strikes, outs, bases, prev, streak, pitcher=pitcher, batter=batter, level=params.get("level") or self.level,
-                       samples=int(params.get("samples", 100)), members=int(params.get("members", 10)), seed=int(params.get("seed", 20240601)))
+        res = pq.query(balls, strikes, outs, bases, prev, streak, pitcher=pitcher, batter=batter, members=int(params.get("members", 10)), seed=int(params.get("seed", 20240601)))
         names = self.names()
         for side, info in res["players"].items():
             info["name"] = names.get(side, {}).get(info["id"])
-        res["descriptor_gains"] = self.descriptor_gains(group)
-        res["notice"] = []
+        res["effect_gains"] = self.effect_gains(group)
         return res
 
 

@@ -16,9 +16,9 @@ BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
 SCOPE = {"game_years": [2023, 2024], "game_types": ["R"]}
 GRID = {"max_depth": [3, 4], "min_leaf": [200, 600], "learning_rate": [0.15], "l2": [1.0, 5.0]}
 OVERRIDES = {"search": {"grid": GRID, "min_class_count": 20},
-             "model": {"levels": ["L0", "L3"], "min_class_count": 20, "min_cell_swings": 15},
-             "policy": {"min_count": 100, "lambda_grid": [0.0], "min_class_count": 20, "cross_eval": False, "replication_members": 2},
-             "query": {"check_situations": 6, "check_samples": 6, "check_members": 2}}
+             "model": {"min_class_count": 20},
+             "policy": {"min_count": 100, "lambda_grid": [0.0], "cross_eval": False, "replication_members": 2},
+             "query": {"check_situations": 6, "check_members": 2}}
 
 
 class FakeRe:
@@ -87,9 +87,10 @@ def test_pipeline_runs_every_step_and_summarises(finished):
     assert job["state"] == "done" and job["error"] is None and job["query_run_id"]
     assert [s["id"] for s in job["steps"]] == ["search", "model", "anchor", "policy", "query"] and all(s["status"] == "done" and s["run_id"] for s in job["steps"])
     g = job["summary"]["groups"]["RvR"]
-    assert set(g) == {"r1", "policies", "descriptor_gains", "actions", "comparisons"} and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
+    assert set(g) == {"r1", "policies", "effect_gains", "actions", "comparisons"} and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
     assert set(g["r1"]) == {"median_abs_diff", "max_abs_diff", "start_diff"}                  # numbers only: no pass / fail
-    assert any(x["measure"] == "level_gain" for x in g["descriptor_gains"]) and len(g["actions"]) >= 2
+    assert g["effect_gains"] == [] and len(g["actions"]) >= 2                                # no controls were chosen, so there is nothing to compare with the no-controls baseline
+    assert job["summary"]["model"] == {"kind": "gbm", "controls": {}}
     assert all("detected_share" not in a for a in g["actions"])
     chance = g["comparisons"]["direction"]
     assert chance["n"] > 0 and chance["expected_by_chance"] == pytest.approx(chance["n"] * (1 - chance["confidence"])) and 0 <= chance["found"] <= chance["n"]
@@ -124,11 +125,11 @@ def test_pipeline_api_and_validation(world, finished):
 
 def test_failing_step_is_reported_and_keeps_earlier_steps(world):
     manager = world.pipeline()
-    bad = {"search": {"grid": GRID, "min_class_count": 20}, "model": {"levels": ["L0", "L3"], "min_class_count": 10_000_000}}
+    bad = {"search": {"grid": GRID, "min_class_count": 20}, "model": {"min_class_count": 10_000_000}}
     manager.start({"tier": "smoke", "groups": ["RvR"], "backend": BACKEND, "device": "cpu", "overrides": bad, "seed": 7})
     manager.wait(600)
     job = manager.status()
-    assert job["state"] == "error" and "訓練全聯盟模型" in job["error"]
+    assert job["state"] == "error" and "訓練模型" in job["error"]
     assert [s["status"] for s in job["steps"]] == ["done", "error", "pending", "pending", "pending"]
 
 
@@ -140,3 +141,18 @@ def test_cancel_stops_before_the_next_step(world):
         manager.start(settings())
     manager.wait(900)
     assert manager.status()["state"] in ("cancelled", "done")
+
+
+def test_the_model_and_its_controls_reach_every_step_and_the_search_can_be_skipped():
+    settings_ = pl.normalize_settings({"tier": "smoke", "groups": ["RvR"], "model": "logistic", "controls": {"control_pitcher": "effect", "control_day": "pitcher_game_effect"}, "search": False})
+    assert settings_["model"] == "logistic" and settings_["controls"]["control_pitcher"] == "effect" and settings_["search"] is False
+    for step in ("search", "model"):
+        cfg = pl.step_config(step, settings_, {})
+        assert cfg["model"] == "logistic" and cfg["control_pitcher"] == "effect" and cfg["control_day"] == "pitcher_game_effect"
+    policy = pl.step_config("policy", settings_, {"model_run_id": 5, "anchor_run_id": 6})
+    assert policy["model_run_id"] == 5 and "members" not in policy and "backend" not in policy
+    assert pl.step_config("query", settings_, {"policy_run_id": 7, "model_run_id": 5})["package_run_id"] == 5
+    with pytest.raises(ConfigError, match="model"):
+        pl.normalize_settings({"tier": "fast", "model": "no_such_model"})
+    with pytest.raises(ConfigError, match="controls"):
+        pl.normalize_settings({"tier": "fast", "controls": {"control_pitcher": "magic"}})

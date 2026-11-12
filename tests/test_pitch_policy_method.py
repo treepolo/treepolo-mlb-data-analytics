@@ -5,15 +5,19 @@ import pytest
 
 from state_fixtures import make_state_db
 from treepolo_mlb_data.config import AppConfig
-from treepolo_mlb_data.research import anchor_methods as am, gbm, policy_core as pc, policy_methods as pm, policy_worlds as pw
+from treepolo_mlb_data.research import anchor_methods as am, gbm, outcome_model_methods as omm, policy_core as pc, policy_methods as pm, policy_worlds as pw
 from treepolo_mlb_data.research.config_schema import ConfigError
 from treepolo_mlb_data.research.profiles import PITCH_TYPES
 from treepolo_mlb_data.research.service import ResearchService
 
 SCOPE = {"game_years": [2024], "game_types": ["R"]}
 BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
-BASE = {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_members": 2, "replication_members": 2, "backend": BACKEND, "device": "cpu", "max_depth": 4, "min_leaf": 1000,
-        "learning_rate": 0.15, "max_iter": 50, "min_count": 100, "lambda_grid": [0.0, 1.0], "min_class_count": 5}
+MODEL_SCOPE = {"game_years": [2023, 2024], "game_types": ["R"]}
+# the model behind the situation table: trained on the same simulated pitches (the patched fetch hands them over), bagged members of boosted trees, no player effects
+MODEL = {"scope": MODEL_SCOPE, "groups": ["RvR"], "model": "gbm", "backend": BACKEND, "device": "cpu", "max_depth": 4, "min_leaf": 1000, "learning_rate": 0.15, "max_iter": 50,
+         "bagging_reps": 4, "split": "cold_only", "cold_by": ["pitcher"], "cold_folds": 2, "min_class_count": 5, "bootstrap_reps": 20, "compare_baseline": False, "replication_members": 0,
+         "save_package": True}
+BASE = {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "cross_members": 2, "replication_members": 2, "min_count": 100, "lambda_grid": [0.0, 1.0]}
 
 
 class FakeRe:
@@ -37,18 +41,31 @@ def w1(service):
 @pytest.fixture()
 def patched(monkeypatch, w1):
     world, cols = w1
-    monkeypatch.setattr(pm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+    for module in (pm, omm):
+        monkeypatch.setattr(module, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
     monkeypatch.setattr(pm, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
 
 
 @pytest.fixture(scope="module")
-def result(service, w1):
+def model_run(service, w1):
+    mp = pytest.MonkeyPatch()
+    world, cols = w1
+    mp.setattr(omm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+    try:
+        run = service.run("outcome_model_train", MODEL)["run"]
+    finally:
+        mp.undo()
+    return run
+
+
+@pytest.fixture(scope="module")
+def result(service, w1, model_run):
     mp = pytest.MonkeyPatch()
     world, cols = w1
     mp.setattr(pm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
     mp.setattr(pm, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
     try:
-        run = service.run("pitch_policy", BASE)["run"]
+        run = service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"]})["run"]
     finally:
         mp.undo()
     return run
@@ -113,17 +130,21 @@ def test_situation_table_artifact_round_trips(service, result):
     assert (arrays["dp_trust"][~arrays["support"]] == 0).all()
 
 
-def test_same_settings_are_reused_and_errors_are_clear(service, result, patched):
-    again = service.run("pitch_policy", BASE)
+def test_same_settings_are_reused_and_errors_are_clear(service, result, model_run, patched):
+    again = service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"]})
     assert again["reused"] and again["run"]["id"] == result["id"]
     with pytest.raises(ConfigError):
-        service.run("pitch_policy", {**BASE, "policies": ["dp_trust"]})
+        service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "policies": ["dp_trust"]})
     with pytest.raises(ConfigError):
-        service.run("pitch_policy", {**BASE, "lambda_grid": [-1]})
+        service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "lambda_grid": [-1]})
+    with pytest.raises(ConfigError, match="model_run_id"):
+        service.run("pitch_policy", BASE)                                                       # the model must be trained first
+    with pytest.raises(ConfigError, match="outcome_model_train"):
+        service.run("pitch_policy", {**BASE, "model_run_id": result["id"]})                    # a run of another kind is refused
     with pytest.raises(ConfigError):
-        service.run("pitch_policy", {**BASE, "backend": "hgb", "device": "cuda"})
-    with pytest.raises(ConfigError, match="reserved"):
-        service.run("pitch_policy", {**BASE, "scope": {"game_years": [2023, 2025], "game_types": ["R"]}})
+        service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "backend": "hgb"})      # the model is not trained here any more: no backend setting
+    run = service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "scope": {"game_years": [2023, 2025], "game_types": ["R"]}})["run"]
+    assert run["status"] == "success"                                                         # no reserved-season rule: any years can be used
 
 
 def test_environment_recovers_the_world_values(w1):
@@ -136,7 +157,7 @@ def test_environment_recovers_the_world_values(w1):
 
 
 @pytest.fixture(scope="module")
-def anchored(service, w1):
+def anchored(service, w1, model_run):
     """An action_effects run on the same world and a pitch_policy run that uses it as its anchor."""
 
     mp = pytest.MonkeyPatch()
@@ -146,7 +167,7 @@ def anchored(service, w1):
         mp.setattr(module, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
     try:
         anchor = service.run("action_effects", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"]})["run"]
-        policy = service.run("pitch_policy", {**BASE, "anchor_run_id": anchor["id"], "cross_eval": False, "members": 3})["run"]
+        policy = service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "anchor_run_id": anchor["id"], "cross_eval": False})["run"]
     finally:
         mp.undo()
     return anchor, policy
@@ -181,8 +202,13 @@ def test_policy_with_anchor_reports_consistency_and_direction_map(service, ancho
     assert {r["action"] for r in direction} == {"FF", "SL", "CH"} and all(r["context"].startswith("0-0 | none") for r in direction if r["balls"] == 0 and r["strikes"] == 0)
 
 
-def test_anchor_must_be_an_action_effects_run(service, result, patched):
+def test_anchor_must_be_an_action_effects_run(service, result, model_run, patched):
     with pytest.raises(ConfigError, match="action_effects"):
-        service.run("pitch_policy", {**BASE, "anchor_run_id": result["id"]})
+        service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "anchor_run_id": result["id"]})
     with pytest.raises(ConfigError):
-        service.run("pitch_policy", {**BASE, "anchor_run_id": 9999})
+        service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "anchor_run_id": 9999})
+
+
+def test_the_table_records_which_model_and_controls_it_was_computed_under(service, result, model_run):
+    extras = service.store.load_result(result["id"])["extras"]
+    assert extras["model_run_id"] == model_run["id"] and extras["model"] == "gbm" and extras["model_controls"]["control_pitcher"] == "none"
