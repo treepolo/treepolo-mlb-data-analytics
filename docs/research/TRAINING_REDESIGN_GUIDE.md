@@ -12,10 +12,10 @@
 
 ## 0. 工作規則（每個工作包都適用）
 
-- 程式碼與資料在 `F:\treepolo-p6`。Python 環境暫時沿用 `F:\treepolo-p6\.venv`（位置待使用者決定，見工作包 0）；`TEMP`、`TMP`、pip 快取指向 `F:\treepolo-p6-tmp`。不寫 C:；`D:\Vibe Coding\` 的舊專案不要碰。
+- 程式碼與資料在 `F:\treepolo-p6`。Python 用 `D:\soft\Python313`（工作包 0 建立；套件直接裝在裡面，`pip install` 一律加 `--no-cache-dir`）。`TEMP`、`TMP` 指向 `F:\treepolo-p6-tmp`。不寫 C:；D: 只動 `D:\soft\Python313`；`D:\Vibe Coding\` 的舊專案不要碰。
 - 分支 `claude/hello-rc9nc6`。開工前 `git pull origin claude/hello-rc9nc6`。推送失敗隔 2、4、8、16 秒重試。不要開 PR。
-- 啟用環境：`F:\treepolo-p6\.venv\Scripts\activate`（工作包 0 決定後會改）。安裝專案用 `pip install F:\treepolo-p6 --upgrade`，**不要用 `-e`**。安裝前先關掉網頁服務（否則檔案被鎖、會留下 `~reepolo...` 殘留目錄）。
-- 跑測試要加 `PYTHONPATH=src`（PowerShell：`$env:PYTHONPATH='src'`），例如 `python -m pytest -q -p no:cacheprovider tests\test_xxx.py`。完整測試約 20–25 分鐘：`python -m pytest -q -p no:cacheprovider -m "not integration"`。
+- 不用啟用環境，直接用完整路徑：`D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade`，**不要用 `-e`**。安裝前先關掉網頁服務（否則檔案被鎖、會留下 `~reepolo...` 殘留目錄）。
+- 跑測試要加 `PYTHONPATH=src`（PowerShell：`$env:PYTHONPATH='src'`），例如 `D:\soft\Python313\python.exe -m pytest -q -p no:cacheprovider tests\test_xxx.py`。完整測試約 20–25 分鐘：`D:\soft\Python313\python.exe -m pytest -q -p no:cacheprovider -m "not integration"`。
 - 不要用 `pkill -f` 或任何會比對到自己指令列的方式結束程序；要停自己開的程序，用它的 PID。
 - 不要在真實資料上跑研究，除非工作包明確要求（只有「冒煙」等級的確認可以，跑之前先告訴使用者）。工作包 C、E、F 完成時，各在真實資料上跑一次冒煙（RvR、少量資料），確認不會在真實資料上出錯，結果附在回報裡。
 - 介面程式不用 `innerHTML`、`localStorage`、`sessionStorage`（`tests/test_research_ui_wiring.py` 會檢查）。新的前端 JS 要加進 `src/treepolo_mlb_data/web_static/index.html` 與 `.github/workflows/ci.yml` 的 `node --check` 清單。
@@ -52,22 +52,40 @@
 
 | 包 | 內容 | 需要使用者先同意的事 |
 |---|---|---|
-| 0 | Python 環境的位置（**待使用者決定，決定前不要做**） | 見 2.5 |
+| 0 | 改用共用的 Python `D:\soft\Python313`，搬離 F: | 原本的 Python 3.13 在哪（見 2.5 第 1 步）；刪舊環境前要問 |
 | A | 拿掉所有判定與寫死的門檻，改顯示數字與三種資訊 | 無 |
 | B | 統一的「模型」介面；邏輯迴歸與梯度提升樹搬進來；偏差控制開關；參數搜尋改成適用所有模型；拿掉年份限制 | 無 |
 | C | 決策引擎與情境查詢改用 B 訓練出來的模型（不再自己訓練 L0） | 無 |
 | D | 完整設定模式、設定檔匯入匯出 | 無 |
 | E | 比較模式、時間預估 | 無 |
-| F | 混合效應、神經網路＋嵌入、序列模型（PyTorch） | **要先問使用者是否同意安裝 PyTorch（CUDA 版約 2–3 GB，位置依工作包 0）** |
+| F | 混合效應、神經網路＋嵌入、序列模型（PyTorch） | **要先問使用者是否同意安裝 PyTorch（CUDA 版約 2–3 GB，裝進 `D:\soft\Python313`，加 `--no-cache-dir`）** |
 | G | 文件與收尾 | 無 |
 
 順序照表。0 是環境；A 最小，先做；B、C 是核心；D、E 是介面；F 需要裝新套件。
 
 ---
 
-## 2.5 工作包 0：Python 環境的位置（待使用者決定）
+## 2.5 工作包 0：改用共用的 Python（`D:\soft\Python313`）
 
-使用者不要在 F:（外接硬碟）的專案資料夾裡放 Python 環境，也不希望每個專案各自重複下載一份套件。`D:\soft` 的規則是「一個軟體一個資料夾，資料夾以軟體命名，裡面的東西只給那個軟體用」。具體做法正在和雲端那邊討論，**這份文件更新之前不要動 Python 環境**，繼續用現在的 `F:\treepolo-p6\.venv` 做工作包 A。
+使用者的決定：
+- Python 環境從 F:（外接硬碟）搬走。
+- `D:\soft` 的規則是「一個軟體一個資料夾，以軟體命名，裡面的東西只給那個軟體用」。Python 是軟體，套件是 Python 的外掛，所以套件裝在 Python 自己的資料夾裡。
+- 採「共用 Python，衝突時才另開」：這個專案和使用者其他專案平常都用同一份 Python；只有某個專案真的需要不同版本的套件時，才替它另開獨立環境（現在不需要）。
+
+步驟：
+1. **先問使用者**：電腦上現在有沒有已經裝好的 Python 3.13（`F:\treepolo-p6\.venv` 當初是用 3.13.7 建的；可用 `F:\treepolo-p6\.venv\pyvenv.cfg` 的 `home =` 那行看出它在哪）。不論原本在哪，這次都在 `D:\soft\Python313` 裝一份新的，原本那份不要動、不要刪。
+2. 下載 Python 3.13 最新修正版的官方 Windows 安裝程式（64 位元），下載到 `F:\treepolo-p6-tmp`，用安靜安裝：
+   `python-3.13.x-amd64.exe /quiet InstallAllUsers=0 TargetDir=D:\soft\Python313 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0 AssociateFiles=0`
+   不加進 PATH（避免和系統預設的 3.14 混在一起），一律用完整路徑 `D:\soft\Python313\python.exe`。安裝後刪掉下載的安裝程式。
+3. 套件直接裝進這份 Python（不建虛擬環境），加 `--no-cache-dir`，不留下載快取：
+   `D:\soft\Python313\python.exe -m pip install --no-cache-dir numpy scipy scikit-learn duckdb requests reportlab pytest xgboost==3.4.1`
+   版本以 `F:\treepolo-p6\.venv` 現有的為準：先在舊環境執行 `pip freeze` 存到 `F:\treepolo-p6-tmp\old-freeze.txt`，新環境安裝時對照，主要套件（numpy、scipy、scikit-learn、duckdb、xgboost）版本要一樣。
+4. 安裝本專案：`D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade`（不要用 `-e`）。
+5. 確認：`D:\soft\Python313\python.exe -c "import xgboost, numpy; from treepolo_mlb_data.research import gbm; print(xgboost.__version__, gbm.cuda_works())"` 要印出 `3.4.1 True`。
+6. 網頁介面改用 `D:\soft\Python313\Scripts\treepolo-mlb.exe` 啟動，確認能開、資料庫路徑仍是 `F:\treepolo-p6\data\statcast.sqlite3`，「研究 → 一鍵研究」能載入。把完整的啟動指令告訴使用者。
+7. 跑一次完整測試（`PYTHONPATH=src`，用新的 Python）。
+8. 都正常後，**問使用者**是否刪除 `F:\treepolo-p6\.venv`（約 1 GB，裡面還有兩個 `~reepolo` 開頭的安裝殘留）。同意才刪。
+9. 更新 `docs/research/P6_ENV.md` 的 Python 段落與 `docs/research/P6_REMOTE.md` 的指令，之後本文件所有指令都用 `D:\soft\Python313\python.exe`。
 
 ## 3. 工作包 A：拿掉判定與門檻
 
@@ -239,7 +257,7 @@ class OutcomeModel:
 
 ## 8. 工作包 F：混合效應、神經網路、序列模型
 
-**開始前先問使用者是否同意安裝 PyTorch**（深度學習套件，神經網路與序列模型需要它，混合效應模型也用它在 GPU 上估計；CUDA 版約 2–3 GB，裝在哪裡依工作包 0 的決定）。同意後再裝，並在 `pyproject.toml` 加成選用依賴（例如 `[torch]`），沒裝時這三種模型在介面上顯示「需要安裝 PyTorch」，不能選。
+**開始前先問使用者是否同意安裝 PyTorch**（深度學習套件，神經網路與序列模型需要它，混合效應模型也用它在 GPU 上估計；CUDA 版約 2–3 GB，裝進 `D:\soft\Python313`，加 `--no-cache-dir`）。同意後再裝，並在 `pyproject.toml` 加成選用依賴（例如 `[torch]`），沒裝時這三種模型在介面上顯示「需要安裝 PyTorch」，不能選。
 
 三種模型都實作 B.1 的介面與 B.2 的偏差控制：
 - **混合效應（`mixed`）**：多類別邏輯迴歸，投手、打者（、投手×比賽）各一組隨機效應向量（每類一維），常態先驗，變異數由資料估計（經驗貝氏；可用 PyTorch 交替最佳化，或把變異數當超參數在驗證集上選）。這是最直接處理「投手好壞混淆」的模型。
