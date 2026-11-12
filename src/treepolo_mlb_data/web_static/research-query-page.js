@@ -5,7 +5,7 @@
   const ROUTE = "research-query";
   const PITCH_TYPES = ["FF", "SI", "FC", "SL", "ST", "CH", "CU", "FS", "KC"];
   const FLAG_LABEL = { sufficient: "資料充足", extrapolated: "外推", unsupported: "不支持" };
-  const GATE_LABEL = { full: "完整個別化", level_only: "只有水準個別化", off: "關閉", unknown: "尚未判定" };
+  const MEASURE_LABEL = { level_gain: "對數損失改善", type_contrast: "球種對比預測改善" };
   const state = { runs: [], runId: null, meta: null, pitcher: null, batter: null, result: null, svg: null };
 
   function el(tag, props = {}, ...children) {
@@ -51,7 +51,9 @@
       .rq-table th:first-child, .rq-table td:first-child, .rq-table td.rq-flag { text-align:left; }
       .rq-row-extrapolated td { border-style:dashed; background:#fffbe6; }
       .rq-row-unsupported td { color:#8a94a1; background:#f1f3f5; text-decoration:line-through; }
-      .rq-detected { font-weight:700; color:#0b6b2e; }
+      .rq-gains { border-collapse:collapse; font-size:12px; margin:4px 0; }
+      .rq-gains th, .rq-gains td { border:1px solid #bbc3ce; padding:2px 8px; text-align:right; }
+      .rq-gains th:first-child, .rq-gains td:first-child { text-align:left; }
       .rq-notcovered { margin-top:8px; font-size:12px; color:#44505e; }
       .rq-chart { margin-top:8px; overflow:auto; }
     `;
@@ -133,8 +135,7 @@
     if (!r) { host.replaceChildren(); return; }
     const parts = [];
     const modeText = { M0: "M0 聯盟平均", M1: "M1 特定投手 × 平均打者", M2: "M2 平均投手 × 特定打者", M3: "M3 特定投手 × 特定打者" }[r.mode] || r.mode;
-    const gates = r.gates && Object.keys(r.gates).length ? `　閘門：投手側 ${GATE_LABEL[r.gates.pitcher] || r.gates.pitcher}、打者側 ${GATE_LABEL[r.gates.batter] || r.gates.batter}` : "";
-    parts.push(el("div", { class: "rq-banner", id: "rq-banner", text: `${modeText}　分組 ${r.group}${r.level ? `　特徵階 ${r.level}` : ""}${gates}` }));
+    parts.push(el("div", { class: "rq-banner", id: "rq-banner", text: `${modeText}　分組 ${r.group}${r.level ? `　特徵階 ${r.level}` : ""}` }));
     Object.entries(r.players || {}).forEach(([side, info]) => {
       const shrink = info.shrinkage == null ? "" : `；個人資料權重 own-data weight ${(info.shrinkage * 100).toFixed(0)}%（愈低愈接近聯盟平均）`;
       const thin = info.pitches < 300 ? "　⚠ 資料量少，描述幾乎等於聯盟平均" : "";
@@ -143,9 +144,17 @@
     (r.notice || []).forEach(text => parts.push(el("div", { class: "rq-notice", text })));
     if (r.sampling) parts.push(el("div", { class: "hint", text: `抽樣 ${r.sampling.pairs} 對、成員 ${r.sampling.members}；${r.sampling.note}` }));
     parts.push(table(r));
+    parts.push(el("div", { class: "hint", id: "rq-overlap-note", text: "區間重疊群組：同一個字母代表它們的 Q 區間互相重疊，資料分不出這幾種球的高低（這是描述，不是判定）。" }));
+    if (r.comparisons) parts.push(el("div", { class: "hint", id: "rq-chance", text: `這個答案比較了 ${r.comparisons.n} 種球；在 ${(r.comparisons.confidence * 100).toFixed(0)}% 區間下，就算全部其實沒差，純靠運氣也預期約 ${r.comparisons.expected_by_chance.toFixed(2)} 個「相對一般配球」的區間不含 0；實際有 ${r.comparisons.found} 個。` }));
+    if ((r.descriptor_gains || []).length) {
+      parts.push(el("div", { class: "hint", id: "rq-gains-note", text: "球員描述的預測增益（建模時，對沒見過的球員；正值＝加了球員描述比較準；只列數字，不會因此關掉個別化）：" }));
+      parts.push(el("table", { class: "rq-gains", id: "rq-gains" }, el("thead", {}, el("tr", {}, ...["邊", "比較", "指標", "模式", "數值", "區間", "樣本數"].map(h => el("th", { text: h })))),
+        el("tbody", {}, ...r.descriptor_gains.map(x => el("tr", {}, el("td", { text: x.side || "—" }), el("td", { text: x.comparison || x.gate || "—" }), el("td", { text: MEASURE_LABEL[x.measure] || x.measure || "—" }), el("td", { text: x.mode || "—" }),
+          el("td", { text: num(x.value, 5) }), el("td", { text: x.lo == null ? "—" : `[${num(x.lo, 5)}, ${x.hi == null ? "—" : num(x.hi, 5)}]` }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
+    }
     const charts = window.TreepoloResearchCharts;
     if (charts) {
-      const rows = r.rows.map(x => ({ action: x.action, q: x.supported ? x.q : null, q_lo: x.q_lo, q_hi: x.q_hi, indistinct_group: x.indistinct_group || "—", unsupported: x.flag === "extrapolated" ? 1 : 0 }));
+      const rows = r.rows.map(x => ({ action: x.action, q: x.supported ? x.q : null, q_lo: x.q_lo, q_hi: x.q_hi, overlap_group: x.overlap_group || "—", unsupported: x.flag === "extrapolated" ? 1 : 0 }));
       const preset = charts.PRESETS.situationBars;
       const tree = charts.build(preset.type, rows, preset.guess(Object.keys(rows[0])), { ...preset.options, title: "各球種的期望失分 Q（越低越好）", labelOrder: PITCH_TYPES });
       state.svg = charts.toSvgString(tree);
@@ -156,16 +165,14 @@
   }
 
   function table(r) {
-    const head = ["球種", "旗標", "Q 期望失分 [99%]", "相對一般配球", "多投 10pp 的變化", "全壘打/球 [99%]", "n", "群組", "偵測到", "證據"];
+    const head = ["球種", "旗標", "Q 期望失分 [99%]", "相對一般配球", "多投 10pp 的變化", "全壘打/球 [99%]", "n", "區間重疊群組"];
     const body = r.rows.map(x => el("tr", { class: `rq-row-${x.flag}`, "data-action": x.action },
       el("td", { text: x.action }), el("td", { class: "rq-flag", text: FLAG_LABEL[x.flag] || x.flag }),
       el("td", { text: x.supported ? `${num(x.q)} [${num(x.q_lo)}, ${num(x.q_hi)}]` : "—" }),
       el("td", { text: x.supported ? `${num(x.advantage)} [${num(x.adv_lo)}, ${num(x.adv_hi)}]` : "—" }),
       el("td", { text: x.supported ? `${num(x.marginal)} [${num(x.m_lo)}, ${num(x.m_hi)}]` : "—" }),
       el("td", { text: `${pct(x.hr_probability)} [${pct(x.hr_lo)}, ${pct(x.hr_hi)}]` }),
-      el("td", { text: x.n }), el("td", { text: x.supported ? (x.indistinct_group || "—") : "—" }),
-      el("td", { class: x.detected ? "rq-detected" : "", text: x.supported ? (x.detected ? "是" : "否") : "—" }),
-      el("td", { class: "rq-flag", text: x.supported ? x.evidence : "不支持，不得建議" })));
+      el("td", { text: x.n }), el("td", { text: x.supported ? (x.overlap_group || "—") : "不支持，不得建議" })));
     return el("table", { class: "rq-table", id: "rq-table" }, el("thead", {}, el("tr", {}, ...head.map(h => el("th", { text: h })))), el("tbody", {}, ...body));
   }
 
@@ -198,7 +205,7 @@
     const panel = el("div", { id: PANEL_ID, class: "panel" },
       el("div", { class: "panel-heading", text: "情境查詢 Situation Query" }),
       el("div", { class: "panel-body" },
-        el("p", { class: "hint", text: "輸入一個比賽情境，看九種球種各自的期望失分。結果是模型估計（建模期資料），不是保證；沒有達到偵測準則的差異會標示「否」。 Model estimates from the modeling period, not guarantees." }),
+        el("p", { class: "hint", text: "輸入一個比賽情境，看九種球種各自的期望失分。結果是模型估計（建模期資料），不是保證；每種球的數字與區間都列出，區間重疊的球種用字母群組標示。 Model estimates from the modeling period, not guarantees." }),
         el("div", { class: "button-row" }, el("label", {}, "查詢紀錄 Run ", el("select", { id: "rq-run", onchange: event => guarded(() => chooseRun(event.target.value)) })),
           el("button", { type: "button", text: "⟳ 重新整理 Refresh", onclick: () => guarded(loadRuns) })),
         el("div", { id: "rq-status", class: "rr-status" }), el("div", { id: "rq-form-host" }), el("div", { id: "rq-result" })));

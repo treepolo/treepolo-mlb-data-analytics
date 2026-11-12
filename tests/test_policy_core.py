@@ -215,4 +215,10 @@ def test_support_rule_and_member_interval():
     vals = np.array([[1.0], [1.2], [0.8], [1.0], [1.0]])
     mean, lo, hi = pc.member_interval(vals, 0.99)
     assert mean[0] == pytest.approx(1.0) and lo[0] < 1.0 < hi[0]
-    assert pc.detect(np.array([0.01, 0.01, 0.001]), np.array([0.002, -0.002, 0.0005]), np.array([0.02, 0.02, 0.002]), np.array([True, True, True])).tolist() == [True, False, False]
+    assert not hasattr(pc, "detect")                                         # no detection verdict any more
+    lo = np.array([0.002, -0.002, 0.0005, np.nan, -0.03]); hi = np.array([0.02, 0.02, 0.002, np.nan, -0.01])
+    got = pc.chance_summary(lo, hi, 0.99)
+    assert got == {"n": 4, "confidence": 0.99, "expected_by_chance": pytest.approx(0.04), "found": 3, "what": "interval_excludes_zero"}   # NaN is not counted; [0.002, 0.02], [0.0005, 0.002] and [-0.03, -0.01] exclude 0
+    assert pc.chance_summary(lo, hi, 0.95, mask=np.array([True, True, False, True, False]))["n"] == 2
+    row = pc.chance_row(10, 0.9, 3, "outside_anchor_interval")
+    assert row == {"n": 10, "confidence": 0.9, "expected_by_chance": pytest.approx(1.0), "found": 3, "what": "outside_anchor_interval"}

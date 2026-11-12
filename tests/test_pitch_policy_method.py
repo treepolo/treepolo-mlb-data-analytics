@@ -12,7 +12,7 @@ from treepolo_mlb_data.research.service import ResearchService
 
 SCOPE = {"game_years": [2024], "game_types": ["R"]}
 BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
-BASE = {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_members": 2, "backend": BACKEND, "device": "cpu", "max_depth": 4, "min_leaf": 1000,
+BASE = {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_members": 2, "replication_members": 2, "backend": BACKEND, "device": "cpu", "max_depth": 4, "min_leaf": 1000,
         "learning_rate": 0.15, "max_iter": 50, "min_count": 100, "lambda_grid": [0.0, 1.0], "min_class_count": 5}
 
 
@@ -72,9 +72,29 @@ def test_run_reproduces_run_expectancy_and_finds_the_slider(service, result, w1)
     cross = [r for r in section(service, result, "Policy value") if r["kind"].startswith("cross") and r["policy"] == "dp_trust"][0]
     assert 0.5 * same["saving_pa"] < cross["saving_pa"] < 1.5 * same["saving_pa"]
     marg = {r["action"]: r for r in section(service, result, "Marginal value")}
-    assert marg["SL"]["advantage"] < -0.01 and marg["SL"]["adv_hi"] < 0 and marg["SL"]["marginal"] < 0 and marg["SL"]["detected_share"] > 0.2
+    assert marg["SL"]["advantage"] < -0.01 and marg["SL"]["adv_hi"] < 0 and marg["SL"]["marginal"] < 0
     assert marg["FF"]["advantage"] > 0
     assert set(marg) == {"FF", "SL", "CH"}
+    assert all("detected_share" not in r for r in marg.values())                  # numbers and intervals only: no detection share
+
+
+def test_comparison_counts_and_per_year_replication_are_listed(service, result):
+    res = service.store.load_result(result["id"])
+    direction = section(service, result, "Direction map")
+    assert all("not_detected" not in r for r in direction)
+    lo = np.array([r["adv_lo"] for r in direction], dtype=float); hi = np.array([r["adv_hi"] for r in direction], dtype=float)
+    ok = np.isfinite(lo) & np.isfinite(hi)
+    chance = res["extras"]["comparisons"]["direction"]["RvR"]
+    assert chance["n"] == int(ok.sum()) and chance["found"] == int((ok & ((lo > 0) | (hi < 0))).sum())              # N and M are counted from the listed cells, not written in
+    assert chance["expected_by_chance"] == pytest.approx(chance["n"] * (1 - chance["confidence"])) and chance["confidence"] == 0.99
+    assert res["extras"]["comparisons"]["marginal"]["RvR"]["n"] == 3
+    rep = section(service, result, "Replication")
+    years = sorted({r["year"] for r in rep})
+    assert len(years) >= 2 and res["extras"]["replication"] == {"members_per_year": 2, "years": years}
+    per_action = [r for r in rep if r["context"] == "ALL"]
+    assert {(r["year"], r["action"]) for r in per_action} == {(y, a) for y in years for a in ("FF", "SL", "CH")}      # every year has every action side by side
+    assert all(r["adv_lo"] <= r["advantage"] <= r["adv_hi"] for r in per_action if r["advantage"] is not None)
+    assert any(r["context"] != "ALL" for r in rep)                                                                      # the direction cells are repeated per year too
 
 
 def test_risk_frontier_trades_runs_for_home_runs(service, result):
@@ -147,11 +167,17 @@ def test_action_effects_run_has_the_anchor_tables(service, anchored):
 
 def test_policy_with_anchor_reports_consistency_and_direction_map(service, anchored):
     _, policy = anchored
-    anchor_sec = section(service, policy, "Anchor")
-    assert {r["design"] for r in anchor_sec} == {"S3", "S4"} and all(r["passes"] == 1 for r in anchor_sec)
+    anchor_sec = section(service, policy, "Anchor 錨點對照彙總")
+    assert {r["design"] for r in anchor_sec} == {"S3", "S4"} and all("passes" not in r for r in anchor_sec)             # numbers only: no pass / fail
+    assert all(r["cells"] > 0 and 0 <= r["same_sign_share"] <= 1 and r["outside_anchor_interval"] <= r["cells"] for r in anchor_sec)
+    cells = section(service, policy, "Anchor cells")
+    assert {r["design"] for r in cells} == {"S3", "S4"} and sum(1 for r in cells if r["design"] == "S3") == next(r["cells"] for r in anchor_sec if r["design"] == "S3")      # every cell is listed
+    assert all(r["anchor_lo"] <= r["anchor_effect"] <= r["anchor_hi"] and r["difference"] == pytest.approx(r["model_effect"] - r["anchor_effect"]) for r in cells)
+    anchor_chance = service.store.load_result(policy["id"])["extras"]["comparisons"]["anchor"]["RvR"]
+    assert anchor_chance["what"] == "outside_anchor_interval" and anchor_chance["n"] == sum(r["cells"] for r in anchor_sec) and anchor_chance["found"] == sum(r["outside_anchor_interval"] for r in anchor_sec)
     direction = section(service, policy, "Direction map")
     sl = [r for r in direction if r["action"] == "SL" and r["context"].startswith("1-1 ")]
-    assert sl and all(r["marginal"] < 0 for r in sl) and any(r["not_detected"] == 0 for r in direction if r["action"] == "SL")
+    assert sl and all(r["marginal"] < 0 for r in sl)
     assert {r["action"] for r in direction} == {"FF", "SL", "CH"} and all(r["context"].startswith("0-0 | none") for r in direction if r["balls"] == 0 and r["strikes"] == 0)
 
 

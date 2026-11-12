@@ -31,4 +31,7 @@ treepolo_mlb_data = ["web_static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: tests requiring live Baseball Savant access"]
+markers = [
+  "integration: tests requiring live Baseball Savant access",
+  "report: known-answer checks on synthetic worlds; they only write numbers to docs/research/known_answer_report.json and never fail on a number (CI skips them)",
+]

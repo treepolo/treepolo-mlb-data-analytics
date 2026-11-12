@@ -147,14 +147,16 @@
         if (ci < 0 || ri < 0 || v === null) return;
         const cellKey = `${ci}|${ri}`;
         if (seenCells.has(cellKey)) collisions += 1; seenCells.add(cellKey);
-        const faded = mapping.low && Number(r[mapping.low]) === 1;
-        const tip = `${r[mapping.row]} → ${r[mapping.col]}: ${fmt(v)}${mapping.n && r[mapping.n] != null ? ` (n=${r[mapping.n]})` : ""}`;
+        const zlo = mapping.zeroLo ? num(r[mapping.zeroLo]) : null, zhi = mapping.zeroHi ? num(r[mapping.zeroHi]) : null;
+        const straddlesZero = isNum(zlo) && isNum(zhi) && zlo <= 0 && zhi >= 0;       // the interval contains 0: a colour-depth description, not a verdict
+        const faded = (mapping.low && Number(r[mapping.low]) === 1) || straddlesZero;
+        const tip = `${r[mapping.row]} → ${r[mapping.col]}: ${fmt(v)}${mapping.n && r[mapping.n] != null ? ` (n=${r[mapping.n]})` : ""}${isNum(zlo) && isNum(zhi) ? ` 區間 [${fmt(zlo)}, ${fmt(zhi)}]` : ""}`;
         parts.push(node("rect", { x: PANEL.left + ci * cw, y: PANEL.top + ri * ch, width: cw - 1, height: ch - 1, fill: heatColor(v, lo, hi, diverging), "fill-opacity": faded ? 0.35 : 1, class: faded ? "rc-cell rc-low" : "rc-cell" }, [node("title", {}, [], tip)]));
         parts.push(node("text", { x: PANEL.left + ci * cw + cw / 2, y: PANEL.top + ri * ch + ch / 2 + 3, "text-anchor": "middle", "font-size": 9, fill: INK }, [], (Math.round(v * 1000) / 1000).toFixed(3)));
       });
       return panelFrame(panelName, dim.width, dim.height, parts);
     });
-    return assemble(built, panels, [], options, `${mapping.value}: ${fmt(lo)} … ${fmt(hi)}（滑過格子看 n；淡色＝樣本不足 faded = low n）${collisions ? `　⚠ ${collisions} 格有重複資料，只顯示最後一筆，請用篩選器選定一組 ${collisions} cells have several rows; filter to one group` : ""}`, dim);
+    return assemble(built, panels, [], options, `${mapping.value}: ${fmt(lo)} … ${fmt(hi)}（滑過格子看 n 與區間；${mapping.zeroLo ? "淡色＝區間含 0，資料分不出有沒有差 faded = interval contains 0" : "淡色＝樣本不足 faded = low n"}）${collisions ? `　⚠ ${collisions} 格有重複資料，只顯示最後一筆，請用篩選器選定一組 ${collisions} cells have several rows; filter to one group` : ""}`, dim);
   }
 
   // ---- scatter with error bars ---------------------------------------------------------------------------------------
@@ -219,7 +221,7 @@
       parts.push(node("text", { x: (left + dim.width - right) / 2, y: dim.height - 4, "text-anchor": "middle", "font-size": 11, fill: INK }, [], options.xLabel || mapping.value));
       return node("g", { class: "rc-panel" }, [panelName ? node("text", { x: left, y: 14, "font-size": 12, "font-weight": 700, fill: INK }, [], panelName) : null, ...parts]);
     });
-    return assemble(built, panels, names, options, mapping.low ? "淡色＝無可偵測差異或樣本不足 faded = not detected / low n" : "", dim);
+    return assemble(built, panels, names, options, mapping.low ? "淡色＝樣本不足或不支持 faded = low n / unsupported" : "", dim);
   }
 
   function uniqueOrdered(values, order) {
@@ -257,13 +259,13 @@
   function pick(columns, names) { return names.find(n => columns.includes(n)) || null; }
   const PRESETS = {
     streak: { label: "連投曲線 Streak curve", type: "line", guess: c => ({ x: pick(c, ["k", "term"]), y: pick(c, ["estimate", "mean", "diff"]), lo: pick(c, ["lo"]), hi: pick(c, ["hi"]), series: pick(c, ["pitch_type"]), facet: pick(c, ["hand_group", "frame_group"]), zeroLine: true }), options: { integerX: true } },
-    direction: { label: "方向圖 Direction map（邊際價值）", type: "heatmap", guess: c => ({ row: pick(c, ["context"]), col: pick(c, ["action"]), value: pick(c, ["marginal"]), n: pick(c, ["n"]), low: pick(c, ["not_detected"]), facet: pick(c, ["group", "hand_group"]) }),
-      options: { diverging: true, disclaimer: "模型估計（聯盟平均）：多投某球種約 10 個百分點的每球失分變化；負＝對投手有利，灰淡＝無可偵測差異 · Model estimate for the league average" } },
+    direction: { label: "方向圖 Direction map（邊際價值）", type: "heatmap", guess: c => ({ row: pick(c, ["context"]), col: pick(c, ["action"]), value: pick(c, ["marginal"]), n: pick(c, ["n"]), zeroLo: pick(c, ["adv_lo"]), zeroHi: pick(c, ["adv_hi"]), facet: pick(c, ["group", "hand_group"]) }),
+      options: { diverging: true, disclaimer: "模型估計（聯盟平均）：多投某球種約 10 個百分點的每球失分變化；負＝對投手有利；淡色＝區間含 0（資料分不出有沒有差，只是顏色深淺的描述） · Model estimate for the league average" } },
     frontier: { label: "取捨前緣 Risk frontier", type: "scatter", guess: c => ({ x: pick(c, ["hr_probability"]), y: pick(c, ["expected_runs"]), xlo: pick(c, ["hr_lo"]), xhi: pick(c, ["hr_hi"]), ylo: pick(c, ["lo"]), yhi: pick(c, ["hi"]), color: pick(c, ["lambda"]), facet: pick(c, ["group"]) }),
       options: { xLabel: "此打席全壘打機率", yLabel: "期望失分", disclaimer: "模型估計：每個 λ 的信賴區域政策 · Model estimate, one trust-region policy per lambda" } },
     ablation: { label: "特徵消融 Feature ablation（對數損失改善）", type: "bars", guess: c => ({ label: pick(c, ["comparison"]), value: pick(c, ["delta_logloss", "gain"]), lo: pick(c, ["lo"]), hi: pick(c, ["hi"]), color: pick(c, ["mode"]), facet: pick(c, ["group"]) }),
       options: { xLabel: "對數損失改善（正＝球員描述有用）", disclaimer: "沒見過的球員上的預測改善 · Prediction gain on players the model has not seen" } },
-    situationBars: { label: "情境條圖 Situation bars（每種球種的 Q）", type: "bars", guess: c => ({ label: pick(c, ["action"]), value: pick(c, ["q"]), lo: pick(c, ["q_lo"]), hi: pick(c, ["q_hi"]), color: pick(c, ["indistinct_group"]), low: pick(c, ["unsupported"]) }),
+    situationBars: { label: "情境條圖 Situation bars（每種球種的 Q）", type: "bars", guess: c => ({ label: pick(c, ["action"]), value: pick(c, ["q"]), lo: pick(c, ["q_lo"]), hi: pick(c, ["q_hi"]), color: pick(c, ["overlap_group"]), low: pick(c, ["unsupported"]) }),
       options: { zeroBase: false, xLabel: "到半局結束的期望失分", disclaimer: "模型估計：此情境投該球種、之後照一般投法 · Model estimate: throw it now, then play as usual" } },
     prevNext: { label: "前一球→下一球熱圖 Previous→next heatmap", type: "heatmap", guess: c => ({ row: pick(c, ["prev1_pitch_type"]), col: pick(c, ["pitch_type"]), value: pick(c, ["whiff_per_swing", "mean_value", "hr_rate", "swing_rate"]), n: pick(c, ["n"]), low: pick(c, ["low_n"]), facet: pick(c, ["hand_group"]) }), options: { hideLow: true } },
     location: { label: "位置熱圖 Location heatmap", type: "heatmap", guess: c => ({ row: pick(c, ["loc_z_bin"]), col: pick(c, ["loc_x_bin"]), value: pick(c, ["whiff_per_swing", "mean_value", "hr_rate", "swing_rate"]), n: pick(c, ["n"]), low: pick(c, ["low_n"]), facet: pick(c, ["pitch_type", "hand_group"]) }), options: { reverseRows: true, hideLow: true } },

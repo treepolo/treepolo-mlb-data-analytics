@@ -50,7 +50,6 @@
       .rp-table { border-collapse:collapse; font-size:12px; margin:4px 0; }
       .rp-table th, .rp-table td { border:1px solid #bbc3ce; padding:2px 8px; text-align:right; }
       .rp-table th:first-child, .rp-table td:first-child { text-align:left; }
-      .rp-ok { color:#0b6b2e; font-weight:700; } .rp-bad { color:#b03a2e; font-weight:700; }
     `;
     document.head.append(style);
   }
@@ -134,16 +133,29 @@
     Object.entries(s.groups).forEach(([group, g]) => {
       const r1 = g.r1;
       const card = el("div", { class: "rp-card", "data-group": group }, el("h4", { text: `${group}` }),
-        el("div", {}, "引擎檢查（照實際配球算出的期望失分，要對得上得分期望值表）：", el("span", { class: r1.passed ? "rp-ok" : "rp-bad", text: r1.passed ? " 通過" : " 沒通過" }),
-          ` （各狀態中位數差 ${num(r1.median_abs_diff)}、最大差 ${num(r1.max_abs_diff)}、打席起點差 ${num(r1.start_diff)}）`));
+        el("div", { class: "hint", text: `引擎對照（照實際配球算出的期望失分，和真實資料統計出的得分期望值表差多少；0＝完全一致）：各狀態中位數差 ${num(r1.median_abs_diff)}、最大差 ${num(r1.max_abs_diff)}、打席起點差 ${num(r1.start_diff)}` }));
       if (g.policies.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["政策", "算法", "每打席少失分", "區間", "每隊每季少失分"].map(h => el("th", { text: h })))),
         el("tbody", {}, ...g.policies.map(p => el("tr", {}, el("td", { text: p.policy }), el("td", { text: p.kind }), el("td", { text: num(p.saving_pa) }), el("td", { text: p.lo == null ? "—" : `[${num(p.lo)}, ${num(p.hi)}]` }), el("td", { text: num(p.saving_per_team_season, 1) }))))));
-      if (g.gates.length) card.append(el("div", { class: "hint", text: `球員描述有沒有用（沒見過的球員）：${g.gates.filter(x => x.gate === "G1a" || x.gate === "G1b").map(x => `${x.side} ${x.gate} ${x.passed ? "過" : "沒過"}`).join("；")}` }));
-      if (g.actions.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["球種", "相對一般配球", "區間", "多投 10pp 的變化", "偵測到的比例"].map(h => el("th", { text: h })))),
-        el("tbody", {}, ...g.actions.map(a => el("tr", {}, el("td", { text: a.action }), el("td", { text: num(a.advantage) }), el("td", { text: `[${num(a.adv_lo)}, ${num(a.adv_hi)}]` }), el("td", { text: num(a.marginal) }), el("td", { text: `${(a.detected_share * 100).toFixed(0)}%` }))))));
+      if (g.descriptor_gains.length) {
+        card.append(el("div", { class: "hint", text: "球員描述的預測增益（沒見過的球員；正值＝加了球員描述比較準；只列數字，不下判斷）：" }));
+        card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["邊", "比較", "指標", "模式", "數值", "區間", "樣本數"].map(h => el("th", { text: h })))),
+          el("tbody", {}, ...g.descriptor_gains.map(x => el("tr", {}, el("td", { text: x.side }), el("td", { text: x.comparison }), el("td", { text: MEASURE_LABEL[x.measure] || x.measure }), el("td", { text: x.mode }),
+            el("td", { text: num(x.value, 5) }), el("td", { text: x.lo == null ? "—" : `[${num(x.lo, 5)}, ${num(x.hi, 5)}]` }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
+      }
+      if (g.actions.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["球種", "相對一般配球", "區間", "多投 10pp 的變化"].map(h => el("th", { text: h })))),
+        el("tbody", {}, ...g.actions.map(a => el("tr", {}, el("td", { text: a.action }), el("td", { text: num(a.advantage) }), el("td", { text: `[${num(a.adv_lo)}, ${num(a.adv_hi)}]` }), el("td", { text: num(a.marginal) }))))));
+      Object.entries(g.comparisons || {}).forEach(([section, c]) => card.append(el("div", { class: "hint rp-chance", "data-section": section, text: chanceText(section, c) })));
       out.push(card);
     });
+    if (s.replication) out.push(el("div", { class: "hint", id: "rp-replication", text: `換年份重看：${s.replication.years.join("、")} 每個年份單獨訓練一份模型（每年 ${s.replication.members_per_year} 個成員），各年份的估計並排放在「研究紀錄」該次執行的 Replication 區段；只並排數字，不做同號就算重現的判斷。` }));
     return out;
+  }
+
+  const MEASURE_LABEL = { level_gain: "對數損失改善", type_contrast: "球種對比預測改善" };
+  const SECTION_LABEL = { marginal: "邊際價值摘要（各球種）", direction: "方向圖（情境×球種）", anchor: "錨點對照（模型效果對固定效應效果）" };
+  function chanceText(section, c) {
+    const what = c.what === "outside_anchor_interval" ? "模型效果落在對照區間之外" : "區間不含 0";
+    return `${SECTION_LABEL[section] || section}：共比較了 ${c.n} 個；在 ${(c.confidence * 100).toFixed(0)}% 區間下，就算全部其實沒差，純靠運氣也預期約 ${c.expected_by_chance.toFixed(1)} 個「${what}」；實際有 ${c.found} 個。`;
   }
 
   function render() {

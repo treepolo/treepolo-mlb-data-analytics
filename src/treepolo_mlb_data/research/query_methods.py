@@ -39,7 +39,7 @@ def _run_of_kind(ctx: ResearchContext, run_id: int, kind: str) -> dict[str, Any]
 
 class PitchQueryMethod(ResearchMethod):
     kind = "pitch_query"
-    version = 1
+    version = 2     # 2: answers no longer switch personalisation off by a gate; rows carry no detected/evidence; comparison counts and descriptor gains are attached
     label_zh = "情境查詢工具（驗收與球員名稱）"
     label_en = "Situation query tool (acceptance and player names)"
     requires_scope = True
@@ -190,21 +190,19 @@ class QueryRuntime:
                 self._queries[group] = qc.PlayerQuery(self.table(group), package)
             return self._queries[group]
 
-    # --- gates of the model run, per side
-    def gate_status(self, group: str) -> dict[str, str]:
-        out = {"pitcher": "unknown", "batter": "unknown"}
+    # --- how much the player descriptors helped in the model run (numbers only; they do not switch anything off)
+    def descriptor_gains(self, group: str) -> list[dict[str, Any]]:
+        """The rows of the model run's "Descriptor gain 球員描述的預測增益" section for ``group``. A model run from before that section existed has a "Gates" section
+        instead: its numbers (value, lower bound) are returned the same way and its pass/fail column is dropped."""
+
         if not self.package_run_id:
-            return out
+            return []
         result = self.store.load_result(self.package_run_id)
-        rows = next((s["rows"] for s in result["sections"] if s["title"].startswith("Gates")), [])
-        for side in out:
-            mine = [r for r in rows if r["group"] == group and str(r["side"]).startswith(side + ":")]
-            if not mine:
-                continue
-            g1a = any(r["gate"] == "G1a" and r["passed"] == 1 for r in mine)
-            g1b = any(r["gate"] == "G1b" and r["passed"] == 1 for r in mine)
-            out[side] = "full" if g1a and g1b else ("level_only" if g1a else "off")
-        return out
+        for prefix in ("Descriptor gain", "Gates"):
+            rows = next((s["rows"] for s in result["sections"] if s["title"].startswith(prefix)), None)
+            if rows is not None:
+                return [{k: r.get(k) for k in ("side", "comparison", "gate", "measure", "mode", "value", "lo", "hi", "n")} for r in rows if r["group"] == group]
+        return []
 
     # --- names
     def names(self) -> dict[str, dict[str, str]]:
@@ -243,27 +241,16 @@ class QueryRuntime:
         pitcher = _as_id(pitcher); batter = _as_id(batter)
         if pitcher is None and batter is None:
             res = table.lookup(balls, strikes, outs, bases, prev, streak)
-            res["gates"] = self.gate_status(group) if self.package_run_id else {}
+            res["descriptor_gains"] = self.descriptor_gains(group)
             return res
-        status = self.gate_status(group)
-        notice = []
-        if pitcher is not None and status["pitcher"] == "off":
-            notice.append("投手側的個別化沒有通過閘門（球員描述在現有資料下沒有預測力），改顯示聯盟平均 / pitcher descriptors did not pass the gate: league average shown")
-            pitcher = None
-        if batter is not None and status["batter"] == "off":
-            notice.append("打者側的個別化沒有通過閘門，改顯示聯盟平均 / batter descriptors did not pass the gate: league average shown")
-            batter = None
         pq = self.player_query(group)
         res = pq.query(balls, strikes, outs, bases, prev, streak, pitcher=pitcher, batter=batter, level=params.get("level") or self.level,
                        samples=int(params.get("samples", 100)), members=int(params.get("members", 10)), seed=int(params.get("seed", 20240601)))
-        if any(status[s] == "level_only" for s in res["players"]):
-            notice.append("只有水準個別化：球員整體強弱改變機率與 Q 的水準，但球種的排序與邊際價值與聯盟平均沒有可偵測差異 / level-only personalisation")
-            for row in res["rows"]:
-                row["detected"] = False
         names = self.names()
         for side, info in res["players"].items():
             info["name"] = names.get(side, {}).get(info["id"])
-        res["gates"] = status; res["notice"] = notice
+        res["descriptor_gains"] = self.descriptor_gains(group)
+        res["notice"] = []
         return res
 
 

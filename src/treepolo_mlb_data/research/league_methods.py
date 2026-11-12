@@ -181,7 +181,7 @@ class LeagueModelMethod(ResearchMethod):
     """One boosted-tree model per handedness group on the whole league; player descriptors as inputs (P6 plan 3.4, 4.6)."""
 
     kind = "league_model"
-    version = 2     # 2: a cold_only run with save_package fits the saved members on all rows; the package carries the descriptors
+    version = 3     # 3: no pass/fail gates and no min_gain; "Descriptor gain" section lists the numbers. 2: a cold_only run with save_package fits the saved members on all rows
     label_zh = "全聯盟模型（球員描述特徵）"
     label_en = "League model with player descriptors"
     requires_scope = True
@@ -217,8 +217,6 @@ class LeagueModelMethod(ResearchMethod):
         ConfigField("class_merge", "json", default=md.DEFAULT_CLASS_MERGE, label_zh="結果類別對照", label_en="Outcome class map"),
         ConfigField("min_class_count", "int", default=50, minimum=1, label_zh="類別最小訓練樣本", label_en="Minimum training rows per class"),
         ConfigField("min_cell_swings", "int", default=30, minimum=1, label_zh="球種對比的最小揮棒數", label_en="Minimum swings per (player, type) cell"),
-        ConfigField("min_gain", "float", default=0.0003, minimum=0.0, label_zh="G1a 最小對數損失增益", label_en="G1a minimum log-loss gain",
-                    help_zh="小樣本（測試、快速層）模型本身的隨機變異大，需調高；真實全量資料用預設。", help_en="Raise for small samples where model variance dominates; real full-size data uses the default."),
         ConfigField("bootstrap_reps", "int", default=200, minimum=20, maximum=5000, label_zh="Bootstrap 次數", label_en="Bootstrap replicates"),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
         ConfigField("save_package", "bool", default=False, label_zh="保存模型包", label_en="Save the model package",
@@ -272,7 +270,7 @@ class LeagueModelMethod(ResearchMethod):
             gain_rows += [{"group": group, **r} for r in res["gain"]]
             contrast_rows += [{"group": group, **r} for r in res["contrast"]]
             cal_rows += [{"group": group, **r} for r in res["calibration"]]
-            gate_rows += self._gates(group, res, config["min_gain"])
+            gate_rows += self._descriptor_gains(group, res)
             if config["save_package"]:
                 artifacts.append(self._package(group, res, config, profile))
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "split": config["split"], "backend": config["backend"], "device": device, "classes": classes,
@@ -289,7 +287,8 @@ class LeagueModelMethod(ResearchMethod):
             sections.append(make_section("Type contrast 球種對比預測（G1b）", ("group", "mode", "side", "comparison", "mse_base", "mse_other", "gain", "lo", "hi", "units"), contrast_rows,
                                          ("group", "mode", "side", "comparison"), "duckdb", DIGITS))
         if gate_rows:
-            sections.append(make_section("Gates 閘門（G1a、G1b；投手側、打者側各自）", ("group", "side", "gate", "mode", "value", "lo", "passed"), gate_rows, ("group", "side", "gate", "mode"), "duckdb", DIGITS))
+            sections.append(make_section("Descriptor gain 球員描述的預測增益（沒見過的球員；正值＝加了球員描述比較準）",
+                                         ("group", "side", "comparison", "measure", "mode", "value", "lo", "hi", "n"), gate_rows, ("group", "side", "comparison", "measure", "mode"), "duckdb", DIGITS))
         sections.append(make_section("Calibration 校準", ("group", "mode", "level", "class", "bin", "n", "mean_pred", "observed"), cal_rows, ("group", "mode", "level", "class", "bin"), "duckdb", DIGITS))
         return ResearchResult(sections=tuple(sections), extras=extras, artifacts=tuple(artifacts))
 
@@ -312,8 +311,9 @@ class LeagueModelMethod(ResearchMethod):
             raise ConfigError(f"Classes {small} have fewer than min_class_count training rows in group {group}; merge them with class_merge / 類別 {small} 訓練樣本不足，請用 class_merge 合併")
 
     @staticmethod
-    def _gates(group: str, res: dict[str, Any], min_gain: float = 0.0003) -> list[dict[str, Any]]:
-        """G1a (level gain on unseen players) and G1b (type contrast on unseen players) per side, with the plan 4.6 thresholds."""
+    def _descriptor_gains(group: str, res: dict[str, Any]) -> list[dict[str, Any]]:
+        """How much better the predictions get when the player descriptors are added, for players the model has not seen: the log-loss gain per level
+        (``measure`` = level_gain, n = rows) and the type-contrast gain (``measure`` = type_contrast, n = players). Numbers with intervals only, no verdict."""
 
         out = []
         sides = (("pitcher", "cold_pitcher", ("L1", "L3")), ("batter", "cold_batter", ("L2", "L3")))
@@ -321,14 +321,13 @@ class LeagueModelMethod(ResearchMethod):
             for lv in levels:
                 g = next((r for r in res["gain"] if r["mode"] == mode and r["comparison"] == f"L0→{lv}"), None)
                 if g is not None:
-                    out.append({"group": group, "side": f"{side}:{lv}", "gate": "G1a", "mode": mode, "value": g["delta_logloss"], "lo": g["lo"],
-                                "passed": int(g["delta_logloss"] >= min_gain and g["lo"] > 0)})
-                c = next((r for r in res["contrast"] if r["mode"] == mode and r["side"] == side and r["comparison"] == f"L0→{lv}"), None)
-                if c is not None:
-                    out.append({"group": group, "side": f"{side}:{lv}", "gate": "G1b", "mode": mode, "value": c["gain"], "lo": c["lo"], "passed": int(c["lo"] > 0)})
-                u = next((r for r in res["contrast"] if r["mode"] == "season_unseen" and r["side"] == side and r["comparison"] == f"L0→{lv}"), None)
-                if u is not None:       # players of the held-out season that the training season never saw: reference only (few players), passed = -1 means "not a gate"
-                    out.append({"group": group, "side": f"{side}:{lv}", "gate": "G1b_ref", "mode": "season_unseen", "value": u["gain"], "lo": u["lo"], "passed": -1})
+                    out.append({"group": group, "side": side, "comparison": f"L0→{lv}", "measure": "level_gain", "mode": mode, "value": g["delta_logloss"], "lo": g["lo"], "hi": g["hi"],
+                                "n": g["n_eval"]})
+                for contrast_mode in (mode, "season_unseen"):        # season_unseen: players of the held-out season that the training season never saw (few players)
+                    c = next((r for r in res["contrast"] if r["mode"] == contrast_mode and r["side"] == side and r["comparison"] == f"L0→{lv}"), None)
+                    if c is not None:
+                        out.append({"group": group, "side": side, "comparison": f"L0→{lv}", "measure": "type_contrast", "mode": contrast_mode, "value": c["gain"], "lo": c["lo"],
+                                    "hi": c["hi"], "n": c["units"]})
         return out
 
     @staticmethod

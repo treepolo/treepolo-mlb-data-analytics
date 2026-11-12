@@ -92,11 +92,11 @@ assert.equal(e.xlo, "value_lo"); assert.equal(e.low, "low_n");
 
 // bars with intervals (situation bars, feature ablation): one row per label, whiskers only when both ends are known, faded low rows, zero line
 const bar = charts.build("bars", [
-  { action: "FF", q: 0.52, q_lo: 0.50, q_hi: 0.54, indistinct_group: "a", unsupported: 0 },
-  { action: "SL", q: 0.47, q_lo: 0.45, q_hi: 0.49, indistinct_group: "b", unsupported: 0 },
-  { action: "KC", q: 0.60, q_lo: null, q_hi: null, indistinct_group: "c", unsupported: 1 },
+  { action: "FF", q: 0.52, q_lo: 0.50, q_hi: 0.54, overlap_group: "a", unsupported: 0 },
+  { action: "SL", q: 0.47, q_lo: 0.45, q_hi: 0.49, overlap_group: "b", unsupported: 0 },
+  { action: "KC", q: 0.60, q_lo: null, q_hi: null, overlap_group: "c", unsupported: 1 },
   { action: "XX", q: null },
-], { label: "action", value: "q", lo: "q_lo", hi: "q_hi", color: "indistinct_group", low: "unsupported" }, { title: "bars", zeroBase: false, disclaimer: "model estimate" });
+], { label: "action", value: "q", lo: "q_lo", hi: "q_hi", color: "overlap_group", low: "unsupported" }, { title: "bars", zeroBase: false, disclaimer: "model estimate" });
 assert.equal(cls(bar, "rc-bar").length, 3); assert.equal(cls(bar, "rc-low").length, 1); assert.equal(cls(bar, "rc-whisker").length, 2);
 assert.ok(find(bar, t => t.text === "model estimate").length === 1 && find(bar, t => t.text && t.text.includes("Historical outcomes")).length === 0);
 assert.ok(find(bar, t => t.tag === "line" && t.attrs["stroke-dasharray"]).length === 0);          // zeroBase false and all values > 0: no zero line
@@ -110,17 +110,20 @@ assert.ok(find(abl, t => t.tag === "line" && t.attrs["stroke-dasharray"]).length
 assert.ok(cls(charts.build("bars", [{ l: "a", v: 1 }], { label: "l", value: "v" }, {}), "rc-whisker").length === 0);
 assert.ok(cls(charts.build("bars", [{ l: null, v: null }], { label: "l", value: "v" }, {}), "rc-empty").length === 1);
 
-// direction map: diverging colours, cells without a detectable difference are faded; frontier uses the scatter with interval bars
+// direction map: diverging colours, cells whose interval contains 0 are drawn faded (a description of colour depth, not a verdict); frontier uses the scatter with interval bars
+const dirCols = ["group", "context", "action", "marginal", "advantage", "adv_lo", "adv_hi", "n"];
 const dirMap = charts.build("heatmap", [
-  { group: "RvR", context: "0-0 | none", action: "SL", marginal: -0.006, n: 900, not_detected: 0 },
-  { group: "RvR", context: "0-0 | none", action: "CH", marginal: 0.001, n: 400, not_detected: 1 },
-  { group: "RvR", context: "1-2 | FF", action: "SL", marginal: 0.004, n: 300, not_detected: 0 },
-], charts.PRESETS.direction.guess(["group", "context", "action", "marginal", "n", "not_detected"]), charts.PRESETS.direction.options);
-assert.equal(cls(dirMap, "rc-cell").length, 3); assert.equal(cls(dirMap, "rc-low").length, 1);
+  { group: "RvR", context: "0-0 | none", action: "SL", marginal: -0.006, adv_lo: -0.08, adv_hi: -0.04, n: 900 },
+  { group: "RvR", context: "0-0 | none", action: "CH", marginal: 0.001, adv_lo: -0.02, adv_hi: 0.03, n: 400 },
+  { group: "RvR", context: "1-2 | FF", action: "SL", marginal: 0.004, adv_lo: 0.01, adv_hi: 0.07, n: 300 },
+], charts.PRESETS.direction.guess(dirCols), charts.PRESETS.direction.options);
+assert.equal(cls(dirMap, "rc-cell").length, 3); assert.equal(cls(dirMap, "rc-low").length, 1);        // only the middle cell's interval contains 0
 const dirFills = cls(dirMap, "rc-cell").map(c => c.attrs.fill);
 assert.ok(dirFills[0].startsWith("rgb(") && dirFills[0] !== dirFills[2]);                         // negative blue vs positive red
-const gd = charts.PRESETS.direction.guess(["group", "context", "action", "marginal", "n", "not_detected"]);
-assert.deepEqual([gd.row, gd.col, gd.value, gd.low, gd.facet], ["context", "action", "marginal", "not_detected", "group"]);
+assert.ok(find(dirMap, t => t.tag === "text" && t.text && t.text.includes("區間含 0")).length >= 1);   // the legend says what faded means
+const gd = charts.PRESETS.direction.guess(dirCols);
+assert.deepEqual([gd.row, gd.col, gd.value, gd.zeroLo, gd.zeroHi, gd.facet], ["context", "action", "marginal", "adv_lo", "adv_hi", "group"]);
+assert.ok(!("low" in gd) || !gd.low);                                                              // no pass/fail column is used any more
 const front = charts.build("scatter", [
   { group: "RvR", lambda: 0, expected_runs: 0.5, lo: 0.49, hi: 0.51, hr_probability: 0.040, hr_lo: 0.039, hr_hi: 0.041 },
   { group: "RvR", lambda: 1, expected_runs: 0.505, lo: 0.495, hi: 0.515, hr_probability: 0.037, hr_lo: 0.036, hr_hi: 0.038 },

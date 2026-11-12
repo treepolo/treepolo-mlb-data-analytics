@@ -9,7 +9,7 @@ home run for the risk-averse objective. Policies are arrays ``pi[state, action]`
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -309,8 +309,8 @@ def marginal_values(Q: np.ndarray, obs: np.ndarray, delta: float = 0.10) -> np.n
 
 
 def advantage(Q: np.ndarray, obs: np.ndarray) -> np.ndarray:
-    """``Q[s,a] - Qbar_{-a}[s]``: how much better throwing ``a`` is than the observed mix of the other types, per pitch (the quantity 4.2 judges
-    against the practical size tau; the marginal value is this times the share moved)."""
+    """``Q[s,a] - Qbar_{-a}[s]``: how much better throwing ``a`` is than the observed mix of the other types, per pitch (the marginal value is this
+    times the share moved)."""
 
     total = (obs * Q).sum(axis=1, keepdims=True)
     rest = 1.0 - obs
@@ -360,11 +360,24 @@ def member_interval(values: np.ndarray, confidence: float = 0.99) -> tuple[np.nd
     return mean, mean - t * sd, mean + t * sd
 
 
-def detect(mean: np.ndarray, lo: np.ndarray, hi: np.ndarray, supported: np.ndarray, tau: float = 0.005) -> np.ndarray:
-    """4.2 criteria 1, 5 and 6 on one set of members (the other criteria need the anchor and the replications): the interval excludes 0,
-    the size is at least ``tau`` and the action is supported."""
+def chance_summary(lo: np.ndarray, hi: np.ndarray, confidence: float, mask: np.ndarray | None = None) -> dict[str, Any]:
+    """How many comparisons were made, how many intervals exclude 0, and how many would be expected to by chance alone.
 
-    return ((lo > 0) | (hi < 0)) & (np.abs(mean) >= tau) & supported
+    ``n`` counts the comparisons with a finite interval (inside ``mask`` when given). Even if every true difference were 0, about ``n * (1 - confidence)`` of the
+    intervals would exclude 0 by luck: that is ``expected_by_chance``. ``found`` is what was actually found. It describes; it does not decide anything."""
+
+    lo = np.asarray(lo, dtype=float); hi = np.asarray(hi, dtype=float)
+    ok = np.isfinite(lo) & np.isfinite(hi)
+    if mask is not None:
+        ok &= np.asarray(mask, dtype=bool)
+    found = ok & ((lo > 0) | (hi < 0))
+    return chance_row(int(ok.sum()), confidence, int(found.sum()), "interval_excludes_zero")
+
+
+def chance_row(n: int, confidence: float, found: int, what: str) -> dict[str, Any]:
+    """The common shape of the 'how many comparisons, how many would look real by luck, how many did' note (``what`` says what was counted)."""
+
+    return {"n": int(n), "confidence": float(confidence), "expected_by_chance": int(n) * (1.0 - float(confidence)), "found": int(found), "what": what}
 
 
 @dataclass

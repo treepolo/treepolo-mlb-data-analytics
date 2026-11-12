@@ -108,7 +108,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 2     # 2: situation table keeps float64 arrays, counts, the environment and home-run bounds (pitch_query reads it)
+    version = 3     # 3: no detection verdicts or tau; all cells listed; comparison counts; per-year replication. 2: situation table keeps float64 arrays, counts, the environment and home-run bounds
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -121,8 +121,10 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("trust_region", "float", default=0.10, minimum=0.0, maximum=1.0, label_zh="信賴區域（份額最多移動）", label_en="Trust region (largest share move)"),
         ConfigField("marginal_shift", "float", default=0.10, minimum=0.0, maximum=0.5, label_zh="邊際價值的移動量", label_en="Share moved for the marginal value"),
         ConfigField("lambda_grid", "json", default=[0.0, 0.5, 1.0, 2.0], label_zh="全壘打懲罰 λ 網格", label_en="Home-run penalty grid"),
-        ConfigField("tau", "float", default=0.005, minimum=0.0, label_zh="實務大小 τ（分／球）", label_en="Practical size tau (runs per pitch)"),
         ConfigField("members", "int", default=30, minimum=2, maximum=200, label_zh="袋裝成員數", label_en="Bagged members"),
+        ConfigField("replication_members", "int", default=3, minimum=0, maximum=50, label_zh="換年份重看：每個年份單獨訓練的成員數（0＝不做）", label_en="Per-year replication: members per single year (0 = skip)",
+                    help_zh="資料有兩個以上年份時，每個年份各自單獨訓練一份模型，並排列出各年份的估計；只並排數字，不做同號就算重現的判定。",
+                    help_en="With two or more years, a model is trained on each year alone and the estimates are listed side by side; numbers only."),
         ConfigField("cross_eval", "bool", default=True, label_zh="交叉評估（一季選、另一季評）", label_en="Cross evaluation (choose on one season, judge on the other)"),
         ConfigField("cross_members", "int", default=5, minimum=1, maximum=50, label_zh="交叉評估每季成員數", label_en="Members per season for the cross evaluation"),
         ConfigField("backend", "choice", default="hgb", choices=("xgboost", "hgb"), label_zh="訓練後端", label_en="Backend"),
@@ -192,7 +194,8 @@ class PitchPolicyMethod(ResearchMethod):
         cols_all = fetch_columns(ctx, config, config["groups"], years, re_by_state=re.re_by_state)
         shape = pc.Shape()
         r1_rows, value_rows, risk_rows, marg_rows, support_rows, artifacts = [], [], [], [], [], []
-        direction_rows, anchor_rows = [], []
+        direction_rows, anchor_rows, anchor_cell_rows, replication_rows = [], [], [], []
+        comparisons: dict[str, dict[str, Any]] = {"marginal": {}, "direction": {}, "anchor": {}}
         for group in config["groups"]:
             sel = np.nonzero(cols_all["group"] == group)[0]
             if len(sel) == 0:
@@ -219,28 +222,43 @@ class PitchPolicyMethod(ResearchMethod):
             risk_rows += self._risk(group, dyns, env, shape, config)
             m_rows, s_rows = self._marginals(group, an, config)
             marg_rows += m_rows; support_rows += s_rows
-            direction_rows += self._direction(group, an, config)
+            d_rows = self._direction(group, an, config)
+            direction_rows += d_rows
+            comparisons["marginal"][group] = pc.chance_summary([r["adv_lo"] for r in m_rows], [r["adv_hi"] for r in m_rows], config["cell_confidence"])
+            comparisons["direction"][group] = pc.chance_summary([r["adv_lo"] for r in d_rows], [r["adv_hi"] for r in d_rows], config["cell_confidence"])
             if anchor is not None:
-                anchor_rows += self._anchor_rows(group, an, tensor, anchor, shape)
+                summary_rows, cell_rows = self._anchor_rows(group, an, tensor, anchor, shape)
+                anchor_rows += summary_rows; anchor_cell_rows += cell_rows
+                comparisons["anchor"][group] = pc.chance_row(sum(r["cells"] for r in summary_rows), 0.95, sum(r["outside_anchor_interval"] for r in summary_rows), "outside_anchor_interval")
+            if config["replication_members"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
+                replication_rows += self._replicate(group, cols, env, shape, obs, support, n, params, config, device)
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config, env))
         extras = {"scope": ctx.scope, "purpose": config["purpose"], "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "backend": config["backend"], "device": device,
-                  "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)", "mode": "M0 league average (level L0)"}
+                  "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)", "mode": "M0 league average (level L0)",
+                  "comparisons": {k: v for k, v in comparisons.items() if v}}
         sections = (
             make_section("R1 對照（觀察到的配球重現得分期望值）", ("group", "item", "n_states", "median_abs_diff", "max_abs_diff", "value"), r1_rows, ("group", "item"), "duckdb", DIGITS),
             make_section("Policy value 政策價值（每打席）", ("group", "policy", "kind", "start_value", "saving_pa", "lo", "hi", "saving_per_pitch", "saving_per_team_season", "hr_probability",
                                                               "pitches_per_pa"), value_rows, ("group", "policy", "kind"), "duckdb", DIGITS),
             make_section("Risk frontier 取捨前緣（λ 對全壘打）", ("group", "lambda", "expected_runs", "lo", "hi", "hr_probability", "hr_lo", "hr_hi", "saving_vs_observed"), risk_rows,
                          ("group", "lambda"), "duckdb", DIGITS),
-            make_section("Marginal value 邊際價值摘要（依觀察到的出現頻率加權）", ("group", "action", "advantage", "adv_lo", "adv_hi", "marginal", "m_lo", "m_hi", "detected_share", "supported_share"),
+            make_section("Marginal value 邊際價值摘要（依觀察到的出現頻率加權）", ("group", "action", "advantage", "adv_lo", "adv_hi", "marginal", "m_lo", "m_hi", "supported_share"),
                          marg_rows, ("group", "action"), "duckdb", DIGITS),
-            make_section("Direction map 方向圖（球數×前一球 × 球種；邊際價值）", ("group", "context", "balls", "strikes", "prev", "action", "marginal", "advantage", "adv_lo", "adv_hi", "n",
-                                                                         "not_detected"), direction_rows, ("group", "context", "action"), "duckdb", DIGITS),
+            make_section("Direction map 方向圖（球數×前一球 × 球種；邊際價值；全部列出）", ("group", "context", "balls", "strikes", "prev", "action", "marginal", "advantage", "adv_lo", "adv_hi", "n"),
+                         direction_rows, ("group", "context", "action"), "duckdb", DIGITS),
             make_section("Support 支持表", ("group", "action", "supported_share", "observed_share"), support_rows, ("group", "action"), "duckdb", DIGITS),
         )
+        if replication_rows:
+            sections = sections + (make_section("Replication 換年份重看（每個年份單獨訓練的估計；context＝ALL 是整個球種的彙總）",
+                                                ("group", "year", "context", "action", "advantage", "adv_lo", "adv_hi", "marginal", "m_lo", "m_hi", "n"),
+                                                replication_rows, ("group", "year", "context", "action"), "duckdb", DIGITS),)
+            extras["replication"] = {"members_per_year": int(config["replication_members"]), "years": sorted({int(r["year"]) for r in replication_rows})}
         if anchor_rows:
-            sections = sections + (make_section("Anchor 錨點一致性（計畫 3.6）", ("group", "design", "anchor_cells", "same_sign_share", "median_ratio", "model_only_cells", "model_large_cells", "passes"),
-                                                anchor_rows, ("group", "design"), "duckdb", DIGITS),)
+            sections = sections + (make_section("Anchor 錨點對照彙總（模型效果對固定效應效果；只有數字）", ("group", "design", "cells", "same_sign_share", "median_ratio", "outside_anchor_interval"),
+                                                anchor_rows, ("group", "design"), "duckdb", DIGITS),
+                                   make_section("Anchor cells 錨點逐格對照（全部列出）", ("group", "design", "phase", "action", "class", "model_effect", "anchor_effect", "anchor_lo", "anchor_hi",
+                                                                                     "difference", "same_sign"), anchor_cell_rows, ("group", "design", "phase", "action", "class"), "duckdb", DIGITS))
             extras["anchor_run_id"] = config["anchor_run_id"]
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
@@ -326,15 +344,12 @@ class PitchPolicyMethod(ResearchMethod):
 
     @staticmethod
     def _marginals(group, an, config):
-        """Per action: the advantage over the observed mix of the others and the marginal value, weighted by how often each state occurs; share of states flagged detected."""
+        """Per action: the advantage over the observed mix of the others and the marginal value, weighted by how often each state occurs."""
 
         shape = an.shape
         occ = an.occupancy; valid = occ > 0
         m_rows, s_rows = [], []
         conf = config["cell_confidence"]
-        mean_adv, lo_adv, hi_adv = an.interval(an.advantage, conf)
-        mean_m, lo_m, hi_m = an.interval(an.marginal, conf)
-        det = pc.detect(mean_adv, lo_adv, hi_adv, an.support, config["tau"])
         from .profiles import PITCH_TYPES
 
         for a, name in enumerate(PITCH_TYPES):
@@ -347,7 +362,7 @@ class PitchPolicyMethod(ResearchMethod):
             per_member_m = np.array([(np.nan_to_num(an.marginal[m][use, a]) * w).sum() / w.sum() for m in range(an.marginal.shape[0])])[:, None]
             adv, alo, ahi = pc.member_interval(per_member_adv, conf); mg, mlo, mhi = pc.member_interval(per_member_m, conf)
             m_rows.append({"group": group, "action": name, "advantage": float(adv[0]), "adv_lo": float(alo[0]), "adv_hi": float(ahi[0]), "marginal": float(mg[0]), "m_lo": float(mlo[0]),
-                           "m_hi": float(mhi[0]), "detected_share": float((det[use, a] * w).sum() / w.sum()), "supported_share": float(w.sum() / occ[valid].sum())})
+                           "m_hi": float(mhi[0]), "supported_share": float(w.sum() / occ[valid].sum())})
             s_rows.append({"group": group, "action": name, "supported_share": float(w.sum() / occ[valid].sum()), "observed_share": float((an.obs[valid, a] * occ[valid]).sum() / occ[valid].sum())})
         return m_rows, s_rows
 
@@ -366,7 +381,7 @@ class PitchPolicyMethod(ResearchMethod):
 
         types = [str(t) for t in anchor["types"]]
         model = anc.model_contrasts(tensor.mean(axis=0), an.obs, an.support, an.occupancy, shape, types)
-        rows = []
+        rows, cell_rows = [], []
         for key in sorted(k for k in anchor if k.startswith("eff_")):
             design = key[4:]
             anchor_rows = []
@@ -376,8 +391,9 @@ class PitchPolicyMethod(ResearchMethod):
                     for c, cname in enumerate(pc.OUTCOMES):
                         anchor_rows.append({"phase": pname, "action": t, "class": cname, "effect": float(anchor[key][ph, ai, c]), "se": float(anchor[f"se_{design}"][ph, ai, c])})
             res = anc.anchor_consistency(model, anchor_rows)
-            rows.append({"group": group, "design": design, **{k: res[k] for k in ("anchor_cells", "same_sign_share", "median_ratio", "model_only_cells", "model_large_cells")}, "passes": int(res["passes"])})
-        return rows
+            rows.append({"group": group, "design": design, **res["summary"]})
+            cell_rows += [{"group": group, "design": design, **c} for c in res["cells"]]
+        return rows, cell_rows
 
     @staticmethod
     def _direction(group, an, config):
@@ -405,12 +421,31 @@ class PitchPolicyMethod(ResearchMethod):
                         adv_m = np.array([(np.nan_to_num(an.advantage[m][use, a]) * w).sum() / w.sum() for m in range(M)])[:, None]
                         mg_m = np.array([(np.nan_to_num(an.marginal[m][use, a]) * w).sum() / w.sum() for m in range(M)])[:, None]
                         adv, alo, ahi = pc.member_interval(adv_m, conf); mg = pc.member_interval(mg_m, conf)[0]
-                        found = bool(pc.detect(adv, alo, ahi, np.array([True]), config["tau"])[0])
                         rows.append({"group": group, "context": label, "balls": bi, "strikes": ki, "prev": "none" if pi == shape.none else PITCH_TYPES[pi], "action": name,
                                      "marginal": float(mg[0]), "advantage": float(adv[0]), "adv_lo": float(alo[0]), "adv_hi": float(ahi[0]),
-                                     "n": int(an.extras["n_cell"][ctx_mask & (o == 0) & (base == 0), a].sum()) if an.extras.get("n_cell") is not None else 0,
-                                     "not_detected": int(not found)})
+                                     "n": int(an.extras["n_cell"][ctx_mask & (o == 0) & (base == 0), a].sum()) if an.extras.get("n_cell") is not None else 0})
         return rows
+
+    def _replicate(self, group, cols, env, shape, obs, support, n, params, config, device):
+        """Per year: an outcome model trained on that year alone (``replication_members`` bagged members), the same marginal and direction numbers from it, side by side.
+        The usage shares and the support rule come from all the years (what pitchers did), only the outcome model is per year. Numbers only: nothing is judged to have replicated."""
+
+        years = sorted(int(y) for y in np.unique(cols["game_year"]))
+        out = []
+        for y in years:
+            sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
+            members, classes = pb.fit_outcome_members(sub, backend=config["backend"], device=device, params=params, reps=max(int(config["replication_members"]), 2),
+                                                      seed=config["seed"] + 1000 + y, merge=config["class_merge"])
+            dyns = pb.members_dynamics(pb.outcome_tensor(members, classes, shape, group), obs, support, n)
+            an = pb.analyze(dyns, env, shape, kinds=("observed",), trust=config["trust_region"], delta=config["marginal_shift"])
+            m_rows, _ = self._marginals(group, an, config)
+            for r in m_rows:
+                out.append({"group": group, "year": y, "context": "ALL", "action": r["action"], "advantage": r["advantage"], "adv_lo": r["adv_lo"], "adv_hi": r["adv_hi"],
+                            "marginal": r["marginal"], "m_lo": r["m_lo"], "m_hi": r["m_hi"], "n": None})
+            for r in self._direction(group, an, config):
+                out.append({"group": group, "year": y, "context": r["context"], "action": r["action"], "advantage": r["advantage"], "adv_lo": r["adv_lo"], "adv_hi": r["adv_hi"],
+                            "marginal": r["marginal"], "m_lo": None, "m_hi": None, "n": r["n"]})
+        return out
 
     @staticmethod
     def _table_artifact(group, an, tensor, config, env):
@@ -429,7 +464,7 @@ def situation_arrays(group, an, tensor, env, config) -> dict:
     mg, mlo, mhi = an.interval(an.marginal, conf)
     hr_mean, hr_lo, hr_hi = an.interval(tensor[:, :, :, pc.OC["in_play_home_run"]], conf)
     n = an.extras.get("n_cell")
-    meta = {"group": group, "tau": config["tau"], "delta": config["marginal_shift"], "confidence": conf, "min_count": config["min_count"], "min_share": config["min_share"],
+    meta = {"group": group, "delta": config["marginal_shift"], "confidence": conf, "min_count": config["min_count"], "min_share": config["min_share"],
             "trust": config["trust_region"], "classes": list(pc.OUTCOMES), "members": int(an.extras["members"]), "mode": "M0 league average (level L0)"}
     return dict(q=q, q_lo=qlo, q_hi=qhi, advantage=adv, adv_lo=alo, adv_hi=ahi, marginal=mg, m_lo=mlo, m_hi=mhi, p_outcome=tensor.mean(axis=0), hr_lo=hr_lo, hr_hi=hr_hi,
                 support=an.support, obs=an.obs, occupancy=an.occupancy, n=(np.zeros(an.obs.shape) if n is None else n),

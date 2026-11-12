@@ -1,4 +1,4 @@
-"""The pitch_query method, its runtime (tables, packages, names, gates) and the API / command-line front ends, on a synthetic world with known player effects."""
+"""The pitch_query method, its runtime (tables, packages, names, descriptor gains) and the API / command-line front ends, on a synthetic world with known player effects."""
 from __future__ import annotations
 
 import argparse
@@ -43,8 +43,8 @@ def setup(tmp_path_factory):
     mp.setattr(pm, "get_re_table", lambda ctx, scope: FakeRe(env.re_cnt))
     try:
         league = service.run("league_model", {"scope": SCOPE, "groups": ["RvR"], "levels": ["L0", "L3"], "backend": BACKEND, "device": "cpu", "cold_folds": 3, "bootstrap_reps": 40,
-                                              "min_cell_swings": 15, "min_class_count": 20, "bagging_reps": 4, "save_package": True, "min_gain": 0.003, **GBM})["run"]
-        policy = service.run("pitch_policy", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_eval": False, "backend": BACKEND, "device": "cpu",
+                                              "min_cell_swings": 15, "min_class_count": 20, "bagging_reps": 4, "save_package": True, **GBM})["run"]
+        policy = service.run("pitch_policy", {"scope": SCOPE, "re_scope": SCOPE, "groups": ["RvR"], "members": 4, "cross_eval": False, "replication_members": 0, "backend": BACKEND, "device": "cpu",
                                               "min_count": 100, "lambda_grid": [0.0], "min_class_count": 20, "max_depth": 4, "min_leaf": 300, "learning_rate": 0.15, "max_iter": 50})["run"]
     finally:
         mp.undo()
@@ -69,21 +69,24 @@ def test_acceptance_checks_pass_and_player_queries_are_fast(setup):
     assert rows(service, query, "Sources")[0]["package_run_id"] == league["id"]
 
 
-def test_runtime_answers_with_names_and_gate_status(setup):
+def test_runtime_answers_with_names_and_descriptor_gains(setup):
     service, league, policy, query, d = setup
     meta = service.pitch_query_meta(query["id"])
     assert meta["groups"] == ["RvR"] and meta["players_available"] and meta["package_groups"] == ["RvR"] and "KC" in meta["pitch_types"]
-    assert meta["gates"]["RvR"]["pitcher"] in ("full", "level_only", "off", "unknown") and meta["not_covered"]
+    gains = meta["descriptor_gains"]["RvR"]
+    assert gains and {g["measure"] for g in gains} == {"level_gain", "type_contrast"} and all(g["value"] is not None for g in gains) and meta["not_covered"]
+    assert "gates" not in meta and "tau" not in meta["tables"]["RvR"]
     found = service.pitch_query_players(query["id"], "RvR", "pitcher", "Pitcher1")["players"]
     assert found and all("Pitcher1" in (p["name"] or "") or "1" in p["id"] for p in found) and found[0]["pitches"] > 0
     top = service.pitch_query_players(query["id"], "RvR", "batter", "")["players"]
     assert [p["pitches"] for p in top] == sorted((p["pitches"] for p in top), reverse=True)
     m0 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1"})
-    assert m0["mode"] == "M0" and len(m0["rows"]) == 9
+    assert m0["mode"] == "M0" and len(m0["rows"]) == 9 and m0["descriptor_gains"] == gains and m0["comparisons"]["n"] > 0
     pid = found[0]["id"]
     m1 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": pid, "samples": "10", "members": "2"})
-    gate = meta["gates"]["RvR"]["pitcher"]
-    assert (m1["mode"] == "M1" and m1["players"]["pitcher"]["name"] == f"Test Pitcher{pid}") or (gate == "off" and m1["mode"] == "M0" and m1["notice"])
+    assert m1["mode"] == "M1" and m1["players"]["pitcher"]["name"] == f"Test Pitcher{pid}"          # personalised whatever the descriptor gains are: nothing is switched off
+    assert m1["descriptor_gains"] == gains and m1["notice"] == [] and m1["comparisons"]["n"] > 0
+    assert all("detected" not in r and "evidence" not in r for r in m1["rows"])
     with pytest.raises(ConfigError, match="group"):
         service.pitch_query(query["id"], {"group": "LvL", "balls": "0", "strikes": "0", "outs": "0"})
     with pytest.raises(ConfigError):

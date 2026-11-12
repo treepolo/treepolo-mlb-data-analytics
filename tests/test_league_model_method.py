@@ -10,6 +10,8 @@ from treepolo_mlb_data.research.config_schema import ConfigError
 from treepolo_mlb_data.research.service import ResearchService
 from treepolo_mlb_data.research.synthetic import simulate_players, write_player_world_db
 
+from report_helper import record
+
 HAS_XGB = gbm.xgboost_available()
 PARAMS = {"max_depth": 4, "min_leaf": 100, "max_iter": 50, "learning_rate": 0.1}
 BASE = {"scope": {"game_years": [2023, 2024], "game_types": ["R"]}, "groups": ["RvR"], "levels": ["L0", "L3"], "cold_folds": 3, "bootstrap_reps": 50, "min_cell_swings": 15,
@@ -45,21 +47,34 @@ def run_backend(service, backend, **extra):
     return out["run"]
 
 
-def test_p7_gates_pass_on_unseen_players(p7):
-    run = run_backend(p7, "xgboost" if HAS_XGB else "hgb", device="cpu", min_gain=0.003)
-    gates = sections(p7, run, "Gates")
-    g1a = [g for g in gates if g["gate"] == "G1a" and g["side"] == "pitcher:L3"][0]
-    assert g1a["passed"] == 1 and g1a["lo"] > 0
-    assert any(g["gate"] == "G1b" and g["passed"] == 1 for g in gates)
+def test_descriptor_gain_section_lists_numbers_without_any_verdict(p7):
+    run = run_backend(p7, "xgboost" if HAS_XGB else "hgb", device="cpu")
+    gains = sections(p7, run, "Descriptor gain")
+    assert gains and all(set(g) == {"group", "side", "comparison", "measure", "mode", "value", "lo", "hi", "n"} for g in gains)     # numbers and intervals; no passed / gate column
+    assert {g["measure"] for g in gains} == {"level_gain", "type_contrast"} and {g["side"] for g in gains} == {"pitcher", "batter"}
+    assert all(g["n"] > 0 and g["lo"] <= g["hi"] for g in gains)
+    assert not [s for s in p7.store.load_result(run["id"])["sections"] if s["title"].startswith("Gates")]
     fit = sections(p7, run, "Fit summary")
     assert {r["mode"] for r in fit} >= {"cold_pitcher", "cold_batter", "season"} and all(r["backend"] in ("xgboost", "hgb") for r in fit)
     assert p7.store.get_run(run["id"])["extras"]["split"] == "holdout_years" if "extras" in p7.store.get_run(run["id"]) else True
 
 
-def test_p0_gates_do_not_pass(p0):
-    run = run_backend(p0, "xgboost" if HAS_XGB else "hgb", device="cpu", min_gain=0.003)
-    gates = sections(p0, run, "Gates")
-    assert gates and all(g["passed"] == 0 for g in gates if g["gate"] in ("G1a", "G1b"))
+def test_min_gain_is_no_longer_a_setting(p7):
+    with pytest.raises(ConfigError):
+        run_backend(p7, "hgb", device="cpu", min_gain=0.003)
+
+
+@pytest.mark.report
+def test_report_descriptor_gain_where_players_matter_and_where_they_do_not(p7, p0):
+    """Known answer: P7 players differ, so the descriptors should help on unseen players; P0 players are identical, so they should not. Numbers only."""
+
+    backend = "xgboost" if HAS_XGB else "hgb"
+    out = {}
+    for name, service in (("P7", p7), ("P0", p0)):
+        gains = sections(service, run_backend(service, backend, device="cpu"), "Descriptor gain")
+        out[name] = [{k: g[k] for k in ("side", "comparison", "measure", "mode", "value", "lo", "hi", "n")} for g in gains]
+    record("league_model_descriptor_gain", **out)
+    assert out["P7"] and out["P0"]
 
 
 def test_same_settings_reuse_the_stored_run(p7):

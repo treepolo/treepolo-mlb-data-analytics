@@ -12,7 +12,7 @@ from treepolo_mlb_data.research.synthetic import simulate_players
 
 BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
 PARAMS = dict(max_depth=4, min_leaf=300, learning_rate=0.15, max_iter=60, l2=1.0)
-CONFIG = {"cell_confidence": 0.99, "tau": 0.005, "marginal_shift": 0.10, "min_count": 100, "min_share": 0.05, "trust_region": 0.10}
+CONFIG = {"cell_confidence": 0.99, "marginal_shift": 0.10, "min_count": 100, "min_share": 0.05, "trust_region": 0.10}
 
 
 @pytest.fixture(scope="module")
@@ -61,10 +61,11 @@ def test_bases_parsing_and_state_errors(built):
         table.state(4, 1, 0, 0, "FF", 1)
 
 
-def test_indistinct_groups_chain_overlapping_intervals():
+def test_overlap_groups_chain_overlapping_intervals():
     lo = np.array([0.50, 0.52, 0.60, 0.40, np.nan]); hi = np.array([0.54, 0.56, 0.64, 0.45, np.nan])
     sup = np.array([True, True, True, True, False])
-    assert qc.indistinct_groups(lo, hi, sup) == ["B", "B", "C", "A", None]
+    assert qc.overlap_groups(lo, hi, sup) == ["B", "B", "C", "A", None]
+    assert not hasattr(qc, "indistinct_groups")
 
 
 def test_m0_rows_follow_the_table_and_the_closed_forms(built):
@@ -72,7 +73,12 @@ def test_m0_rows_follow_the_table_and_the_closed_forms(built):
     res = table.lookup(1, 2, 1, "100", "SL", 2)
     assert res["mode"] == "M0" and res["group"] == "RvR" and len(res["rows"]) == 9
     rows = {r["action"]: r for r in res["rows"]}
-    assert rows["KC"]["flag"] == "unsupported" and rows["KC"]["supported"] is False and rows["KC"]["indistinct_group"] is None
+    assert rows["KC"]["flag"] == "unsupported" and rows["KC"]["supported"] is False and rows["KC"]["overlap_group"] is None
+    assert all("detected" not in r and "evidence" not in r and "indistinct_group" not in r for r in res["rows"])        # no verdict, only numbers, intervals and overlap letters
+    chance = res["comparisons"]
+    sup_rows = [r for r in res["rows"] if r["supported"] and r["adv_lo"] is not None and r["adv_hi"] is not None]
+    assert chance["n"] == len(sup_rows) and chance["found"] == sum(1 for r in sup_rows if r["adv_lo"] > 0 or r["adv_hi"] < 0)
+    assert chance["expected_by_chance"] == pytest.approx(chance["n"] * 0.01) and "overlap" in qc.format_table(res) and "luck" in qc.format_table(res)
     supported = [r for r in res["rows"] if r["supported"]]
     assert len(supported) >= 2 and all(abs(sum(r["outcomes"].values()) - 1) < 1e-9 for r in supported)
     obs = np.array([r["observed_share"] for r in res["rows"]]); q = np.array([r["q"] for r in res["rows"]])

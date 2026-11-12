@@ -232,24 +232,30 @@ def model_contrasts(p_outcome: np.ndarray, obs: np.ndarray, support: np.ndarray,
     return rows
 
 
-def anchor_consistency(model_rows: Sequence[Mapping], anchor_rows: Sequence[Mapping], *, z_detect: float = 2.576, min_effect: float = 0.0) -> dict:
-    """Plan 3.6.2: on the cells where the anchor sees an effect (|effect| >= z * se), how often does the model have the same sign and how large is it relative to the anchor?
-    Also reported: how many cells the model flags that the anchor does not see (a sign of confounding the model could not remove)."""
+ANCHOR_Z = 1.96     # the anchor's interval is effect +- ANCHOR_Z * se (95%)
+
+
+def anchor_consistency(model_rows: Sequence[Mapping], anchor_rows: Sequence[Mapping]) -> dict:
+    """Compares the league model's effects with the anchor's, cell by cell, and says nothing about pass or fail.
+
+    ``cells``: one dict per (phase, pitch type, outcome class) with the model's effect, the anchor's effect and its 95% interval, the difference (model minus anchor)
+    and whether the two have the same sign. ``summary``: how many cells, the share with the same sign, the median of model / anchor over the cells where the anchor
+    is not zero, and how many cells have a model effect outside the anchor's interval. Reading the numbers is left to the user."""
 
     anchor = {(r["phase"], r["action"], r["class"]): r for r in anchor_rows}
-    same, ratios, n_anchor, model_only, n_model_big = 0, [], 0, 0, 0
+    cells, ratios = [], []
     for m in model_rows:
         a = anchor.get((m["phase"], m["action"], m["class"]))
         if a is None or a["se"] <= 0:
             continue
-        seen = abs(a["effect"]) >= z_detect * a["se"] and abs(a["effect"]) >= min_effect
-        if seen:
-            n_anchor += 1
-            same += int(np.sign(m["effect"]) == np.sign(a["effect"]))
+        lo, hi = a["effect"] - ANCHOR_Z * a["se"], a["effect"] + ANCHOR_Z * a["se"]
+        same = bool(np.sign(m["effect"]) == np.sign(a["effect"]))
+        cells.append({"phase": m["phase"], "action": m["action"], "class": m["class"], "model_effect": float(m["effect"]), "anchor_effect": float(a["effect"]),
+                      "anchor_lo": float(lo), "anchor_hi": float(hi), "difference": float(m["effect"] - a["effect"]), "same_sign": int(same)})
+        if a["effect"] != 0:
             ratios.append(m["effect"] / a["effect"])
-        if abs(m["effect"]) >= z_detect * a["se"] and abs(m["effect"]) >= min_effect and not seen:
-            model_only += 1
-        n_model_big += int(abs(m["effect"]) >= z_detect * a["se"])
-    return {"anchor_cells": n_anchor, "same_sign_share": same / n_anchor if n_anchor else float("nan"), "median_ratio": float(np.median(ratios)) if ratios else float("nan"),
-            "model_only_cells": model_only, "model_large_cells": n_model_big,
-            "passes": bool(n_anchor and same / n_anchor >= 0.9 and 0.5 <= float(np.median(ratios)) <= 1.5)}
+    n = len(cells)
+    summary = {"cells": n, "same_sign_share": sum(c["same_sign"] for c in cells) / n if n else float("nan"),
+               "median_ratio": float(np.median(ratios)) if ratios else float("nan"),
+               "outside_anchor_interval": sum(1 for c in cells if not c["anchor_lo"] <= c["model_effect"] <= c["anchor_hi"])}
+    return {"cells": cells, "summary": summary}

@@ -44,7 +44,9 @@ def test_finished_pipeline_shows_steps_summary_and_opens_the_query_page(url):
         assert page.locator(".rp-step.done").count() == 5
         page.wait_for_selector("#rp-open-query", timeout=15000)
         card = page.locator(".rp-card[data-group=RvR]")
-        assert card.count() == 1 and "引擎檢查" in card.inner_text() and "每隊每季少失分" in card.inner_text()
+        assert card.count() == 1 and "引擎對照" in card.inner_text() and "每隊每季少失分" in card.inner_text()
+        assert "球員描述的預測增益" in card.inner_text() and "純靠運氣" in card.inner_text()      # numbers and the comparison-count note
+        assert "沒通過" not in card.inner_text() and "偵測到" not in card.inner_text()          # no pass / fail wording
         assert "選到的模型設定" in page.locator("#rp-best").inner_text()
         assert page.locator("#rp-start").is_enabled() and page.locator("#rp-cancel").is_disabled()
         assert "XGBoost" in page.locator("#rp-env").inner_text() or "scikit-learn" in page.locator("#rp-env").inner_text()

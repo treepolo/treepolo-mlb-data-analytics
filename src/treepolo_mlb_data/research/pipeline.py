@@ -156,12 +156,6 @@ class PipelineManager:
             context["query_run_id"] = run["id"]
 
 
-def _le(value: Any, limit: float) -> bool:
-    """value <= limit; a missing value (NaN stored as null) never passes."""
-
-    return value is not None and value == value and value <= limit
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -175,19 +169,20 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
         result = service.store.load_result(run_id)
         return next((s["rows"] for s in result["sections"] if s["title"].startswith(prefix)), [])
 
-    out: dict[str, Any] = {"best_params": context.get("best_params"), "groups": {}}
+    policy_extras = service.store.load_result(context["policy_run_id"])["extras"] if context.get("policy_run_id") else {}
+    out: dict[str, Any] = {"best_params": context.get("best_params"), "groups": {}, "replication": policy_extras.get("replication")}
     for g in settings["groups"]:
         r1 = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("states")), None)
         start = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("start")), None)
         values = [r for r in rows(context.get("policy_run_id"), "Policy value") if r["group"] == g]
-        gates = [r for r in rows(context.get("model_run_id"), "Gates") if r["group"] == g]
+        gains = [r for r in rows(context.get("model_run_id"), "Descriptor gain") if r["group"] == g]
         marg = [r for r in rows(context.get("policy_run_id"), "Marginal value") if r["group"] == g]
-        r1_ok = bool(r1 and start and _le(r1["median_abs_diff"], 0.01) and _le(r1["max_abs_diff"], 0.05) and _le(start["median_abs_diff"], 0.005))
         out["groups"][g] = {
-            "r1": {"passed": r1_ok, "median_abs_diff": r1 and r1["median_abs_diff"], "max_abs_diff": r1 and r1["max_abs_diff"], "start_diff": start and start["median_abs_diff"]},
+            # how far the engine's observed-play value is from the run expectancy table: numbers only (0 = identical)
+            "r1": {"median_abs_diff": r1 and r1["median_abs_diff"], "max_abs_diff": r1 and r1["max_abs_diff"], "start_diff": start and start["median_abs_diff"]},
             "policies": [{"policy": v["policy"], "kind": v["kind"], "saving_pa": v["saving_pa"], "lo": v["lo"], "hi": v["hi"], "saving_per_team_season": v["saving_per_team_season"]} for v in values],
-            "gates": [{"side": r["side"], "gate": r["gate"], "mode": r["mode"], "value": r["value"], "lo": r["lo"], "passed": r["passed"]} for r in gates],
-            "actions": [{"action": m["action"], "advantage": m["advantage"], "adv_lo": m["adv_lo"], "adv_hi": m["adv_hi"], "marginal": m["marginal"], "detected_share": m["detected_share"],
-                         "supported_share": m["supported_share"]} for m in marg],
+            "descriptor_gains": [{k: r[k] for k in ("side", "comparison", "measure", "mode", "value", "lo", "hi", "n")} for r in gains],
+            "actions": [{"action": m["action"], "advantage": m["advantage"], "adv_lo": m["adv_lo"], "adv_hi": m["adv_hi"], "marginal": m["marginal"], "supported_share": m["supported_share"]} for m in marg],
+            "comparisons": {section: per_group[g] for section, per_group in (policy_extras.get("comparisons") or {}).items() if g in per_group},
         }
     return out

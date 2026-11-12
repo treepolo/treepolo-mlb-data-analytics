@@ -89,17 +89,15 @@ class SituationTable:
             raise QueryError("the first pitch of a plate appearance has no previous pitch / 打席第一球沒有前一球")
         return int(sh.index(balls, strikes, outs, bases, PITCH_TYPES.index(prev), int(streak) - 1))
 
-    def rows(self, state: int, *, arrays: Mapping[str, np.ndarray] | None = None, evidence: str | None = None) -> list[dict[str, Any]]:
+    def rows(self, state: int, *, arrays: Mapping[str, np.ndarray] | None = None) -> list[dict[str, Any]]:
         """One dict per pitch type for ``state`` (from this table, or from ``arrays`` of the same layout for a player query)."""
 
         a = self.arrays if arrays is None else arrays
-        tau = float(self.meta["tau"])
         sup = np.asarray(a["support"][state]).astype(bool)
         n = a["n"][state]
         out = []
         classes = self.meta["classes"]
-        detected = pc.detect(a["advantage"][state], a["adv_lo"][state], a["adv_hi"][state], sup, tau)
-        groups = indistinct_groups(a["q_lo"][state], a["q_hi"][state], sup)
+        groups = overlap_groups(a["q_lo"][state], a["q_hi"][state], sup)
         min_count = float(self.meta["min_count"])
         for ai, name in enumerate(PITCH_TYPES):
             flag = "unsupported" if not sup[ai] else ("sufficient" if n[ai] >= min_count else "extrapolated")
@@ -107,15 +105,22 @@ class SituationTable:
                    "advantage": _f(a["advantage"][state, ai]), "adv_lo": _f(a["adv_lo"][state, ai]), "adv_hi": _f(a["adv_hi"][state, ai]),
                    "marginal": _f(a["marginal"][state, ai]), "m_lo": _f(a["m_lo"][state, ai]), "m_hi": _f(a["m_hi"][state, ai]),
                    "hr_probability": _f(a["p_outcome"][state, ai, classes.index("in_play_home_run")]), "hr_lo": _f(a["hr_lo"][state, ai]), "hr_hi": _f(a["hr_hi"][state, ai]),
-                   "n": int(n[ai]), "observed_share": _f(a["obs"][state, ai]), "trust_share": _f(a["dp_trust"][state, ai]), "detected": bool(detected[ai]),
-                   "indistinct_group": groups[ai], "evidence": evidence or ("建模期偵測到（尚未經 2025 檢驗）" if detected[ai] else "無可偵測差異"),
+                   "n": int(n[ai]), "observed_share": _f(a["obs"][state, ai]), "trust_share": _f(a["dp_trust"][state, ai]), "overlap_group": groups[ai],
                    "outcomes": {c: _f(a["p_outcome"][state, ai, ci]) for ci, c in enumerate(classes)}}
             out.append(row)
         return out
 
     def lookup(self, balls: int, strikes: int, outs: int, bases: Any, prev: str, streak: int) -> dict[str, Any]:
         state = self.state(balls, strikes, outs, parse_bases(bases), prev, streak)
-        return {"mode": "M0", "group": self.group, "state": state, "rows": self.rows(state), "players": {}, "not_covered": list(NOT_COVERED)}
+        rows = self.rows(state)
+        return {"mode": "M0", "group": self.group, "state": state, "rows": rows, "players": {}, "comparisons": self.comparisons(rows), "not_covered": list(NOT_COVERED)}
+
+    def comparisons(self, rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        """How many pitch types were compared in this answer, how many have an advantage interval that excludes 0, and how many would by luck alone."""
+
+        sup = [r for r in rows if r["supported"]]
+        lo = [np.nan if r["adv_lo"] is None else r["adv_lo"] for r in sup]; hi = [np.nan if r["adv_hi"] is None else r["adv_hi"] for r in sup]
+        return pc.chance_summary(lo, hi, float(self.meta["confidence"]))
 
 
 def _f(x: Any) -> float | None:
@@ -123,8 +128,9 @@ def _f(x: Any) -> float | None:
     return x if np.isfinite(x) else None
 
 
-def indistinct_groups(lo: np.ndarray, hi: np.ndarray, supported: np.ndarray) -> list[str | None]:
-    """Letters for the supported actions whose value intervals overlap (chained): actions with the same letter cannot be told apart. Unsupported actions get ``None``."""
+def overlap_groups(lo: np.ndarray, hi: np.ndarray, supported: np.ndarray) -> list[str | None]:
+    """Letters for the supported actions whose value intervals overlap (chained). Same letter = the intervals overlap, so the data cannot tell the pitch types
+    in the group apart in value: a description, not a verdict. Unsupported actions get ``None``."""
 
     idx = [i for i in range(len(lo)) if supported[i] and np.isfinite(lo[i]) and np.isfinite(hi[i])]
     idx.sort(key=lambda i: (lo[i] + hi[i]))
@@ -348,10 +354,10 @@ class PlayerQuery:
         arrays = {"q": q[None], "q_lo": qlo[None], "q_hi": qhi[None], "advantage": adv[None], "adv_lo": alo[None], "adv_hi": ahi[None], "marginal": mg[None], "m_lo": mlo[None], "m_hi": mhi[None],
                   "hr_lo": hr_lo[None], "hr_hi": hr_hi[None], "p_outcome": p_mean[None], "support": (sup_share > 0)[None], "n": self.table.arrays["n"][state][None],
                   "obs": obs_mean[None], "dp_trust": trust_mean[None]}
-        rows = self.table.rows(0, arrays=arrays, evidence="個別化估計（建模期，尚未經 2025 檢驗）")
+        rows = self.table.rows(0, arrays=arrays)
         for row, share in zip(rows, sup_share):
             row["pair_support_share"] = float(share)
-        return {"mode": mode, "group": self.table.group, "state": state, "level": level, "rows": rows,
+        return {"mode": mode, "group": self.table.group, "state": state, "level": level, "rows": rows, "comparisons": self.table.comparisons(rows),
                 "players": {s: {"id": str(i.id), "pitches": i.pitches, "shrinkage": i.shrinkage, "arsenal": i.arsenal} for s, i in infos.items()},
                 "sampling": {"pairs": n_pairs, "members": n_members, "intervals": K,
                              "note": "interval = spread of the members (one pair)" if mode == "M3" else "interval = spread of independent groups of sampled pairs, each with its own members"},
@@ -438,9 +444,12 @@ def format_table(result: Mapping[str, Any]) -> str:
         lines.append(f"{side}: {info.get('name') or info['id']}  pitches {info['pitches']}  shrinkage {num(info['shrinkage'], 2)}")
     for note in result.get("notice") or []:
         lines.append(f"! {note}")
-    lines.append("action flag         Q [99% interval]            advantage   marginal(+10pp)  HR/pitch  n      group  detected")
+    lines.append("action flag         Q [99% interval]            advantage [interval]               marginal(+10pp)  HR/pitch  n      overlap")
     for r in result["rows"]:
-        lines.append(f"{r['action']:<6} {r['flag']:<12} {num(r['q'])} [{num(r['q_lo'])}, {num(r['q_hi'])}]  {num(r['advantage'])}   {num(r['marginal'])}        {num(r['hr_probability'])}   "
-                     f"{r['n']:<6} {r['indistinct_group'] or '-':<5}  {'yes' if r['detected'] else 'no'}")
+        lines.append(f"{r['action']:<6} {r['flag']:<12} {num(r['q'])} [{num(r['q_lo'])}, {num(r['q_hi'])}]  {num(r['advantage'])} [{num(r['adv_lo'])}, {num(r['adv_hi'])}]   "
+                     f"{num(r['marginal'])}        {num(r['hr_probability'])}   {r['n']:<6} {r['overlap_group'] or '-'}")
+    cmp_ = result.get("comparisons")
+    if cmp_:
+        lines.append(f"compared {cmp_['n']} pitch types; at {cmp_['confidence']:.0%} about {cmp_['expected_by_chance']:.2f} intervals would exclude 0 by luck alone; found {cmp_['found']}")
     lines.append("not covered: " + "; ".join(result.get("not_covered") or []))
     return "\n".join(lines)

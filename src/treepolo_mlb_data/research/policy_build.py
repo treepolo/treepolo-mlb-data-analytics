@@ -120,7 +120,7 @@ class Analysis:
     hr_pa: dict[str, np.ndarray]                 # policy -> probability that the plate appearance ends in a home run, per member [M]
     q_obs: np.ndarray                            # [M, S, A] value of throwing a at s and then playing as observed
     marginal: np.ndarray                         # [M, S, A] change per pitch when a gains `delta` share
-    advantage: np.ndarray                        # [M, S, A] Q(s,a) minus the observed mix of the other types: what 4.2 judges against tau
+    advantage: np.ndarray                        # [M, S, A] Q(s,a) minus the observed mix of the other types
     policies: dict[str, np.ndarray]              # policy -> mean shares [S, A] over the members
     occupancy: np.ndarray                        # [S] expected pitches per plate appearance from each state under the observed behaviour
     obs: np.ndarray

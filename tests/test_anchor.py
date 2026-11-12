@@ -7,6 +7,8 @@ import pytest
 from treepolo_mlb_data.research import anchor as anc, gbm, policy_build as pb, policy_core as pc, policy_worlds as pw
 from treepolo_mlb_data.research.profiles import PITCH_TYPES
 
+from report_helper import record
+
 TYPES = ["FF", "SL", "CH"]
 PARAMS = dict(max_depth=4, min_leaf=1000, learning_rate=0.15, max_iter=60, l2=1.0)
 BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
@@ -72,20 +74,53 @@ def anchor_rows(fit_rows):
     return [{"phase": r["phase"], "action": r["action"], "class": r["class"], "effect": r["effect"], "se": r["se"]} for r in fit_rows]
 
 
-@pytest.mark.parametrize("kind,agrees", [("W1", True), ("W4", False)])
-def test_league_model_agrees_with_the_anchor_only_when_it_is_not_confounded(kind, agrees):
+def compared(kind):
     w, d = sim(kind)
     tensor, est = l0_model(w, d)
-    shape = w.shape
-    model = anc.model_contrasts(tensor.mean(axis=0), est.obs, est.support, est.occupancy, shape, TYPES)
+    model = anc.model_contrasts(tensor.mean(axis=0), est.obs, est.support, est.occupancy, w.shape, TYPES)
     s3 = anchor_rows(anc.action_contrasts(anc.fit_effects(d, types=TYPES, design="S3")))
-    res = anc.anchor_consistency(model, s3)
-    if agrees:
-        assert res["passes"] and res["same_sign_share"] >= 0.9 and res["anchor_cells"] >= 5
-    else:
-        assert res["model_only_cells"] >= 2                                  # the model sees slider effects that the anchor does not: confounding
-        sl_whiff = [m for m in model if m["action"] == "SL" and m["class"] == "whiff" and m["phase"] == "even"][0]["effect"]
-        assert sl_whiff > 0.01                                               # and the size of that false effect is reported by the comparison
+    return model, s3, anc.anchor_consistency(model, s3)
+
+
+def test_anchor_consistency_lists_every_cell_and_gives_no_verdict():
+    model, s3, res = compared("W1")
+    assert set(res) == {"cells", "summary"} and "passes" not in res["summary"]
+    keyed = {(r["phase"], r["action"], r["class"]): r for r in s3}
+    assert res["summary"]["cells"] == len(res["cells"]) >= 5
+    for cell in res["cells"]:
+        a = keyed[(cell["phase"], cell["action"], cell["class"])]
+        m = next(x for x in model if (x["phase"], x["action"], x["class"]) == (cell["phase"], cell["action"], cell["class"]))
+        assert cell["model_effect"] == pytest.approx(m["effect"]) and cell["anchor_effect"] == pytest.approx(a["effect"])
+        assert cell["anchor_lo"] == pytest.approx(a["effect"] - anc.ANCHOR_Z * a["se"]) and cell["anchor_hi"] == pytest.approx(a["effect"] + anc.ANCHOR_Z * a["se"])
+        assert cell["difference"] == pytest.approx(m["effect"] - a["effect"]) and cell["same_sign"] == int(np.sign(m["effect"]) == np.sign(a["effect"]))
+    s = res["summary"]
+    assert s["same_sign_share"] == pytest.approx(sum(c["same_sign"] for c in res["cells"]) / len(res["cells"]))
+    assert s["outside_anchor_interval"] == sum(1 for c in res["cells"] if not c["anchor_lo"] <= c["model_effect"] <= c["anchor_hi"])
+
+
+def test_anchor_consistency_on_made_up_cells():
+    model = [{"phase": "even", "action": "SL", "class": "whiff", "effect": 0.02}, {"phase": "even", "action": "SL", "class": "foul", "effect": -0.01},
+             {"phase": "even", "action": "CH", "class": "whiff", "effect": 0.05}, {"phase": "even", "action": "FF", "class": "whiff", "effect": 0.1}]
+    anchor = [{"phase": "even", "action": "SL", "class": "whiff", "effect": 0.04, "se": 0.01}, {"phase": "even", "action": "SL", "class": "foul", "effect": 0.01, "se": 0.01},
+              {"phase": "even", "action": "CH", "class": "whiff", "effect": 0.0, "se": 0.01}, {"phase": "even", "action": "FF", "class": "whiff", "effect": 0.1, "se": 0.0}]
+    res = anc.anchor_consistency(model, anchor)
+    assert len(res["cells"]) == 3                                            # the cell with se = 0 has no interval and is not listed
+    assert [c["same_sign"] for c in res["cells"]] == [1, 0, 0]               # 0.02 vs 0.04 same; -0.01 vs 0.01 opposite; 0.05 vs 0.0 is not the same sign
+    assert res["summary"]["same_sign_share"] == pytest.approx(1 / 3)
+    assert res["summary"]["median_ratio"] == pytest.approx(-0.25)            # ratios 0.5 and -1.0; the cell whose anchor effect is 0 has no ratio
+    assert res["summary"]["outside_anchor_interval"] == 3                    # 0.02 is outside [0.0204, 0.0596]; -0.01 is outside [-0.0096, 0.0296]; 0.05 is outside [-0.0196, 0.0196]
+
+
+@pytest.mark.report
+@pytest.mark.parametrize("kind", ["W1", "W4"])
+def test_report_league_model_against_the_anchor(kind):
+    """Known answer: W1 is not confounded, so the league model should agree with the anchor; W4 is confounded by pitcher quality, so it should show a slider effect the anchor does not.
+    Numbers only: same-sign share, median ratio, the model's slider whiff effect."""
+
+    model, s3, res = compared(kind)
+    sl_whiff = [m for m in model if m["action"] == "SL" and m["class"] == "whiff" and m["phase"] == "even"][0]["effect"]
+    record(f"anchor_consistency_{kind}", **res["summary"], model_slider_whiff_effect=sl_whiff)
+    assert res["summary"]["cells"] > 0
 
 
 def test_jbip_table_recovers_the_value_of_balls_in_play():

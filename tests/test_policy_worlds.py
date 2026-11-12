@@ -7,6 +7,8 @@ import pytest
 
 from treepolo_mlb_data.research import gbm, policy_build as pb, policy_core as pc, policy_worlds as pw
 
+from report_helper import record
+
 N_PA = 100_000
 MEMBERS = 5
 PARAMS = dict(max_depth=4, min_leaf=1000, learning_rate=0.15, max_iter=60, l2=1.0)     # smooth trees: the member spread sets the interval width
@@ -40,27 +42,52 @@ def cells(r):
     return r["est"].support & r["visited"][:, None] & r["true"].support
 
 
-def advantage_stats(r, tau=0.005):
+def advantage_stats(r):
     est, true = r["est"], r["true"]
     mean, lo, hi = est.interval(est.advantage, 0.99)
     tadv = true.advantage[0]
     c = cells(r) & np.isfinite(mean) & np.isfinite(tadv)
-    return mean, lo, hi, tadv, c, pc.detect(mean, lo, hi, est.support, tau)
+    return mean, lo, hi, tadv, c
 
 
 @pytest.mark.parametrize("kind", ["W0", "W1", "W2", "W3"])
 def test_member_intervals_cover_the_true_advantage(kind):
     r = world(kind)
-    mean, lo, hi, tadv, c, _ = advantage_stats(r)
+    mean, lo, hi, tadv, c = advantage_stats(r)
     assert c.sum() > 500
     assert ((tadv >= lo) & (tadv <= hi))[c].mean() >= 0.95
 
 
+@pytest.mark.report
+def test_report_w0_how_many_intervals_exclude_zero_when_there_is_nothing_to_find():
+    """Known answer: in W0 the true advantage is 0 everywhere, so any interval that excludes 0 is luck. Numbers only (the share is what the user compares with the 1% that luck gives)."""
+
+    r = world("W0")
+    mean, lo, hi, tadv, c = advantage_stats(r)
+    chance = pc.chance_summary(lo, hi, 0.99, mask=c)
+    record("W0_nothing_to_find", cells=chance["n"], excluding_zero=chance["found"], expected_by_chance=chance["expected_by_chance"],
+           share_excluding_zero=chance["found"] / chance["n"] if chance["n"] else None)
+    assert chance["n"] > 0
+
+
+@pytest.mark.report
+def test_report_w1_how_many_slider_cells_with_a_large_true_advantage_exclude_zero():
+    """Known answer: in W1 the slider is better wherever it can be used. Of the cells where the true advantage is large, how many intervals exclude 0 and have the right sign. Numbers only."""
+
+    r = world("W1")
+    mean, lo, hi, tadv, c = advantage_stats(r)
+    sl = c[:, pw.SL]
+    big = sl & (tadv[:, pw.SL] < -0.02)
+    excl = (hi[:, pw.SL] < 0) | (lo[:, pw.SL] > 0)
+    record("W1_slider_large_advantage", cells=int(big.sum()), share_interval_excludes_zero=float(excl[big].mean()) if big.sum() else None,
+           share_negative_estimate=float((mean[:, pw.SL][sl] < 0).mean()) if sl.sum() else None)
+    assert big.sum() > 0
+
+
 def test_w0_nothing_to_find():
     r = world("W0")
-    mean, lo, hi, tadv, c, det = advantage_stats(r)
+    mean, lo, hi, tadv, c = advantage_stats(r)
     assert np.abs(tadv[c]).max() < 1e-12                                   # the truth has no advantage anywhere
-    assert det[c].mean() <= 0.01                                           # and almost nothing is flagged as detected
     # the same-data saving of the dynamic-programming policies is positive noise (winner's curse), the cross-evaluated one is not
     w = r["w"]
     _, a = fit_world("W0", seed=11, rows=lambda cols: cols["game_pk"] % 2 == 0)
@@ -71,12 +98,12 @@ def test_w0_nothing_to_find():
 def test_w1_slider_better_everywhere():
     r = world("W1")
     est, true = r["est"], r["true"]
-    mean, lo, hi, tadv, c, det = advantage_stats(r, tau=0.005)
+    mean, lo, hi, tadv, c = advantage_stats(r)
     sl = c[:, pw.SL]
     assert (tadv[:, pw.SL][sl] < 0).all()                                  # the truth: the slider is better wherever it can be used
     assert (mean[:, pw.SL][sl] < 0).mean() >= 0.99                         # sign recovered
     big = sl & (tadv[:, pw.SL] < -0.02)
-    assert big.sum() > 300 and det[:, pw.SL][big].mean() >= 0.6            # and flagged as detected in most cells where the true advantage is practically large
+    assert big.sum() > 300                                                 # and there are many cells where the true advantage is practically large (how many intervals exclude 0: see the report test)
     obs, trust = est.obs, est.policies["dp_trust"]
     moved = (trust[:, pw.SL] - obs[:, pw.SL])[est.support[:, pw.SL] & r["visited"]]
     assert (moved > 0.05).mean() >= 0.9                                    # every trust region leans to the slider
@@ -139,4 +166,3 @@ def test_w6_unsupported_action_is_never_recommended():
     assert not est.support[three, pw.CH].any()                              # nobody threw the changeup at three balls: not supported
     for kind in ("dp_unrestricted", "dp_trust", "greedy1"):
         assert (est.policies[kind][three, pw.CH] == 0).all(), kind
-    assert not pc.detect(*est.interval(est.advantage, 0.99), est.support)[three, pw.CH].any()

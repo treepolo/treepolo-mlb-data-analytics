@@ -105,8 +105,8 @@ class ResearchService:
         rt = self.query_runtime(run_id)
         groups = rt.groups()
         return {"run": int(run_id), "groups": groups, "pitch_types": list(PITCH_TYPES), "players_available": bool(rt.package_run_id),
-                "package_groups": [g for g in groups if rt.has_package(g)], "level": rt.level, "gates": {g: rt.gate_status(g) for g in groups}, "not_covered": list(NOT_COVERED),
-                "tables": {g: {k: rt.table(g).meta[k] for k in ("confidence", "tau", "delta", "min_count", "members", "mode")} for g in groups}}
+                "package_groups": [g for g in groups if rt.has_package(g)], "level": rt.level, "descriptor_gains": {g: rt.descriptor_gains(g) for g in groups}, "not_covered": list(NOT_COVERED),
+                "tables": {g: {k: rt.table(g).meta[k] for k in ("confidence", "delta", "min_count", "members", "mode")} for g in groups}}
 
     def pitch_query_players(self, run_id: int, group: str, side: str, text: str = "", limit: int = 20) -> dict[str, Any]:
         if side not in ("pitcher", "batter"):

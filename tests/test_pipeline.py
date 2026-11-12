@@ -16,8 +16,8 @@ BACKEND = "xgboost" if gbm.xgboost_available() else "hgb"
 SCOPE = {"game_years": [2023, 2024], "game_types": ["R"]}
 GRID = {"max_depth": [3, 4], "min_leaf": [200, 600], "learning_rate": [0.15], "l2": [1.0, 5.0]}
 OVERRIDES = {"search": {"grid": GRID, "min_class_count": 20},
-             "model": {"levels": ["L0", "L3"], "min_class_count": 20, "min_cell_swings": 15, "min_gain": 0.003},
-             "policy": {"min_count": 100, "lambda_grid": [0.0], "min_class_count": 20, "cross_eval": False},
+             "model": {"levels": ["L0", "L3"], "min_class_count": 20, "min_cell_swings": 15},
+             "policy": {"min_count": 100, "lambda_grid": [0.0], "min_class_count": 20, "cross_eval": False, "replication_members": 2},
              "query": {"check_situations": 6, "check_samples": 6, "check_members": 2}}
 
 
@@ -87,9 +87,14 @@ def test_pipeline_runs_every_step_and_summarises(finished):
     assert job["state"] == "done" and job["error"] is None and job["query_run_id"]
     assert [s["id"] for s in job["steps"]] == ["search", "model", "anchor", "policy", "query"] and all(s["status"] == "done" and s["run_id"] for s in job["steps"])
     g = job["summary"]["groups"]["RvR"]
-    assert set(g) == {"r1", "policies", "gates", "actions"} and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
-    assert any(x["gate"] == "G1a" for x in g["gates"]) and len(g["actions"]) >= 2
+    assert set(g) == {"r1", "policies", "descriptor_gains", "actions", "comparisons"} and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
+    assert set(g["r1"]) == {"median_abs_diff", "max_abs_diff", "start_diff"}                  # numbers only: no pass / fail
+    assert any(x["measure"] == "level_gain" for x in g["descriptor_gains"]) and len(g["actions"]) >= 2
+    assert all("detected_share" not in a for a in g["actions"])
+    chance = g["comparisons"]["direction"]
+    assert chance["n"] > 0 and chance["expected_by_chance"] == pytest.approx(chance["n"] * (1 - chance["confidence"])) and 0 <= chance["found"] <= chance["n"]
     assert job["summary"]["best_params"]["max_depth"] in GRID["max_depth"]
+    assert job["summary"]["replication"] == {"members_per_year": 2, "years": [2023, 2024]}      # each year was also trained alone and listed side by side
 
 
 def test_pipeline_result_is_queryable_and_a_second_start_reuses_everything(world, finished):
