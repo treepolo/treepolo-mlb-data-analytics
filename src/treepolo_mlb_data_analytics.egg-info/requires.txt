@@ -1,9 +1,0 @@
-requests<3,>=2.31
-duckdb<2,>=1.4
-numpy<3,>=2
-scipy<2,>=1.14
-scikit-learn<2,>=1.6
-reportlab<5,>=4.2
-
-[dev]
-pytest<10,>=8
