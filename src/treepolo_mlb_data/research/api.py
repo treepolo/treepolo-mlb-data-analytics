@@ -55,9 +55,12 @@ def handle_get(service: ResearchService, path: str, query_string: str = "") -> R
     if route == "pipeline/status":
         return 200, service.pipeline().status()
     if route == "pipeline/info":
-        from .pipeline import GROUPS, STEPS, environment_info, tier_info
+        from .outcome_models import controls as ctl, model_kinds
+        from .pipeline import AUTO_FIELDS, FILE_STEP_KEYS, FROM_THE_TOP, GROUPS, OPTIONAL_STEPS, STEPS, environment_info, tier_info
 
-        return 200, {"tiers": tier_info(), "environment": environment_info(), "groups": list(GROUPS), "steps": [step[2] for step in STEPS]}
+        return 200, {"tiers": tier_info(), "environment": environment_info(), "groups": list(GROUPS), "steps": [step[2] for step in STEPS], "models": list(model_kinds()),
+                     "model_choices": list(ctl.MODEL_KINDS), "step_methods": {FILE_STEP_KEYS[sid]: {"kind": kind, "title": title, "auto_fields": list(AUTO_FIELDS.get(sid, ())), "optional": sid in OPTIONAL_STEPS}
+                                                                              for sid, kind, title in STEPS}, "from_the_top": list(FROM_THE_TOP), "file_format": 1}
     if route in ("pitch-query", "pitch-query/meta", "pitch-query/players"):
         run_id = _int(_one(query, "run"), "run")
         if run_id is None:
@@ -103,6 +106,16 @@ def handle_post(service: ResearchService, path: str, payload: dict[str, Any]) ->
         return 200, {"item": study}
     if route == "pipeline/start":
         return 200, service.pipeline().start(payload)
+    if route == "pipeline/full-config":
+        from .pipeline import full_config
+
+        return 200, {"file": full_config(payload)}
+    if route == "pipeline/validate":
+        from .pipeline import validate_document
+
+        doc = payload.get("file", payload)
+        errors = validate_document(service, doc)
+        return 200, {"ok": not errors, "errors": errors}
     if route == "pipeline/cancel":
         return 200, service.pipeline().cancel()
     if route == "run":

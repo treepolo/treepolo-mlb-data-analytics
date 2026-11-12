@@ -60,3 +60,20 @@ def test_pipeline_page_is_wired_into_the_app():
     assert "innerHTML" not in script and "localStorage" not in script and "sessionStorage" not in script
     for label in ("一鍵研究 Run Everything", "開始 Start", "停止", "開啟情境查詢"):
         assert label in script
+
+
+def test_settings_form_and_the_full_settings_mode_are_wired_into_the_app():
+    form = (STATIC_DIR / "research-settings-form.js").read_text(encoding="utf-8")
+    page = (STATIC_DIR / "research-pipeline-page.js").read_text(encoding="utf-8")
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    ci = (STATIC_DIR.parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert '<script src="/research-settings-form.js"></script>' in index and index.index("/research-settings-form.js") < index.index("/research-pipeline-page.js")
+    assert "node --check src/treepolo_mlb_data/web_static/research-settings-form.js" in ci
+    assert "TreepoloSettingsForm" in form and "TreepoloSettingsForm" in page
+    for endpoint in ("/api/research/pipeline/full-config", "/api/research/pipeline/validate", "/api/research/methods"):
+        assert endpoint in page
+    for label in ("簡單模式", "完整設定模式", "匯出設定檔", "匯入設定檔", "驗證"):
+        assert label in page
+    for text in (form, page):
+        assert "innerHTML" not in text and "localStorage" not in text and "sessionStorage" not in text
+    assert "Blob" in page and "download" in page                       # the file is handed over by the browser, not stored by the page

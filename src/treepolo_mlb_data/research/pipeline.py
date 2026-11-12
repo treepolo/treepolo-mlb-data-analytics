@@ -21,6 +21,13 @@ STEPS = (("search", "param_search", "模型參數搜尋"), ("model", "outcome_mo
          ("policy", "pitch_policy", "決策引擎與情境表"), ("query", "pitch_query", "查詢工具與驗收"))
 
 
+FILE_FORMAT = 1
+FILE_STEP_KEYS = {"search": "search", "model": "train", "anchor": "anchor", "policy": "policy", "query": "query"}      # the names in a settings file
+AUTO_FIELDS = {"policy": ("model_run_id", "anchor_run_id"), "query": ("policy_run_id", "package_run_id")}           # filled in from the earlier steps while the flow runs
+OPTIONAL_STEPS = ("search", "anchor")
+FROM_THE_TOP = ("scope", "groups")                                                                                    # one value for all steps, at the top of the file
+
+
 def tier_info() -> list[dict[str, Any]]:
     return [{"id": k, "label": v["label"], "trials": v["trials"], "folds": v["folds"], "members": v["members"]} for k, v in TIERS.items() if not v.get("hidden")]
 
@@ -59,7 +66,29 @@ def normalize_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
             "model": model, "controls": controls, "search": bool(raw.get("search", True))}
 
 
+def _file_step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
+    """A step's settings from a settings file: the user's values, the scope and the groups from the top of the file, the run numbers from the earlier steps."""
+
+    from .methods import get_method
+
+    kind = next(k for sid, k, _ in STEPS if sid == step)
+    scope = {"game_years": settings["years"], "game_types": ["R"]}
+    cfg = dict(settings["steps"].get(step, {}))
+    names = {f.name for f in get_method(kind).fields}
+    if "groups" in names:
+        cfg["groups"] = list(settings["groups"])
+    cfg["scope"] = scope
+    for name, source in (("model_run_id", "model_run_id"), ("anchor_run_id", "anchor_run_id"), ("policy_run_id", "policy_run_id"), ("package_run_id", "model_run_id")):
+        if name in AUTO_FIELDS.get(step, ()):
+            cfg[name] = int(context.get(source) or 0)
+    if step in ("anchor", "policy") and not cfg.get("re_scope"):
+        cfg["re_scope"] = scope
+    return cfg
+
+
 def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
+    if settings.get("steps") is not None:
+        return _file_step_config(step, settings, context)
     t = TIERS[settings["tier"]]
     scope = {"game_years": settings["years"], "game_types": ["R"]}
     common = {"scope": scope, "groups": settings["groups"], "seed": settings["seed"]}
@@ -75,7 +104,7 @@ def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, An
         cfg = {"scope": scope, "groups": settings["groups"], "re_scope": scope, "max_rows": 3_500_000}       # the anchor has no random part
     elif step == "policy":
         cfg = {**common, "re_scope": scope, "model_run_id": context["model_run_id"], "cross_members": t["cross_members"], "replication_members": min(3, t["cross_members"]), "cross_eval": True,
-               "anchor_run_id": context["anchor_run_id"], "max_rows": 3_500_000}
+               "anchor_run_id": context.get("anchor_run_id", 0), "max_rows": 3_500_000}
     else:
         cfg = {"scope": scope, "policy_run_id": context["policy_run_id"], "package_run_id": context["model_run_id"], "seed": settings["seed"]}
     cfg.update(settings["overrides"].get(step, {}))
@@ -94,7 +123,7 @@ class PipelineManager:
 
     # --- control
     def start(self, raw: Mapping[str, Any]) -> dict[str, Any]:
-        settings = normalize_settings(raw)
+        settings = self._settings_from_file(raw["file"]) if raw.get("file") is not None else normalize_settings(raw)
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise ConfigError("a pipeline is already running / 已有一個流程正在執行")
@@ -105,6 +134,18 @@ class PipelineManager:
             self._thread = threading.Thread(target=self._run, args=(settings,), daemon=True)
             self._thread.start()
             return self.status()
+
+    def _settings_from_file(self, doc: Any) -> dict[str, Any]:
+        errors = validate_document(self.service, doc)
+        if errors:
+            shown = "；".join(f"{e['step'] or '檔案'}{('/' + e['field']) if e['field'] else ''}: {e['message']}" for e in errors[:5])
+            raise ConfigError(f"the settings file is not valid / 設定檔不合法：{shown}")
+        enabled = dict(doc.get("enabled") or {})
+        steps = {sid: dict((doc["steps"] or {}).get(FILE_STEP_KEYS[sid], {})) for sid, _, _ in STEPS}
+        train = steps.get("model", {})
+        return {"tier": "custom", "groups": list(doc["groups"]), "years": sorted(int(y) for y in doc["years"]), "backend": train.get("backend", "xgboost"), "device": train.get("device", "auto"),
+                "seed": int(train.get("seed", 20240601)), "overrides": {}, "model": train.get("model", "gbm"), "controls": {}, "steps": steps, "enabled": enabled,
+                "search": bool(enabled.get("search", True)) and bool(steps.get("search"))}
 
     def cancel(self) -> dict[str, Any]:
         self._cancel.set()
@@ -138,6 +179,10 @@ class PipelineManager:
                 if sid == "search" and not settings["search"]:                 # the settings typed in the full settings mode are used as they are
                     self._update(i, status="done", message="略過：使用設定裡填的參數", seconds=0.0, fraction=1.0, reused=False)
                     context["best_params"] = {}
+                    continue
+                if sid == "anchor" and (settings.get("enabled") or {}).get("anchor") is False:
+                    self._update(i, status="done", message="略過：不做固定效應對照", seconds=0.0, fraction=1.0, reused=False)
+                    context["anchor_run_id"] = 0
                     continue
                 self._update(i, status="running", message="")
                 cfg = step_config(sid, settings, context)
@@ -206,3 +251,118 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
             "comparisons": {section: per_group[g] for section, per_group in (policy_extras.get("comparisons") or {}).items() if g in per_group},
         }
     return out
+
+
+# ------------------------------------------------------------------------------------------------ settings files (full settings mode)
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def full_config(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The settings file that matches the simple-mode choices in ``raw`` (tier, groups, years, model, controls): every setting of every step with its value, ready to edit."""
+
+    from .config_schema import normalize_config
+    from .methods import get_method
+
+    settings = normalize_settings(raw)
+    steps: dict[str, Any] = {}
+    placeholders = {"model_run_id": 0, "anchor_run_id": 0, "policy_run_id": 0}
+    for sid, kind, _ in STEPS:
+        cfg = step_config(sid, settings, placeholders)
+        for name in FROM_THE_TOP + AUTO_FIELDS.get(sid, ()):
+            cfg.pop(name, None)
+        if sid in ("anchor", "policy"):
+            cfg.pop("re_scope", None)                                    # the scope of the run-expectancy table is the scope of the file unless the user writes one
+        full = normalize_config(get_method(kind).fields, cfg)
+        for name in FROM_THE_TOP + AUTO_FIELDS.get(sid, ()):
+            full.pop(name, None)
+        if sid in ("anchor", "policy"):
+            full.pop("re_scope", None)
+        steps[FILE_STEP_KEYS[sid]] = _jsonable(full)
+    return {"format": FILE_FORMAT, "created_at": _now(), "groups": list(settings["groups"]), "years": list(settings["years"]), "steps": steps,
+            "enabled": {"search": bool(settings["search"]), "anchor": True}}
+
+
+def validate_document(service, doc: Any) -> list[dict[str, str]]:
+    """Every problem of a settings file, one entry per step and setting (empty list = valid). Run numbers of earlier steps are not checked (they do not exist yet)."""
+
+    from .config_schema import _normalize_value, normalize_config
+    from .methods import ResearchContext, get_method
+    from .scope import normalize_scope
+
+    errors: list[dict[str, str]] = []
+
+    def err(step: str, field: str, message: str) -> None:
+        errors.append({"step": step, "field": field, "message": message})
+
+    if not isinstance(doc, Mapping):
+        return [{"step": "", "field": "", "message": "設定檔必須是 JSON 物件 / the file must be a JSON object"}]
+    if doc.get("format") != FILE_FORMAT:
+        err("", "format", f"format 必須是 {FILE_FORMAT} / format must be {FILE_FORMAT}")
+    groups = doc.get("groups")
+    if not isinstance(groups, list) or not groups or set(map(str, groups)) - set(GROUPS):
+        err("", "groups", f"groups 必須是 {list(GROUPS)} 的非空子集 / groups must be a non-empty subset of {list(GROUPS)}")
+    years = doc.get("years")
+    if not isinstance(years, list) or not years or not all(isinstance(y, int) and not isinstance(y, bool) for y in years):
+        err("", "years", "years 必須是整數年份的非空列表 / years must be a non-empty list of integers")
+    steps = doc.get("steps")
+    if not isinstance(steps, Mapping):
+        err("", "steps", "steps 必須是物件 / steps must be an object")
+        return errors
+    enabled = doc.get("enabled") or {}
+    if not isinstance(enabled, Mapping) or set(enabled) - {FILE_STEP_KEYS[s] for s in OPTIONAL_STEPS} or not all(isinstance(v, bool) for v in enabled.values()):
+        err("", "enabled", f"enabled 只能含 {[FILE_STEP_KEYS[s] for s in OPTIONAL_STEPS]}，值是 true 或 false / enabled may hold only those steps, as true or false")
+    by_key = {FILE_STEP_KEYS[sid]: (sid, kind) for sid, kind, _ in STEPS}
+    for key in steps:
+        if key not in by_key:
+            err(str(key), "", f"未知的步驟 {key!r}；可用 {list(by_key)} / unknown step")
+    scope = None
+    if isinstance(years, list) and years and all(isinstance(y, int) for y in years):
+        try:
+            scope = normalize_scope({"game_years": sorted(years), "game_types": ["R"]}, required=True)
+        except ConfigError as exc:
+            err("", "years", str(exc))
+    auto_names = {n for names in AUTO_FIELDS.values() for n in names}
+    for key, (sid, kind) in by_key.items():
+        cfg = steps.get(key)
+        if cfg is None:
+            err(key, "", "缺少這個步驟的設定 / this step has no settings")
+            continue
+        if not isinstance(cfg, Mapping):
+            err(key, "", "步驟設定必須是物件 / step settings must be an object")
+            continue
+        method = get_method(kind)
+        fields = {f.name: f for f in method.fields}
+        clean: dict[str, Any] = {}
+        before = len(errors)
+        for name, value in cfg.items():
+            if name in FROM_THE_TOP or name in AUTO_FIELDS.get(sid, ()) or name == "re_scope" and sid in ("anchor", "policy"):
+                continue                                                  # taken from the top of the file or from the earlier steps
+            if name not in fields:
+                err(key, name, "未知的設定 / unknown setting")
+                continue
+            try:
+                clean[name] = _normalize_value(fields[name], value)
+            except ConfigError as exc:
+                err(key, name, str(exc))
+        if len(errors) > before or scope is None:
+            continue
+        if "groups" in fields and isinstance(groups, list) and groups:
+            clean["groups"] = [str(g) for g in groups]
+        try:
+            normalized = normalize_config(method.fields, clean)
+            for name in ("re_scope",):
+                if name in normalized and not normalized[name]:
+                    normalized[name] = scope
+            method.validate(normalized, ResearchContext(service.config, None, scope, None, service.store))
+        except ConfigError as exc:
+            message = str(exc)
+            if any(n in message for n in auto_names) or "outcome_model_train" in message and sid in ("policy", "query"):
+                continue                                                  # a run number the earlier steps will supply
+            mentioned = [n for n in fields if n in message]
+            err(key, mentioned[0] if mentioned else "", message)
+    return errors

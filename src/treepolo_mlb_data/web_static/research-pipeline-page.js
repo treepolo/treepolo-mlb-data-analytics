@@ -6,7 +6,7 @@
   const QUERY_PANEL_ID = "research-query-panel";
   const RUNS_PANEL_ID = "research-runs-panel";
   const STATUS = { pending: ["⏳", "等待"], running: ["▶", "執行中"], done: ["✔", "完成"], error: ["✖", "失敗"] };
-  const state = { info: null, job: null, timer: null, tier: null, groups: null, formRunning: null };
+  const state = { info: null, job: null, timer: null, tier: null, groups: null, formRunning: null, mode: "simple", doc: null, methods: null, stepKey: "search", form: null, docErrors: [], valid: null };
 
   function el(tag, props = {}, ...children) {
     const node = document.createElement(tag);
@@ -50,6 +50,10 @@
       .rp-table { border-collapse:collapse; font-size:12px; margin:4px 0; }
       .rp-table th, .rp-table td { border:1px solid #bbc3ce; padding:2px 8px; text-align:right; }
       .rp-table th:first-child, .rp-table td:first-child { text-align:left; }
+      .rp-mode { margin:6px 0; } .rp-mode label { margin-right:16px; font-size:13px; }
+      .rp-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 4px; }
+      .rp-tab { padding:3px 10px; border:1px solid #adb8c7; background:#eef2f7; cursor:pointer; } .rp-tab.active { background:#2f6fb2; color:#fff; } .rp-tab.bad { border-color:#c0392b; color:#b03a2e; font-weight:700; }
+      .rp-file-errors { margin:6px 0; padding:6px 8px; border:1px solid #c0392b; background:#fdeeee; font-size:12px; } .rp-file-ok { margin:6px 0; padding:6px 8px; border:1px solid #2e7d4f; background:#f1faf3; font-size:12px; }
     `;
     document.head.append(style);
   }
@@ -77,24 +81,142 @@
     }, 2000);
   }
 
+  // ---- the two modes -------------------------------------------------------------------------------------------------------
+  async function loadMethods() {
+    if (state.methods) return;
+    const body = await api("/api/research/methods");
+    state.methods = Object.fromEntries(body.methods.map(m => [m.kind, m]));
+  }
+
+  async function enterFull() {
+    if (!window.TreepoloSettingsForm) throw new Error("設定表單模組沒有載入 The settings form module is not loaded");
+    await loadMethods();
+    if (!state.doc) {
+      const tier = state.tier || document.querySelector("input[name=rp-tier]:checked")?.value || state.info.tiers[0].id;
+      state.doc = (await api("/api/research/pipeline/full-config", { tier, groups: selectedGroups().length ? selectedGroups() : (state.groups || state.info.groups) })).file;     // what the simple mode would run, written out in full
+      state.valid = null; state.docErrors = [];
+    }
+    state.mode = "full"; state.stepKey = state.stepKey || "search";
+    renderForm();
+  }
+
+  function leaveFull() { collectDoc(); state.mode = "simple"; renderForm(); }
+
+  function currentMethod() { return state.methods[state.info.step_methods[state.stepKey].kind]; }
+
+  function collectCurrentStep() {
+    if (!state.form || !state.doc) return {};
+    const { values, errors } = state.form.read();
+    const next = { ...(state.doc.steps[state.stepKey] || {}) };
+    state.form.names().forEach(n => { delete next[n]; });
+    state.doc.steps[state.stepKey] = Object.assign(next, values);
+    return errors;
+  }
+
+  function collectDoc() {
+    if (!state.doc) return {};
+    const parseErrors = collectCurrentStep();
+    const groups = [...document.querySelectorAll("input[name=rp-full-group]:checked")].map(n => n.value);
+    if (document.querySelector("input[name=rp-full-group]")) state.doc.groups = groups;
+    const years = document.getElementById("rp-full-years");
+    if (years) state.doc.years = years.value.split(",").map(x => x.trim()).filter(Boolean).map(Number);
+    return parseErrors;
+  }
+
+  const errorsFor = step => Object.fromEntries(state.docErrors.filter(e => e.step === step && e.field).map(e => [e.field, e.message]));
+  const stepHasError = step => state.docErrors.some(e => e.step === step);
+
+  async function validateDoc() {
+    const parseErrors = collectDoc();
+    const res = await api("/api/research/pipeline/validate", { file: state.doc });
+    state.docErrors = res.errors.concat(Object.entries(parseErrors).map(([field, message]) => ({ step: state.stepKey, field, message })));
+    state.valid = res.ok && !Object.keys(parseErrors).length;
+    renderForm();
+    return state.valid;
+  }
+
+  async function startFull() {
+    if (!(await validateDoc())) throw new Error(`設定檔有 ${state.docErrors.length} 個問題，請修正標紅的欄位後再開始（驗證通過才能開始） Fix the marked settings first`);
+    state.job = await api("/api/research/pipeline/start", { file: state.doc });
+    render(); poll();
+  }
+
+  function exportDoc() {
+    collectDoc();
+    state.doc.created_at = new Date().toISOString();
+    const blob = new Blob([JSON.stringify(state.doc, null, 2)], { type: "application/json" });
+    const link = el("a", { href: URL.createObjectURL(blob), download: "treepolo-pipeline-settings.json" });
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  async function importDoc(file) {
+    const raw = await file.text();
+    let parsed;
+    try { parsed = JSON.parse(raw.replace(/^\uFEFF/, "")); } catch (e) { throw new Error(`這不是有效的 JSON 檔：${e.message} Not a valid JSON file`); }
+    await loadMethods();
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) { parsed.steps = (parsed.steps && typeof parsed.steps === "object") ? parsed.steps : {}; }
+    state.doc = parsed; state.mode = "full"; state.stepKey = state.stepKey || "search";
+    const res = await api("/api/research/pipeline/validate", { file: parsed });         // the form shows the file whatever is wrong with it, and marks what is
+    state.docErrors = res.errors; state.valid = res.ok;
+    renderForm();
+    say(res.ok ? "已匯入，驗證通過 Imported and valid" : `已匯入，但有 ${res.errors.length} 個問題，請看標紅的欄位 Imported with ${res.errors.length} problems`);
+  }
+
+  function modeToggle(running) {
+    const radio = (value, label, handler) => el("label", {}, el("input", { type: "radio", name: "rp-mode", value, ...(state.mode === value ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}), onchange: () => guard(handler) }), ` ${label}`);
+    return el("div", { class: "rp-mode", id: "rp-mode" }, radio("simple", "簡單模式 Simple", leaveFull), radio("full", "完整設定模式 Full settings", enterFull));
+  }
+
+  function simpleForm(running) {
+    const info = state.info;
+    return el("div", { class: "rp-form" },
+      el("fieldset", {}, el("legend", { text: "運算量 Size" }),
+        ...info.tiers.map((t, i) => el("label", {}, el("input", { type: "radio", name: "rp-tier", value: t.id, ...((state.tier ? state.tier === t.id : i === 0) ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}),
+        onchange: () => { state.tier = t.id; } }), ` ${t.label}`))),
+      el("fieldset", {}, el("legend", { text: "手別組 Groups" }),
+        ...info.groups.map(g => el("label", {}, el("input", { type: "checkbox", name: "rp-group", value: g, ...((!state.groups || state.groups.includes(g)) ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}),
+        onchange: () => { state.groups = selectedGroups(); } }), ` ${g}`))),
+      el("div", {},
+        el("button", { type: "button", id: "rp-start", text: running ? "執行中…" : "▶ 開始 Start", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(start) }),
+        el("button", { type: "button", id: "rp-cancel", text: "停止（目前步驟結束後）Stop", ...(running ? {} : { disabled: "disabled" }), onclick: () => guard(async () => { state.job = await api("/api/research/pipeline/cancel", {}); render(); }) })));
+  }
+
+  function fullForm(running) {
+    const info = state.info, doc = state.doc, meta = info.step_methods[state.stepKey];
+    const fileInput = el("input", { type: "file", accept: ".json,application/json", id: "rp-import-file", style: "display:none", onchange: event => { const f = event.target.files[0]; event.target.value = ""; if (f) guard(() => importDoc(f)); } });
+    const top = el("div", { class: "rp-form" },
+      el("fieldset", {}, el("legend", { text: "手別組 Groups" }),
+        ...info.groups.map(g => el("label", {}, el("input", { type: "checkbox", name: "rp-full-group", value: g, ...((doc.groups || []).includes(g) ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}) }), ` ${g}`))),
+      el("fieldset", {}, el("legend", { text: "年份 Years（逗號分開）" }), el("input", { type: "text", id: "rp-full-years", value: (doc.years || []).join(", "), ...(running ? { disabled: "disabled" } : {}) })));
+    const tabs = el("div", { class: "rp-tabs", id: "rp-tabs" }, ...Object.entries(info.step_methods).map(([key, m]) =>
+      el("button", { type: "button", class: `rp-tab${key === state.stepKey ? " active" : ""}${stepHasError(key) ? " bad" : ""}`, "data-step-key": key, text: m.title, onclick: () => { collectDoc(); state.stepKey = key; renderForm(); } })));
+    const method = currentMethod();
+    const exclude = [...info.from_the_top, ...meta.auto_fields, ...(["anchor", "policy"].includes(state.stepKey) ? ["re_scope"] : [])];
+    state.form = window.TreepoloSettingsForm.buildForm(method.fields, doc.steps[state.stepKey] || {}, { exclude });
+    state.form.setErrors(errorsFor(state.stepKey));
+    const optional = meta.optional ? el("label", { class: "hint" }, el("input", { type: "checkbox", id: "rp-step-enabled", ...((doc.enabled || {})[state.stepKey] !== false ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}),
+      onchange: event => { doc.enabled = { ...(doc.enabled || {}), [state.stepKey]: event.target.checked }; } }), " 做這一步（取消勾選就略過）") : null;
+    const auto = meta.auto_fields.length ? el("div", { class: "hint", text: `這一步會自動接上前面步驟的結果（${meta.auto_fields.join("、")}），不用填。` }) : null;
+    const status = state.valid === true ? el("div", { class: "rp-file-ok", id: "rp-file-ok", text: "驗證通過 Valid" })
+      : (state.docErrors.length ? el("div", { class: "rp-file-errors", id: "rp-file-errors", text: `有 ${state.docErrors.length} 個問題：` + state.docErrors.slice(0, 12).map(e => `${e.step ? `[${e.step}]` : ""}${e.field ? `${e.field}：` : ""}${e.message}`).join("；") }) : null);
+    return el("div", {},
+      top, tabs, optional, auto, state.form.node, status,
+      el("div", { class: "button-row" },
+        el("button", { type: "button", id: "rp-validate", text: "驗證 Validate", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(validateDoc) }),
+        el("button", { type: "button", id: "rp-export", text: "匯出設定檔 Export", onclick: () => guard(async () => exportDoc()) }),
+        el("button", { type: "button", id: "rp-import", text: "匯入設定檔 Import", ...(running ? { disabled: "disabled" } : {}), onclick: () => fileInput.click() }), fileInput,
+        el("button", { type: "button", id: "rp-start", text: running ? "執行中…" : "▶ 開始 Start", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(startFull) }),
+        el("button", { type: "button", id: "rp-cancel", text: "停止（目前步驟結束後）Stop", ...(running ? {} : { disabled: "disabled" }), onclick: () => guard(async () => { state.job = await api("/api/research/pipeline/cancel", {}); render(); }) })));
+  }
+
   function renderForm() {
     const host = document.getElementById("rp-form");
     const info = state.info;
     const env = info.environment;
     const running = state.job && state.job.state === "running";
     const envText = env.xgboost ? (env.cuda ? "已偵測到 XGBoost 與 GPU，會用 GPU 訓練。" : "已偵測到 XGBoost，但沒有可用的 GPU，會用 CPU 訓練。") : "沒有安裝 XGBoost，會用 scikit-learn（CPU，較慢）。";
-    host.replaceChildren(
-      el("p", { class: "hint", id: "rp-env", text: envText }),
-      el("div", { class: "rp-form" },
-        el("fieldset", {}, el("legend", { text: "運算量 Size" }),
-          ...info.tiers.map((t, i) => el("label", {}, el("input", { type: "radio", name: "rp-tier", value: t.id, ...((state.tier ? state.tier === t.id : i === 0) ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}),
-          onchange: () => { state.tier = t.id; } }), ` ${t.label}`))),
-        el("fieldset", {}, el("legend", { text: "手別組 Groups" }),
-          ...info.groups.map(g => el("label", {}, el("input", { type: "checkbox", name: "rp-group", value: g, ...((!state.groups || state.groups.includes(g)) ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}),
-          onchange: () => { state.groups = selectedGroups(); } }), ` ${g}`))),
-        el("div", {},
-          el("button", { type: "button", id: "rp-start", text: running ? "執行中…" : "▶ 開始 Start", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(start) }),
-          el("button", { type: "button", id: "rp-cancel", text: "停止（目前步驟結束後）Stop", ...(running ? {} : { disabled: "disabled" }), onclick: () => guard(async () => { state.job = await api("/api/research/pipeline/cancel", {}); render(); }) }))));
+    host.replaceChildren(el("p", { class: "hint", id: "rp-env", text: envText }), modeToggle(running), state.mode === "full" && state.doc ? fullForm(running) : simpleForm(running));
   }
 
   function renderSteps() {

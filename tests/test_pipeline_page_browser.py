@@ -59,6 +59,45 @@ def test_finished_pipeline_shows_steps_summary_and_opens_the_query_page(url):
         browser.close()
 
 
+def test_full_settings_mode_switches_edits_exports_and_imports(url, tmp_path):
+    with playwright.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_page(viewport={"width": 1300, "height": 1700}, accept_downloads=True)
+        page.goto(url + "?page=research-pipeline")
+        page.wait_for_selector("#rp-start", timeout=15000)
+        assert page.locator("input[name=rp-tier]").count() == 3                          # the simple mode is what is shown first
+        page.check("input[name=rp-mode][value=full]")
+        page.wait_for_selector("#rp-tabs", timeout=15000)
+        assert page.locator(".rp-tab").count() == 5 and page.locator("input[name=rp-tier]").count() == 0
+        page.click(".rp-tab[data-step-key=train]")
+        page.wait_for_selector("[data-setting=max_depth]")
+        assert page.locator("[data-field=control_pitcher] select").count() == 1 and page.locator("[data-field=model_run_id]").count() == 0     # every setting is a field; run numbers are not
+        page.fill("[data-setting=max_depth]", "3")
+        page.select_option("[data-setting=control_pitcher]", "effect")
+        with page.expect_download() as downloaded:
+            page.click("#rp-export")
+        path = tmp_path / "settings.json"
+        downloaded.value.save_as(str(path))
+        raw = path.read_bytes()
+        assert raw[:1] == b"{"                                                          # UTF-8 without a byte-order mark
+        doc = json.loads(raw.decode("utf-8"))
+        assert doc["format"] == 1 and doc["steps"]["train"]["max_depth"] == 3 and doc["steps"]["train"]["control_pitcher"] == "effect"
+        # a file with a wrong value is loaded, and the wrong field is marked
+        doc["steps"]["train"]["learning_rate"] = -1
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps(doc), encoding="utf-8")
+        page.set_input_files("#rp-import-file", str(bad))
+        page.wait_for_selector("#rp-file-errors", timeout=15000)
+        assert page.locator(".rp-tab.bad").count() == 1
+        page.click(".rp-tab[data-step-key=train]")
+        assert page.locator("[data-field=learning_rate].sf-bad").count() == 1 and page.input_value("[data-setting=max_depth]") == "3"
+        # fixed, it validates; the run starts only after validation passes
+        page.fill("[data-setting=learning_rate]", "0.1")
+        page.click("#rp-validate")
+        page.wait_for_selector("#rp-file-ok", timeout=15000)
+        browser.close()
+
+
 def test_running_and_failed_states_are_shown(url):
     steps = [{"id": i, "kind": k, "title": t, "status": "pending", "run_id": None, "seconds": None, "reused": None, "message": "", "fraction": None}
              for i, k, t in (("search", "param_search", "模型參數搜尋"), ("model", "league_model", "訓練全聯盟模型"), ("anchor", "action_effects", "固定效應對照答案"),

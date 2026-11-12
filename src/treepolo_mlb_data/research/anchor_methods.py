@@ -4,14 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 from .config_schema import ConfigError, ConfigField
-from .guards import check_modeling_scope, check_purpose, scope_years
+from .guards import scope_years
 from .league_methods import DIGITS, GROUPS, fetch_columns
 from .methods import ArtifactData, ResearchContext, ResearchMethod, ResearchResult, register_method
 from .policy_methods import ball_in_play_value, pack_arrays, pc_types
 from .re_source import get_re_table, re_method_inputs
 from .scope import normalize_scope
 from .sections import make_section
-from .sequencing_methods import BUNT_POLICY, FILTERS, PURPOSE, RE_SCOPE, _check_filters
+from .sequencing_methods import BUNT_POLICY, FILTERS, RE_SCOPE, _check_filters
 
 
 class _Lazy:
@@ -32,12 +32,12 @@ lc = _Lazy(".league_core")
 
 class ActionEffectsMethod(ResearchMethod):
     kind = "action_effects"
-    version = 1
+    version = 2     # 2: no reserved-season rule (the one-click flow trains and tests on any years)
     label_zh = "球種效應錨點（固定效應迴歸）與界內價值 J_BIP"
     label_en = "Pitch-type effects anchor (fixed-effects regression) and ball-in-play value J_BIP"
     requires_scope = True
     fields = (
-        PURPOSE, BUNT_POLICY, FILTERS, RE_SCOPE,
+        BUNT_POLICY, FILTERS, RE_SCOPE,
         ConfigField("groups", "str_list", default=list(GROUPS), label_zh="分組（各自擬合）", label_en="Groups (fitted separately)"),
         ConfigField("designs", "str_list", default=["S3", "S4"], label_zh="固定效應設計", label_en="Fixed-effects designs",
                     help_zh="S3：投手＋打者；S4：投手×比賽＋打者（擋掉當天狀態）。", help_en="S3: pitcher and batter; S4: pitcher-game and batter (removes the form of the day)."),
@@ -58,9 +58,7 @@ class ActionEffectsMethod(ResearchMethod):
         if set(config["pitch_types"]) - set(pc_types()):
             raise ConfigError(f"pitch_types must be frozen types {pc_types()} / pitch_types 必須是凍結的球種")
         _check_filters(config["filters"])
-        check_purpose(ctx.scope, config["purpose"])
         config["re_scope"] = normalize_scope(config["re_scope"], required=True)
-        check_modeling_scope(config["re_scope"], config["purpose"], "re_scope")
 
     def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
         return re_method_inputs(ctx, config)
@@ -115,7 +113,7 @@ class ActionEffectsMethod(ResearchMethod):
             make_section("Streak effects 連投效應（第二、三顆以上相對第一顆）", ("group", "design", "term", "class", "effect", "se", "lo", "hi"), streak_rows, ("group", "design", "term", "class"), "duckdb", DIGITS),
             make_section("J_BIP 界內非全壘打的價值", ("group", "action", "outs", "bases", "value", "n_in_play"), jbip_rows, ("group", "action", "outs", "bases"), "duckdb", DIGITS),
         )
-        return ResearchResult(sections=sections, extras={"scope": ctx.scope, "purpose": config["purpose"], "re_scope": config["re_scope"], "designs": config["designs"]}, artifacts=tuple(artifacts))
+        return ResearchResult(sections=sections, extras={"scope": ctx.scope, "re_scope": config["re_scope"], "designs": config["designs"]}, artifacts=tuple(artifacts))
 
     @staticmethod
     def _supported_types(cols, config) -> list[str]:

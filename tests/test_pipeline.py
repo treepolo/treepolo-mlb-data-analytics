@@ -1,6 +1,8 @@
 """The setting search, the one-click pipeline (job, steps, reuse, summary) and its API, on a synthetic world with known player effects."""
 from __future__ import annotations
 
+import copy
+import json
 import sqlite3
 
 import numpy as np
@@ -156,3 +158,90 @@ def test_the_model_and_its_controls_reach_every_step_and_the_search_can_be_skipp
         pl.normalize_settings({"tier": "fast", "model": "no_such_model"})
     with pytest.raises(ConfigError, match="controls"):
         pl.normalize_settings({"tier": "fast", "controls": {"control_pitcher": "magic"}})
+
+
+# ------------------------------------------------------------------------------------------------ settings files (full settings mode)
+SIMPLE = {"tier": "smoke", "groups": ["RvR"], "model": "logistic", "controls": {"control_pitcher": "effect"}}
+STEP_OF = {"search": "search", "model": "train", "anchor": "anchor", "policy": "policy", "query": "query"}
+
+
+def test_the_full_settings_file_is_what_the_simple_mode_would_run(world):
+    doc = pl.full_config(SIMPLE)
+    assert doc["format"] == 1 and doc["groups"] == ["RvR"] and doc["years"] == [2023, 2024] and set(doc["steps"]) == set(STEP_OF.values()) and doc["enabled"] == {"search": True, "anchor": True}
+    assert pl.validate_document(world, doc) == []
+    again = json.loads(json.dumps(doc, ensure_ascii=False))                                  # a file written and read back is the same document
+    assert again == doc and pl.validate_document(world, again) == []
+    for step in doc["steps"].values():
+        assert "scope" not in step and "groups" not in step and "re_scope" not in step
+    assert "model_run_id" not in doc["steps"]["policy"] and "anchor_run_id" not in doc["steps"]["policy"] and "policy_run_id" not in doc["steps"]["query"]
+    settings_ = pl.normalize_settings(SIMPLE)
+    placeholders = {"model_run_id": 0, "anchor_run_id": 0, "policy_run_id": 0}
+    for sid, key in STEP_OF.items():                                                         # every value the simple mode sets is written down, with the same value
+        cfg = pl.step_config(sid, settings_, placeholders)
+        for name, value in cfg.items():
+            if name in ("scope", "groups", "re_scope") or name in pl.AUTO_FIELDS.get(sid, ()):
+                continue
+            assert doc["steps"][key][name] == value, (sid, name)
+    from treepolo_mlb_data.research.methods import get_method
+
+    for sid, kind, _ in pl.STEPS:                                                           # and every setting of the method is there: nothing is hidden
+        names = {f.name for f in get_method(kind).fields} - {"scope", "groups", "re_scope"} - set(pl.AUTO_FIELDS.get(sid, ()))
+        assert names <= set(doc["steps"][STEP_OF[sid]]), (sid, names - set(doc["steps"][STEP_OF[sid]]))
+
+
+def test_a_bad_settings_file_says_which_setting_of_which_step_is_wrong(world):
+    good = pl.full_config(SIMPLE)
+
+    def problems(edit):
+        doc = copy.deepcopy(good); edit(doc)
+        return pl.validate_document(world, doc)
+
+    e = problems(lambda d: d["steps"]["train"].update(max_depth="deep"))
+    assert [(x["step"], x["field"]) for x in e] == [("train", "max_depth")] and "整數" in e[0]["message"]
+    e = problems(lambda d: d["steps"]["train"].update(control_survival="batter_and_count", control_batter="none"))
+    assert e and e[0]["step"] == "train" and "control_batter" in e[0]["message"]
+    e = problems(lambda d: d["steps"]["policy"].update(no_such_setting=1))
+    assert [(x["step"], x["field"]) for x in e] == [("policy", "no_such_setting")]
+    e = problems(lambda d: d["steps"]["search"].update(scoring=["year"], grid={"no_such": [1]}))
+    assert any(x["step"] == "search" for x in e)
+    assert any(x["field"] == "format" for x in problems(lambda d: d.update(format=2)))
+    assert any(x["field"] == "groups" for x in problems(lambda d: d.update(groups=["XvX"])))
+    assert any(x["field"] == "years" for x in problems(lambda d: d.update(years=[])))
+    assert any(x["field"] == "enabled" for x in problems(lambda d: d.update(enabled={"train": False})))                  # only the optional steps can be switched off
+    assert any(x["step"] == "anchor" for x in problems(lambda d: d["steps"].pop("anchor")))
+    assert pl.validate_document(world, ["not", "an", "object"])[0]["field"] == ""
+    assert problems(lambda d: d["steps"]["policy"].update(model_run_id=999)) == []                                         # run numbers come from the earlier steps while it runs
+
+
+def test_the_settings_file_api(world):
+    status, body = api.handle_post(world, "/api/research/pipeline/full-config", SIMPLE)
+    assert status == 200 and body["file"]["format"] == 1
+    status, ok = api.handle_post(world, "/api/research/pipeline/validate", {"file": body["file"]})
+    assert status == 200 and ok == {"ok": True, "errors": []}
+    broken = copy.deepcopy(body["file"]); broken["steps"]["train"]["learning_rate"] = -1
+    status, bad = api.handle_post(world, "/api/research/pipeline/validate", {"file": broken})
+    assert status == 200 and not bad["ok"] and bad["errors"][0]["field"] == "learning_rate"
+    status, info = api.handle_get(world, "/api/research/pipeline/info", "")
+    assert info["step_methods"]["train"]["kind"] == "outcome_model_train" and info["step_methods"]["policy"]["auto_fields"] == ["model_run_id", "anchor_run_id"] and "logistic" in info["models"]
+    with pytest.raises(ConfigError, match="not valid"):
+        api.handle_post(world, "/api/research/pipeline/start", {"file": broken})                                        # an invalid file never starts
+
+
+def test_a_pipeline_can_run_from_a_settings_file_with_optional_steps_switched_off(world):
+    doc = pl.full_config({"tier": "smoke", "groups": ["RvR"], "model": "logistic"})
+    doc["enabled"] = {"search": False, "anchor": False}
+    doc["steps"]["train"].update(max_iter=40, min_class_count=20, cold_folds=2, bagging_reps=2, bootstrap_reps=20, compare_baseline=False, effect_sample=2000, control_pitcher="effect")
+    doc["steps"]["policy"].update(min_count=100, lambda_grid=[0.0], cross_eval=False, replication_members=0)
+    doc["steps"]["query"].update(check_situations=6, check_members=2)
+    manager = world.pipeline()
+    manager.start({"file": doc})
+    manager.wait(900)
+    job = manager.status()
+    assert job["state"] == "done" and job["error"] is None and job["settings"]["tier"] == "custom"
+    by_id = {s["id"]: s for s in job["steps"]}
+    assert by_id["search"]["run_id"] is None and "略過" in by_id["search"]["message"] and by_id["anchor"]["run_id"] is None and "略過" in by_id["anchor"]["message"]
+    assert all(by_id[k]["status"] == "done" and by_id[k]["run_id"] for k in ("model", "policy", "query"))
+    model_extras = world.store.load_result(by_id["model"]["run_id"])["extras"]
+    assert model_extras["model"] == "logistic" and model_extras["controls"]["control_pitcher"] == "effect"                # the file's values are what ran
+    assert world.store.load_result(by_id["policy"]["run_id"])["extras"]["model_run_id"] == by_id["model"]["run_id"]       # and the run numbers were passed on
+    assert job["summary"]["model"]["controls"] == {"control_pitcher": "effect"}
