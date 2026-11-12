@@ -19,6 +19,8 @@ WORLDS = {
     "W4": "Pitcher quality confounds: better pitchers throw the slider more and also get more whiffs, but the slider itself does nothing. A model without pitcher effects credits the slider.",
     "W5": "Form of the day confounds: on good days a pitcher throws the slider more and gets more whiffs, but the slider itself does nothing. Pitcher fixed effects are not enough, pitcher-game fixed effects are.",
     "W6": "The changeup is excellent at three balls but nobody throws it there: the action is not supported and must not be recommended.",
+    "W7": "Each pitcher has one pitch type that is simply strong for him (more whiffs) and he throws it more, so he also repeats it more, but repeating itself does nothing. "
+          "A model without pitcher-and-pitch-type effects credits the repeat; pitcher effects alone are not enough.",
 }
 RE_PA = np.array([[0.50, 0.90, 1.12, 1.50, 1.35, 1.75, 1.95, 2.35],
                   [0.27, 0.54, 0.69, 0.95, 0.96, 1.21, 1.36, 1.60],
@@ -98,7 +100,7 @@ def build_world(kind: str, shape: pc.Shape | None = None) -> PolicyWorld:
         lg[:, SL, pc.OC["ball"]] += 0.35 * behind
         lg[:, CH, pc.OC["ball"]] -= 0.8 * behind
         lg[:, CH, pc.OC["called_strike"]] += 0.4 * behind
-    elif kind in ("W4", "W5"):
+    elif kind in ("W4", "W5", "W7"):
         pass
     elif kind == "W6":
         lg[:, CH, pc.OC["ball"]] -= 2.5 * (b == 3)
@@ -138,6 +140,8 @@ def build_world(kind: str, shape: pc.Shape | None = None) -> PolicyWorld:
         for name, v in (("whiff", 0.35), ("ball", -0.20), ("in_play_home_run", -0.30), ("called_strike", 0.05)):
             shift[pc.OC[name]] = v
         latent = {"kind": "quality" if kind == "W4" else "form", "outcome": shift, "slider": 0.9}
+    elif kind == "W7":
+        latent = {"kind": "strong_pitch", "strong_usage": 1.0, "strong_whiff": 0.8}
     return PolicyWorld(kind, shape, truth, env, WORLDS[kind], latent=latent)
 
 
@@ -148,13 +152,17 @@ def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: i
     sh, dyn = world.shape, world.truth
     n_pa = int(n_pa)
     lat = world.latent
+    strong = lat is not None and lat["kind"] == "strong_pitch"
     if lat is not None:
         pa_per_game = min(pa_per_game, 25)          # one pitcher per game, so the pitcher-game effect is a game effect
         game_of_pa = np.arange(n_pa) // pa_per_game
         n_game = int(game_of_pa.max()) + 1
         pitcher_of_game = rng.integers(0, 40, size=n_game)
-        z_pitcher = rng.standard_normal(40)
-        z_pa = (z_pitcher[pitcher_of_game[game_of_pa]] if lat["kind"] == "quality" else rng.standard_normal(n_game)[game_of_pa])
+        if strong:
+            strong_of_pitcher = rng.choice(np.array(USED), size=40)         # the pitch type that is strong for each pitcher
+        else:
+            z_pitcher = rng.standard_normal(40)
+            z_pa = (z_pitcher[pitcher_of_game[game_of_pa]] if lat["kind"] == "quality" else rng.standard_normal(n_game)[game_of_pa])
     ob = rng.choice(24, size=n_pa, p=(world.env.start / world.env.start.sum()).ravel())
     outs, bases = ob // 8, ob % 8
     state = np.array(sh.index(0, 0, outs, bases, sh.none, 0), dtype=np.int64)
@@ -171,6 +179,14 @@ def simulate_pitches(world: PolicyWorld, n_pa: int, seed: int, *, pa_per_game: i
         if lat is None:
             a = np.minimum((rng.random(len(idx))[:, None] > cum_obs[s]).sum(axis=1), sh.n_actions - 1)
             c = np.minimum((rng.random(len(idx))[:, None] > cum_P[s, a]).sum(axis=1), pc.C - 1)
+        elif strong:
+            sp = strong_of_pitcher[pitcher_of_game[game_of_pa[idx]]]
+            w = dyn.obs[s].copy(); w[np.arange(len(idx)), sp] *= np.exp(lat["strong_usage"])           # he throws his strong pitch more (and so repeats it more)
+            cw = np.cumsum(w / w.sum(axis=1, keepdims=True), axis=1)
+            a = np.minimum((rng.random(len(idx))[:, None] > cw).sum(axis=1), sh.n_actions - 1)
+            q = dyn.P[s, a].copy(); q[a == sp, pc.OC["whiff"]] *= np.exp(lat["strong_whiff"])         # and it gets more whiffs: the pitch is strong, repeating it does nothing
+            cq = np.cumsum(q / q.sum(axis=1, keepdims=True), axis=1)
+            c = np.minimum((rng.random(len(idx))[:, None] > cq).sum(axis=1), pc.C - 1)
         else:
             zz = z_pa[idx]
             w = dyn.obs[s].copy(); w[:, SL] *= np.exp(lat["slider"] * zz)

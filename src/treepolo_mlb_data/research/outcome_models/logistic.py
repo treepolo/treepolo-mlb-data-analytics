@@ -1,0 +1,34 @@
+"""Multinomial logistic regression with the situation interactions, optional player effects (each group with its own shrinkage), descriptors and pitch location."""
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+from scipy import sparse
+
+from . import controls as ctl
+from .base import OutcomeModel
+from .softmax import fit_softmax, softmax_rows
+
+
+class LogisticModel(OutcomeModel):
+    name = "logistic"
+    label_zh = "邏輯迴歸"
+    label_en = "Logistic regression"
+    uses_design = True
+    supports = {name: "效應直接放進多類別邏輯迴歸（稀疏欄位，各自的懲罰）" for name in ctl.CONTROL_NAMES}
+
+    def _fit_member(self, sub, y, w, vsub, vy, s, seed, progress, design) -> tuple[dict[str, Any], dict[str, Any]]:
+        D, E, spans = design
+        x = sparse.hstack([D, E], format="csr") if E.shape[1] else D
+        fit = fit_softmax(x, y, len(self.classes), self._penalties(D.shape[1], s), weights=w, max_iter=int(s["max_iter"]))
+        member = {"coef": fit.coef.astype(np.float32), "intercept": fit.intercept.astype(np.float64), "n_dense": int(D.shape[1])}
+        return member, {"n_iter": fit.n_iter, "hit_cap": fit.hit_cap, "seconds": fit.seconds, "trace": [(i, loss, None) for i, loss in fit.trace]}
+
+    def _member_proba(self, member: dict[str, Any], pack: dict[str, Any], effects: str) -> np.ndarray:
+        nd = member["n_dense"]
+        z = pack["D"] @ member["coef"][:nd] + member["intercept"]
+        e = pack.get("E")
+        if effects == "specific" and e is not None and e.shape[1]:
+            z = z + e @ member["coef"][nd:]
+        return softmax_rows(np.asarray(z, dtype=np.float64))

@@ -67,6 +67,23 @@ def outcome_tensor(members: Sequence[gbm.FittedGbm], classes: Sequence[str], sha
     return out
 
 
+def model_tensor(model, shape: pc.Shape, group: str = "RvR", effects: str = "population") -> np.ndarray:
+    """[M, S, A, C] outcome probabilities of every bagged member of an ``OutcomeModel`` for every situation, in the order of ``policy_core.OUTCOMES``.
+
+    ``effects="population"`` asks for the league-average player (the situation table); a model that was trained with ``control_location = include_and_average`` averages over the
+    historical locations itself."""
+
+    cols = cell_columns(shape, group)
+    proba = model.predict_members(cols, effects=effects)                        # [M, S*A, classes of the model]
+    col_of = {name: i for i, name in enumerate(model.classes)}
+    out = np.zeros((proba.shape[0], shape.size, shape.n_actions, pc.C))
+    for name, c in pc.OC.items():
+        if name in col_of:
+            out[:, :, :, c] = proba[:, :, col_of[name]].reshape(proba.shape[0], shape.size, shape.n_actions)
+    out /= np.maximum(out.sum(axis=3, keepdims=True), 1e-300)
+    return out
+
+
 def fit_outcome_members(cols: Mapping[str, np.ndarray], *, backend: str = "hgb", device: str = "cpu", params: Mapping[str, Any] | None = None, reps: int = 5,
                         seed: int = 0, merge: Mapping[str, str] | None = None) -> tuple[list[gbm.FittedGbm], list[str]]:
     """Level-L0 outcome model, ``reps`` game-level bootstrap members (the members behind every interval of the policy tables)."""

@@ -79,15 +79,21 @@ class FittedGbm:
     n_iter: int
     seconds: float
     params: dict[str, Any] = field(default_factory=dict)
+    history: dict[str, list[float]] = field(default_factory=dict)       # xgboost: mlogloss per round of the training (and validation) set
 
-    def predict_proba(self, x) -> np.ndarray:
+    def predict_proba(self, x, base_margin=None) -> np.ndarray:
+        """Class probabilities. ``base_margin`` [n, classes seen] (xgboost only) is the offset the trees were trained on top of: logits added to the trees' output."""
+
         if self.backend == "xgboost":
             import xgboost as xgb
 
-            raw = self.model.predict(xgb.DMatrix(np.asarray(x, dtype=np.float32)), iteration_range=(0, self.n_iter)) if self.n_iter else self.model.predict(xgb.DMatrix(np.asarray(x, dtype=np.float32)))
+            dm = xgb.DMatrix(np.asarray(x, dtype=np.float32), base_margin=None if base_margin is None else np.asarray(base_margin, dtype=np.float32))
+            raw = self.model.predict(dm, iteration_range=(0, self.n_iter)) if self.n_iter else self.model.predict(dm)
             proba = raw.reshape(len(x), -1)
             out = np.zeros((len(x), self.n_classes)); out[:, list(self.classes)] = proba
             return out
+        if base_margin is not None:
+            raise ValueError("backend hgb has no base margin / backend hgb 沒有偏移量")
         raw = self.model.predict_proba(x)
         out = np.zeros((x.shape[0], self.n_classes)); out[:, [int(c) for c in self.model.classes_]] = raw
         return out
@@ -115,17 +121,22 @@ class FittedGbm:
 
 
 def fit_gbm(backend: str, device: str, params: Mapping[str, Any], x_train, y_train, n_classes: int, *, sample_weight=None,
-            x_valid=None, y_valid=None, seed: int = 0) -> FittedGbm:
+            x_valid=None, y_valid=None, seed: int = 0, base_margin=None, valid_margin=None) -> FittedGbm:
     """Fit one multi-class boosted-tree model. ``params``: max_depth, min_leaf, learning_rate, l2, max_iter, early_stopping_rounds.
 
     With a validation set, xgboost stops early (hgb always runs ``max_iter`` rounds: its internal early stopping uses a random
-    split, which made P5's boosting results unstable)."""
+    split, which made P5's boosting results unstable).
+
+    ``base_margin`` [n, classes] (xgboost only): an offset in logits that the trees are trained on top of (``valid_margin`` for the validation set). The classes of the offset
+    must be the classes present in ``y_train``, in increasing order."""
 
     p = {**DEFAULT_PARAMS, **dict(params)}
     device = resolve_device(backend, device)
     y_train = np.asarray(y_train, dtype=np.int64)
     classes = tuple(int(c) for c in np.unique(y_train))
     started = time.monotonic()
+    if backend == "hgb" and base_margin is not None:
+        raise ValueError("backend hgb has no base margin / backend hgb 沒有偏移量")
     if backend == "hgb":
         from sklearn.ensemble import HistGradientBoostingClassifier
 
@@ -137,18 +148,22 @@ def fit_gbm(backend: str, device: str, params: Mapping[str, Any], x_train, y_tra
 
     index = {c: i for i, c in enumerate(classes)}
     y_local = np.array([index[int(v)] for v in y_train])
-    dtrain = xgb.DMatrix(np.asarray(x_train, dtype=np.float32), label=y_local, weight=None if sample_weight is None else np.asarray(sample_weight, dtype=np.float32))
+    dtrain = xgb.DMatrix(np.asarray(x_train, dtype=np.float32), label=y_local, weight=None if sample_weight is None else np.asarray(sample_weight, dtype=np.float32),
+                         base_margin=None if base_margin is None else np.asarray(base_margin, dtype=np.float32))
     xparams = {"objective": "multi:softprob", "num_class": len(classes), "tree_method": "hist", "device": device, "max_depth": int(p["max_depth"]),
                "eta": float(p["learning_rate"]), "lambda": float(p["l2"]), "min_child_weight": max(float(p["min_leaf"]) * 0.1, 1e-3), "seed": int(seed),
                "eval_metric": "mlogloss", "verbosity": 0}
     evals = []; stop = None
     if x_valid is not None and y_valid is not None and len(y_valid):
         yv = np.array([index.get(int(v), -1) for v in y_valid]); keep = yv >= 0
-        evals = [(xgb.DMatrix(np.asarray(x_valid, dtype=np.float32)[keep], label=yv[keep]), "valid")]
+        vm = None if valid_margin is None else np.asarray(valid_margin, dtype=np.float32)[keep]
+        evals = [(xgb.DMatrix(np.asarray(x_valid, dtype=np.float32)[keep], label=yv[keep], base_margin=vm), "valid")]
         stop = int(p["early_stopping_rounds"])
-    booster = xgb.train(xparams, dtrain, num_boost_round=int(p["max_iter"]), evals=evals, early_stopping_rounds=stop, verbose_eval=False)
+    record: dict[str, Any] = {}
+    booster = xgb.train(xparams, dtrain, num_boost_round=int(p["max_iter"]), evals=[(dtrain, "train")] + evals, early_stopping_rounds=stop, verbose_eval=False, evals_result=record)
     n_iter = int(booster.best_iteration + 1) if stop and hasattr(booster, "best_iteration") else int(p["max_iter"])
-    return FittedGbm("xgboost", device, booster, n_classes, classes, n_iter, time.monotonic() - started, dict(p))
+    history = {name: [float(v) for v in values.get("mlogloss", [])] for name, values in record.items()}
+    return FittedGbm("xgboost", device, booster, n_classes, classes, n_iter, time.monotonic() - started, dict(p), history)
 
 
 def poisson_game_weights(games: np.ndarray, rng: np.random.Generator) -> np.ndarray:
