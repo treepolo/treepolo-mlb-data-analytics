@@ -6,7 +6,8 @@
   const QUERY_PANEL_ID = "research-query-panel";
   const RUNS_PANEL_ID = "research-runs-panel";
   const STATUS = { pending: ["⏳", "等待"], running: ["▶", "執行中"], done: ["✔", "完成"], error: ["✖", "失敗"] };
-  const state = { info: null, job: null, timer: null, tier: null, groups: null, formRunning: null, mode: "simple", doc: null, methods: null, stepKey: "search", form: null, docErrors: [], valid: null };
+  const state = { info: null, job: null, timer: null, tier: null, groups: null, formRunning: null, mode: "simple", doc: null, methods: null, stepKey: "search", form: null, docErrors: [], valid: null,
+    cmp: { models: ["logistic", "gbm"], overrides: "{}", years: "2023, 2024", groups: ["RvR"], form: null, estimate: null, result: null } };
 
   function el(tag, props = {}, ...children) {
     const node = document.createElement(tag);
@@ -53,6 +54,7 @@
       .rp-mode { margin:6px 0; } .rp-mode label { margin-right:16px; font-size:13px; }
       .rp-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 4px; }
       .rp-tab { padding:3px 10px; border:1px solid #adb8c7; background:#eef2f7; cursor:pointer; } .rp-tab.active { background:#2f6fb2; color:#fff; } .rp-tab.bad { border-color:#c0392b; color:#b03a2e; font-weight:700; }
+      .rp-estimate { margin:6px 0; padding:6px 8px; border:1px solid #adb8c7; background:#f7f8fa; font-size:12px; }
       .rp-file-errors { margin:6px 0; padding:6px 8px; border:1px solid #c0392b; background:#fdeeee; font-size:12px; } .rp-file-ok { margin:6px 0; padding:6px 8px; border:1px solid #2e7d4f; background:#f1faf3; font-size:12px; }
     `;
     document.head.append(style);
@@ -100,7 +102,7 @@
     renderForm();
   }
 
-  function leaveFull() { collectDoc(); state.mode = "simple"; renderForm(); }
+  function leaveFull() { if (state.mode === "full") collectDoc(); state.mode = "simple"; renderForm(); }
 
   function currentMethod() { return state.methods[state.info.step_methods[state.stepKey].kind]; }
 
@@ -163,9 +165,89 @@
     say(res.ok ? "已匯入，驗證通過 Imported and valid" : `已匯入，但有 ${res.errors.length} 個問題，請看標紅的欄位 Imported with ${res.errors.length} problems`);
   }
 
+  // ---- the comparison mode ---------------------------------------------------------------------------------------------------
+  const COMPARE_HIDDEN = ["models", "overrides", "groups", "bunt_policy", "filters"];
+
+  function compareConfig() {
+    const c = state.cmp;
+    const { values, errors } = c.form ? c.form.read() : { values: {}, errors: {} };
+    let overrides = {};
+    try { overrides = JSON.parse(c.overrides || "{}"); } catch (e) { throw new Error(`各模型自己的設定不是有效的 JSON：${e.message}`); }
+    if (Object.keys(errors).length) throw new Error(`設定有格式錯誤：${Object.entries(errors).map(([k, v]) => `${k}（${v}）`).join("、")}`);
+    return { ...values, models: c.models, overrides };
+  }
+
+  async function enterCompare() {
+    if (!window.TreepoloSettingsForm) throw new Error("設定表單模組沒有載入 The settings form module is not loaded");
+    await loadMethods();
+    state.mode = "compare"; renderForm();
+  }
+
+  async function estimateCompare() {
+    const cfg = compareConfig();
+    const years = state.cmp.years.split(",").map(x => x.trim()).filter(Boolean).map(Number);
+    const settings = Object.fromEntries(Object.entries(cfg).filter(([k]) => !["models", "overrides", "train_years", "test_years", "cold_by", "cold_folds", "compare_baseline"].includes(k)));
+    say("預估中：每種模型會先在約 2% 的資料上試跑一小段，請稍候… Estimating…");
+    state.cmp.estimate = await api("/api/research/pipeline/estimate", { models: cfg.models, groups: state.cmp.groups, years, train_years: cfg.train_years || [years[0]], cold_by: cfg.cold_by || [], cold_folds: cfg.cold_folds || 3,
+      settings, overrides: cfg.overrides });
+    say(""); renderForm();
+  }
+
+  async function startCompare() {
+    const cfg = compareConfig();
+    const years = state.cmp.years.split(",").map(x => x.trim()).filter(Boolean).map(Number);
+    state.job = await api("/api/research/compare/start", { years, groups: state.cmp.groups, config: cfg });
+    render(); poll();
+  }
+
+  function estimateBox() {
+    const e = state.cmp.estimate;
+    if (!e) return el("div", { class: "hint", text: "按「預估時間」會先實際試跑一小段，再顯示每種模型大約要多久；看過預估再按「開始比較」。" });
+    const rows = e.estimates.map(r => el("tr", {}, el("td", { text: r.group }), el("td", { text: MODEL_LABEL[r.model] || r.model }), el("td", { text: String(r.rows_train) }), el("td", { text: minutes(r.probe_seconds) }),
+      el("td", { text: minutes(r.seconds) }), el("td", { text: `${minutes(r.low)} ～ ${minutes(r.high)}` })));
+    return el("div", { class: "rp-estimate", id: "rp-estimate" },
+      el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["分組", "模型", "訓練列數", "試跑耗時", "預估總耗時", "可能範圍"].map(h => el("th", { text: h })))), el("tbody", {}, ...rows)),
+      el("div", { text: `合計約 ${minutes(e.total_seconds)}；試跑本身花了 ${minutes(e.trial_seconds)}。${e.note}` }),
+      ...(e.skipped.length ? [el("div", { class: "hint", text: `沒有預估：${e.skipped.map(x => `${x.model}（${x.reason}）`).join("；")}` })] : []));
+  }
+
+  function compareForm(running) {
+    const info = state.info, c = state.cmp, method = state.methods["model_compare"];
+    const modelBoxes = el("fieldset", {}, el("legend", { text: "要比較的模型 Models" }), ...info.model_choices.map(m => {
+      const available = info.models.includes(m);
+      return el("label", {}, el("input", { type: "checkbox", name: "rp-cmp-model", value: m, ...(c.models.includes(m) ? { checked: "checked" } : {}), ...(!available || running ? { disabled: "disabled" } : {}),
+        onchange: () => { c.models = [...document.querySelectorAll("input[name=rp-cmp-model]:checked")].map(n => n.value); } }), ` ${MODEL_LABEL[m] || m}${available ? "" : "（需要安裝 PyTorch）"}`);
+    }));
+    const groups = el("fieldset", {}, el("legend", { text: "手別組 Groups" }), ...info.groups.map(g => el("label", {}, el("input", { type: "checkbox", name: "rp-cmp-group", value: g, ...(c.groups.includes(g) ? { checked: "checked" } : {}),
+      ...(running ? { disabled: "disabled" } : {}), onchange: () => { c.groups = [...document.querySelectorAll("input[name=rp-cmp-group]:checked")].map(n => n.value); } }), ` ${g}`)));
+    const years = el("fieldset", {}, el("legend", { text: "資料年份 Years（逗號分開）" }), el("input", { type: "text", id: "rp-cmp-years", value: c.years, ...(running ? { disabled: "disabled" } : {}), onchange: event => { c.years = event.target.value; } }));
+    const keep = c.form ? c.form.read().values : {};
+    c.form = window.TreepoloSettingsForm.buildForm(method.fields, keep, { exclude: COMPARE_HIDDEN });
+    const overrides = el("label", { class: "hint" }, "各模型自己的設定（JSON，模型名稱對設定，例如 {\"gbm\": {\"max_depth\": 8}}）", el("textarea", { id: "rp-cmp-overrides", style: "width:100%;min-height:48px", spellcheck: "false", onchange: event => { c.overrides = event.target.value; } }, c.overrides));
+    return el("div", {},
+      el("div", { class: "rp-form" }, modelBoxes, groups, years), overrides, c.form.node, estimateBox(),
+      el("div", { class: "button-row" },
+        el("button", { type: "button", id: "rp-estimate-btn", text: "預估時間 Estimate", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(estimateCompare) }),
+        el("button", { type: "button", id: "rp-start", text: running ? "執行中…" : "▶ 開始比較 Start comparison", ...(running ? { disabled: "disabled" } : {}), onclick: () => guard(startCompare) }),
+        el("button", { type: "button", id: "rp-cancel", text: "停止 Stop", ...(running ? {} : { disabled: "disabled" }), onclick: () => guard(async () => { state.job = await api("/api/research/pipeline/cancel", {}); render(); }) })));
+  }
+
+  function compareResult(job) {
+    const id = job.summary && job.summary.compare_run_id;
+    if (!id) return [];
+    const host = el("div", { id: "rp-compare-result", class: "rp-card" }, el("div", { class: "hint", text: "讀取比較結果…" }));
+    api(`/api/research/runs/${id}/result?section=0&limit=200`).then(page => {
+      const cols = ["group", "model", "mode", "n_eval", "logloss", "brier", "calibration_error", "fit_seconds"];
+      host.replaceChildren(el("div", { class: "hint", text: "並排比較（每個模型一列，依你選的欄位排序；沒有「哪個最好」的判斷。完整的球種效果與兩兩差異在研究紀錄裡）：" }),
+        el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...cols.map(h => el("th", { text: h })))),
+          el("tbody", {}, ...page.rows.map(r => el("tr", {}, ...cols.map(h => el("td", { text: typeof r[h] === "number" && !Number.isInteger(r[h]) ? r[h].toFixed(5) : (r[h] == null ? "—" : String(r[h])) })))))));
+    }).catch(error => host.replaceChildren(el("div", { class: "rp-error", text: `讀取失敗：${error.message}` })));
+    return [host];
+  }
+
   function modeToggle(running) {
     const radio = (value, label, handler) => el("label", {}, el("input", { type: "radio", name: "rp-mode", value, ...(state.mode === value ? { checked: "checked" } : {}), ...(running ? { disabled: "disabled" } : {}), onchange: () => guard(handler) }), ` ${label}`);
-    return el("div", { class: "rp-mode", id: "rp-mode" }, radio("simple", "簡單模式 Simple", leaveFull), radio("full", "完整設定模式 Full settings", enterFull));
+    return el("div", { class: "rp-mode", id: "rp-mode" }, radio("simple", "簡單模式 Simple", leaveFull), radio("full", "完整設定模式 Full settings", enterFull), radio("compare", "比較模式 Compare models", enterCompare));
   }
 
   function simpleForm(running) {
@@ -216,7 +298,15 @@
     const env = info.environment;
     const running = state.job && state.job.state === "running";
     const envText = env.xgboost ? (env.cuda ? "已偵測到 XGBoost 與 GPU，會用 GPU 訓練。" : "已偵測到 XGBoost，但沒有可用的 GPU，會用 CPU 訓練。") : "沒有安裝 XGBoost，會用 scikit-learn（CPU，較慢）。";
-    host.replaceChildren(el("p", { class: "hint", id: "rp-env", text: envText }), modeToggle(running), state.mode === "full" && state.doc ? fullForm(running) : simpleForm(running));
+    host.replaceChildren(el("p", { class: "hint", id: "rp-env", text: envText }), modeToggle(running), state.mode === "compare" && state.methods ? compareForm(running) : (state.mode === "full" && state.doc ? fullForm(running) : simpleForm(running)));
+  }
+
+  function timeText(step, job) {
+    if (step.status !== "running" || !step.started_at || !job.server_time) return "";
+    const elapsed = Math.max(0, job.server_time - step.started_at);
+    const f = step.fraction;
+    const left = f != null && f > 0.02 && f < 1 ? elapsed * (1 - f) / f : null;
+    return `已用 ${minutes(elapsed)}${left != null ? `，約再 ${minutes(left)}（依目前進度推算，粗估）` : ""}`;
   }
 
   function renderSteps() {
@@ -228,7 +318,7 @@
       const bar = s.status === "running" && s.fraction != null ? el("div", { class: "rp-bar" }, el("div", { style: `width:${Math.round(s.fraction * 100)}%` })) : null;
       return el("div", { class: `rp-step ${s.status}`, "data-step": s.id },
         el("div", { text: icon }), el("div", { text: `${i + 1}. ${s.title}` }), el("div", { text: `${label}${s.seconds != null ? ` ${minutes(s.seconds)}` : ""}` }),
-        el("div", {}, el("div", { text: s.message || "" }), bar));
+        el("div", {}, el("div", { text: [s.message || "", timeText(s, job)].filter(Boolean).join("　") }), bar));
     })));
   }
 
@@ -238,7 +328,10 @@
     const parts = [];
     if (job && job.state === "error") parts.push(el("div", { class: "rp-error", id: "rp-error", text: job.error }));
     if (job && job.state === "cancelled") parts.push(el("div", { class: "hint", text: "已停止。已完成的步驟會保留，再按開始會從停下的地方繼續。" }));
-    if (job && job.state === "done") {
+    if (job && job.state === "done" && job.kind === "compare") {
+      parts.push(el("div", { class: "button-row" }, el("button", { type: "button", text: "查看研究紀錄 Research Runs", onclick: () => window.treepoloPanels?.activate?.(RUNS_PANEL_ID, { updateUrl: true, source: "pipeline" }) })));
+      parts.push(...compareResult(job));
+    } else if (job && job.state === "done") {
       parts.push(el("div", { class: "button-row" },
         el("button", { type: "button", id: "rp-open-query", text: "→ 開啟情境查詢 Open Situation Query", onclick: () => window.treepoloPanels?.activate?.(QUERY_PANEL_ID, { updateUrl: true, source: "pipeline" }) }),
         el("button", { type: "button", text: "查看研究紀錄 Research Runs", onclick: () => window.treepoloPanels?.activate?.(RUNS_PANEL_ID, { updateUrl: true, source: "pipeline" }) })));

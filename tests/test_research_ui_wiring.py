@@ -70,9 +70,9 @@ def test_settings_form_and_the_full_settings_mode_are_wired_into_the_app():
     assert '<script src="/research-settings-form.js"></script>' in index and index.index("/research-settings-form.js") < index.index("/research-pipeline-page.js")
     assert "node --check src/treepolo_mlb_data/web_static/research-settings-form.js" in ci
     assert "TreepoloSettingsForm" in form and "TreepoloSettingsForm" in page
-    for endpoint in ("/api/research/pipeline/full-config", "/api/research/pipeline/validate", "/api/research/methods"):
+    for endpoint in ("/api/research/pipeline/full-config", "/api/research/pipeline/validate", "/api/research/methods", "/api/research/pipeline/estimate", "/api/research/compare/start"):
         assert endpoint in page
-    for label in ("簡單模式", "完整設定模式", "匯出設定檔", "匯入設定檔", "驗證"):
+    for label in ("簡單模式", "完整設定模式", "匯出設定檔", "匯入設定檔", "驗證", "比較模式", "預估時間", "粗估"):
         assert label in page
     for text in (form, page):
         assert "innerHTML" not in text and "localStorage" not in text and "sessionStorage" not in text

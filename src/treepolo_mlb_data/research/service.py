@@ -22,6 +22,7 @@ from . import anchor_methods  # noqa: F401  (registers action_effects)
 from . import query_methods  # noqa: F401  (registers pitch_query)
 from . import tune_methods  # noqa: F401  (registers param_search)
 from . import outcome_model_methods  # noqa: F401  (registers outcome_model_train)
+from . import model_compare_methods  # noqa: F401  (registers model_compare)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope

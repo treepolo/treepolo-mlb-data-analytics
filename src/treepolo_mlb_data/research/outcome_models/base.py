@@ -48,6 +48,9 @@ class OutcomeModel:
     label_en = ""
     uses_design = True          # the sparse design matrix of ``_pack`` is needed (a model that builds its own features says False)
     supports: dict[str, str] = {}
+    cost_rule = "linear"        # how the time grows (see ``estimate``): linear (rows), rounds (rows x rounds), epochs (rows x epochs), iterations (rows x iterations)
+    probe_settings: dict[str, Any] = {}            # the settings of the short trial run that measures the speed (the rest of the settings stay as the user wrote them)
+    probe_unit = 1                                 # the number of rounds / epochs / iterations the trial run does (0 = the full run: the time does not grow with a count)
 
     def __init__(self) -> None:
         self.settings: dict[str, Any] = {}

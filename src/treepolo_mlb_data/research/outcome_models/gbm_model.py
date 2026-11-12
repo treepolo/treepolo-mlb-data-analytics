@@ -25,6 +25,9 @@ class GbmModel(OutcomeModel):
     label_zh = "梯度提升樹"
     label_en = "Gradient-boosted trees"
     uses_design = False
+    cost_rule = "rounds"
+    probe_settings = {"max_iter": 20, "bagging_reps": 1, "backfit_rounds": 1}
+    probe_unit = 20
     supports = {name: "樹用偏移量（base_margin）吸收效應，樹學剩下的部分（需要 xgboost）" for name in ctl.CONTROL_NAMES if name not in ("control_location",)}
     supports["control_location"] = "訓練時放 plate_x、plate_z；預測時對歷史位置抽樣平均"
 

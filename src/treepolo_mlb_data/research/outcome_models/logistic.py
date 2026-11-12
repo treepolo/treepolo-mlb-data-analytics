@@ -16,6 +16,9 @@ class LogisticModel(OutcomeModel):
     label_zh = "邏輯迴歸"
     label_en = "Logistic regression"
     uses_design = True
+    cost_rule = "linear"
+    probe_settings = {"bagging_reps": 1}
+    probe_unit = 0
     supports = {name: "效應直接放進多類別邏輯迴歸（稀疏欄位，各自的懲罰）" for name in ctl.CONTROL_NAMES}
 
     def _fit_member(self, sub, y, w, vsub, vy, s, seed, progress, design) -> tuple[dict[str, Any], dict[str, Any]]:

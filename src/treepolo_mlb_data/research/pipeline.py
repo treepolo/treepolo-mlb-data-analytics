@@ -155,7 +155,53 @@ class PipelineManager:
         import copy
 
         with self._lock:
-            return copy.deepcopy(self._job)
+            out = copy.deepcopy(self._job)
+        out["server_time"] = time.time()                       # the page works out elapsed and remaining time from the step's started_at and this
+        return out
+
+    # --- a comparison of several models runs as a one-step job in the same thread and status
+    def start_compare(self, raw: Mapping[str, Any]) -> dict[str, Any]:
+        from .config_schema import normalize_config
+        from .methods import ResearchContext, get_method
+        from .scope import normalize_scope
+
+        years = sorted(int(y) for y in (raw.get("years") or [2023, 2024]))
+        cfg = dict(raw.get("config") or {})
+        cfg.pop("scope", None)
+        cfg["scope"] = {"game_years": years, "game_types": ["R"]}
+        if raw.get("groups"):
+            cfg["groups"] = list(raw["groups"])
+        method = get_method("model_compare")
+        scope = normalize_scope(cfg["scope"], required=True)
+        normalized = normalize_config(method.fields, {k: v for k, v in cfg.items() if k != "scope"})
+        method.validate(normalized, ResearchContext(self.service.config, None, scope, None, self.service.store))           # a wrong setting is refused before anything starts
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise ConfigError("a pipeline is already running / 已有一個流程正在執行")
+            self._cancel.clear()
+            self._job = {"state": "running", "kind": "compare", "settings": {"tier": "compare", "groups": list(normalized["groups"]), "years": years}, "error": None, "started_at": _now(),
+                         "finished_at": None, "summary": None, "query_run_id": None,
+                         "steps": [{"id": "compare", "kind": "model_compare", "title": "比較多種模型", "status": "pending", "run_id": None, "seconds": None, "reused": None, "message": "", "fraction": None}]}
+            self._thread = threading.Thread(target=self._run_compare, args=(cfg,), daemon=True)
+            self._thread.start()
+            return self.status()
+
+    def _run_compare(self, cfg: dict[str, Any]) -> None:
+        started = time.monotonic()
+        self._update(0, status="running", message="", started_at=time.time())
+
+        def progress(stage: str, fraction: float | None, detail: str | None) -> None:
+            self._update(0, message=(detail or stage or ""), fraction=fraction)
+
+        try:
+            out = self.service.run("model_compare", cfg, study_name="P6", progress=progress)
+        except Exception as exc:
+            self._update(0, status="error", message=str(exc), seconds=time.monotonic() - started)
+            self._update(state="error", error=f"比較失敗：{exc}", finished_at=_now())
+            return
+        run = out["run"]
+        self._update(0, status="done", run_id=run["id"], reused=bool(out["reused"]), seconds=time.monotonic() - started, message="沿用之前相同設定的結果" if out["reused"] else "", fraction=1.0)
+        self._update(state="done", finished_at=_now(), summary={"compare_run_id": run["id"]})
 
     def wait(self, timeout: float | None = None) -> None:
         if self._thread is not None:
@@ -184,7 +230,7 @@ class PipelineManager:
                     self._update(i, status="done", message="略過：不做固定效應對照", seconds=0.0, fraction=1.0, reused=False)
                     context["anchor_run_id"] = 0
                     continue
-                self._update(i, status="running", message="")
+                self._update(i, status="running", message="", started_at=time.time())
                 cfg = step_config(sid, settings, context)
 
                 def progress(stage: str, fraction: float | None, detail: str | None, _i=i) -> None:

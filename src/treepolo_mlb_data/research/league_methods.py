@@ -46,8 +46,10 @@ FETCH = ("pitch_uid", "at_bat_number", "pitch_number", "game_pk", "game_year", "
 STRING_COLUMNS = ("hand_group", "pitch_type", "outcome", "prev1_pitch_type")
 
 
-def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, re_by_state=None) -> dict[str, np.ndarray]:
+def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, re_by_state=None, row_limit: int | None = None) -> dict[str, np.ndarray]:
     """Pitch-table rows of ``groups`` as columnar arrays, one (group, season) query at a time so the peak memory stays low.
+
+    ``row_limit`` keeps only the first rows (by game) of every (group, season) instead of failing when there are more than ``max_rows``: a small sample for a time estimate.
 
     The pitch table (bunt policy, sequence columns, filters) is the same one P3-P5 use; ``group`` and ``game_order`` are added here."""
 
@@ -59,9 +61,9 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
         for year in years:
             cond = Boolean("and", (Binary(Column("hand_group"), "=", Literal(group)), Binary(Column("game_year"), "=", Literal(int(year)))))
             node = Limit(Sort(Project(Filter(table, cond), tuple(NamedExpr(c, Column(c)) for c in fetch), PITCH_GRAIN),
-                              (OrderKey(Column("game_pk")), OrderKey(Column("pitch_uid")))), config["max_rows"] + 1)
+                              (OrderKey(Column("game_pk")), OrderKey(Column("pitch_uid")))), int(row_limit) if row_limit else config["max_rows"] + 1)
             result = run_checked(ctx, node)
-            if len(result.rows) > config["max_rows"]:
+            if not row_limit and len(result.rows) > config["max_rows"]:
                 raise ConfigError(f"Group {group} {year} has more than max_rows rows / 分組 {group} {year} 的列數超過上限")
             for c in fetch:
                 values = [r[c] for r in result.rows]

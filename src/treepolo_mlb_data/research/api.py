@@ -106,6 +106,12 @@ def handle_post(service: ResearchService, path: str, payload: dict[str, Any]) ->
         return 200, {"item": study}
     if route == "pipeline/start":
         return 200, service.pipeline().start(payload)
+    if route == "pipeline/estimate":
+        from .estimate import estimate
+
+        return 200, estimate(service, payload)
+    if route == "compare/start":
+        return 200, service.pipeline().start_compare(payload)
     if route == "pipeline/full-config":
         from .pipeline import full_config
 
