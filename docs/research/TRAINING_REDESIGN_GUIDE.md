@@ -21,7 +21,7 @@
 - 介面程式不用 `innerHTML`、`localStorage`、`sessionStorage`（`tests/test_research_ui_wiring.py` 會檢查）。新的前端 JS 要加進 `src/treepolo_mlb_data/web_static/index.html` 與 `.github/workflows/ci.yml` 的 `node --check` 清單。
 - 改了某個研究方法的輸出或意義，就把該方法的 `version` 加 1（這會讓舊紀錄不再被誤用）。舊的研究方法（連投、前一球那些，`sequencing_methods.py`、`regression_methods.py`、`modeling_methods.py`）**不要改**，它們的結果要能重現。
 - 用詞：介面與文件用正體中文，給使用者看的說明要白話，不用「P5／P6」這類階段代號。
-- 每個工作包結束：完整測試、`node --check` 所有改到的 JS、提交、推送，然後回報：做了什麼、測試結果（照實寫，失敗就貼失敗）、還沒做的、需要使用者決定的事。
+- 每個工作包結束：只提交、推送，不跑測試、不回報。全部工作包做完後，最後才跑一次完整測試與 `node --check`，修好失敗的，再回報一次：做了什麼、測試結果（照實寫）、和指導不同的地方。
 
 ---
 
@@ -280,7 +280,7 @@ class OutcomeModel:
 ## 9. 工作包 G：文件與收尾
 
 - 更新 `docs/research/P6_REMOTE.md`（白話寫：簡單模式、完整模式、比較模式、設定檔怎麼用）。
-- 在 `docs/research/P6_LOG.md` 每個工作包加一列（日期、做了什麼、測試結果、和這份指導不同的地方）。
+- 在 `docs/research/P6_LOG.md` 最後加一段（日期、做了什麼、測試結果、和這份指導不同的地方）。
 - 和這份指導做法不同的地方，一律寫進紀錄並在回報時告訴使用者，不要默默改。
 
 ---
