@@ -52,7 +52,7 @@
 
 | 包 | 內容 | 需要使用者先同意的事 |
 |---|---|---|
-| 0 | 改用共用的 Python `D:\soft\Python313`，搬離 F: | 原本的 Python 3.13 在哪（見 2.5 第 1 步）；刪舊環境前要問 |
+| 0 | 改用共用的 Python（`D:\soft` 底下），搬離 F: | 確認原本的 Python 3.13 位置後再進行（見 2.5 第 1 步）；刪舊環境前要問 |
 | A | 拿掉所有判定與寫死的門檻，改顯示數字與三種資訊 | 無 |
 | B | 統一的「模型」介面；邏輯迴歸與梯度提升樹搬進來；偏差控制開關；參數搜尋改成適用所有模型；拿掉年份限制 | 無 |
 | C | 決策引擎與情境查詢改用 B 訓練出來的模型（不再自己訓練 L0） | 無 |
@@ -73,8 +73,11 @@
 - 採「共用 Python，衝突時才另開」：這個專案和使用者其他專案平常都用同一份 Python；只有某個專案真的需要不同版本的套件時，才替它另開獨立環境（現在不需要）。
 
 步驟：
-1. **先問使用者**：電腦上現在有沒有已經裝好的 Python 3.13（`F:\treepolo-p6\.venv` 當初是用 3.13.7 建的；可用 `F:\treepolo-p6\.venv\pyvenv.cfg` 的 `home =` 那行看出它在哪）。不論原本在哪，這次都在 `D:\soft\Python313` 裝一份新的，原本那份不要動、不要刪。
-2. 下載 Python 3.13 最新修正版的官方 Windows 安裝程式（64 位元），下載到 `F:\treepolo-p6-tmp`，用安靜安裝：
+1. 找出 `F:\treepolo-p6\.venv` 當初用的那份 Python 3.13.7 裝在哪：看 `F:\treepolo-p6\.venv\pyvenv.cfg` 的 `home =` 那行（電腦上同時有 3.14.0，是系統預設，太新，不用）。
+   - **如果它已經在 `D:\soft` 底下**：直接用它，不要再裝一份，以下把 `D:\soft\Python313` 換成它的實際位置。
+   - **如果它在 C:**（Windows 預設會裝在 `C:\Users\<使用者>\AppData\Local\Programs\Python\Python313`）：不能拿它當共用的 Python，因為之後所有套件（包括約 4–5 GB 的 PyTorch）都會裝進它的資料夾，也就是 C:，而 C: 只剩幾 GB。這種情況才在 `D:\soft\Python313` 裝一份新的，C: 那份不要動、不要刪。
+   - 不論哪種情況，先把找到的位置告訴使用者，使用者同意後再進行下一步。
+2. （只有需要新裝時）下載 Python 3.13 最新修正版的官方 Windows 安裝程式（64 位元），下載到 `F:\treepolo-p6-tmp`，用安靜安裝：
    `python-3.13.x-amd64.exe /quiet InstallAllUsers=0 TargetDir=D:\soft\Python313 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0 AssociateFiles=0`
    不加進 PATH（避免和系統預設的 3.14 混在一起），一律用完整路徑 `D:\soft\Python313\python.exe`。安裝後刪掉下載的安裝程式。
 3. 套件直接裝進這份 Python（不建虛擬環境），加 `--no-cache-dir`，不留下載快取：
