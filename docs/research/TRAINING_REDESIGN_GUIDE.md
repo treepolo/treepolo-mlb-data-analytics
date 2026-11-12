@@ -80,15 +80,16 @@
 2. （只有需要新裝時）下載 Python 3.13 最新修正版的官方 Windows 安裝程式（64 位元），下載到 `F:\treepolo-p6-tmp`，用安靜安裝：
    `python-3.13.x-amd64.exe /quiet InstallAllUsers=0 TargetDir=D:\soft\Python313 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0 AssociateFiles=0`
    不加進 PATH（避免和系統預設的 3.14 混在一起），一律用完整路徑 `D:\soft\Python313\python.exe`。安裝後刪掉下載的安裝程式。
-3. 套件直接裝進這份 Python（不建虛擬環境），加 `--no-cache-dir`，不留下載快取：
+3. **如果用的是原本就有的 Python**：先列出它已經裝了哪些套件（`python.exe -m pip list`），再用 `python.exe -m pip install --dry-run ...`（下面同一串套件）看會新裝、升級或降級哪些。**有任何既有套件會被升級或降級時，先停下來把清單給使用者**，因為使用者其他專案可能正在用那些版本；使用者同意後才裝。只有新增、不改既有版本時可以直接裝。
+4. 套件直接裝進這份 Python（不建虛擬環境），加 `--no-cache-dir`，不留下載快取：
    `D:\soft\Python313\python.exe -m pip install --no-cache-dir numpy scipy scikit-learn duckdb requests reportlab pytest xgboost==3.4.1`
    版本以 `F:\treepolo-p6\.venv` 現有的為準：先在舊環境執行 `pip freeze` 存到 `F:\treepolo-p6-tmp\old-freeze.txt`，新環境安裝時對照，主要套件（numpy、scipy、scikit-learn、duckdb、xgboost）版本要一樣。
-4. 安裝本專案：`D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade`（不要用 `-e`）。
-5. 確認：`D:\soft\Python313\python.exe -c "import xgboost, numpy; from treepolo_mlb_data.research import gbm; print(xgboost.__version__, gbm.cuda_works())"` 要印出 `3.4.1 True`。
-6. 網頁介面改用 `D:\soft\Python313\Scripts\treepolo-mlb.exe` 啟動，確認能開、資料庫路徑仍是 `F:\treepolo-p6\data\statcast.sqlite3`，「研究 → 一鍵研究」能載入。把完整的啟動指令告訴使用者。
-7. 跑一次完整測試（`PYTHONPATH=src`，用新的 Python）。
-8. 都正常後，**問使用者**是否刪除 `F:\treepolo-p6\.venv`（約 1 GB，裡面還有兩個 `~reepolo` 開頭的安裝殘留）。同意才刪。
-9. 更新 `docs/research/P6_ENV.md` 的 Python 段落與 `docs/research/P6_REMOTE.md` 的指令，之後本文件所有指令都用 `D:\soft\Python313\python.exe`。
+5. 安裝本專案：`D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade`（不要用 `-e`）。
+6. 確認：`D:\soft\Python313\python.exe -c "import xgboost, numpy; from treepolo_mlb_data.research import gbm; print(xgboost.__version__, gbm.cuda_works())"` 要印出 `3.4.1 True`。
+7. 網頁介面改用 `D:\soft\Python313\Scripts\treepolo-mlb.exe` 啟動，確認能開、資料庫路徑仍是 `F:\treepolo-p6\data\statcast.sqlite3`，「研究 → 一鍵研究」能載入。把完整的啟動指令告訴使用者。
+8. 跑一次完整測試（`PYTHONPATH=src`，用新的 Python）。
+9. 都正常後，**問使用者**是否刪除 `F:\treepolo-p6\.venv`（約 1 GB，裡面還有兩個 `~reepolo` 開頭的安裝殘留）。同意才刪。
+10. 更新 `docs/research/P6_ENV.md` 的 Python 段落與 `docs/research/P6_REMOTE.md` 的指令，之後本文件所有指令都用 `D:\soft\Python313\python.exe`。
 
 ## 3. 工作包 A：拿掉判定與門檻
 
