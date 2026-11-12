@@ -7,9 +7,10 @@
 - 磁碟：C: NVMe SSD（**只剩約 7.6 GB，不要寫入**）、D: SATA HDD（604 GB 可用，舊專案與原始資料，**不要修改**）、F: USB 外接 SSD（Micron X9 Pro，exFAT，約 931 GB 可用，**工作位置**；作業期間不要拔除）。
 - 工作位置：`F:\treepolo-p6`（`git clone --branch claude/hello-rc9nc6 --single-branch`，獨立複製，不碰 D: 的 `.git`）；暫存 `F:\treepolo-p6-tmp`（`TEMP`、`TMP`、pip 快取都指到這裡，只在該 shell 內設定）。
 - 已加 `git config --global --add safe.directory F:/treepolo-p6`（exFAT 不記錄擁有者，寫入 C: 的 `.gitconfig`，約 1 KB）。
-- Python：`F:\treepolo-p6\.venv`，Python 3.13.7；xgboost 3.4.1、numpy 2.5.4、duckdb 1.5.6、scipy、scikit-learn、requests、reportlab；專案以 `pip install F:\treepolo-p6`（非 `-e`）安裝。系統預設的 Python 3.14.0 **不用**（太新）。
+- Python：共用的 `D:\soft\Python313`（Python 3.13.17，用 python.org 官方 NuGet 免安裝套件解壓，不寫登錄檔、不在 PATH，一律用完整路徑）；套件直接裝在裡面（`--no-cache-dir`）：xgboost 3.4.1、numpy 2.5.4、duckdb 1.5.6、scipy 1.18.1、scikit-learn 1.9.1、requests、reportlab 4.5.1、pytest；專案以 `D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade`（非 `-e`）安裝。系統預設的 Python 3.14.0 **不用**（太新）。舊的 `F:\treepolo-p6\.venv` 已不再使用。
+- 注意：不要用官方 `.exe` 安裝程式裝這份 Python。電腦上 `C:\Users\gg013\AppData\Local\Programs\Python\Python313` 已有同系列的「每個使用者」安裝，安裝程式會把它當升級，忽略指定資料夾，直接把 C: 那份從 3.13.7 升成 3.13.17（2026-11-12 實際發生，D: 沒有建立）。C: 那份現在是 3.13.17，不再動它。
 - `config.json` 在 `F:\treepolo-p6`，`data_dir` 為 `F:/treepolo-p6/data`；**必須是無 BOM 的 UTF-8**（專案的 JSON 讀取器不接受 BOM，用 PowerShell 寫檔要小心）。
-- 執行指令：在 `F:\treepolo-p6` 啟用 `.venv`，CLI 為 `treepolo-mlb ...`；研究設定檔用 `docs/research/scripts/run_configs.py LOGFILE CONFIG.json`（設定檔須含 `kind`、`study` 鍵）。
+- 執行指令：在 `F:\treepolo-p6` 用完整路徑，CLI 為 `D:\soft\Python313\Scripts\treepolo-mlb.exe ...`（網頁介面可雙擊 `F:\treepolo-p6\啟動介面.bat`，這個檔案是未追蹤的本機檔）；測試要加 `PYTHONPATH=src`；研究設定檔用 `docs/research/scripts/run_configs.py LOGFILE CONFIG.json`（設定檔須含 `kind`、`study` 鍵）。
 
 ## 資料
 - 本機資料原本由使用者下載到 `D:\Vibe Coding\treepoloMLB數據分析器\data\`（2015-03-03 起）。F: 上是**複製後的副本**（`statcast.sqlite3` 7.7 GB 含 WAL、`statcast.duckdb` 2.0 GB），並以 `backfill --start 2026-08-24 --end 2026-10-05 --resume` 補到 2026-10-05（新增 142,465 列），`verify` 正常、`analytics-sync` 完成。`raw\` 沒有複製（所以 `rebuild` 在 F: 不能用）。

@@ -5,12 +5,12 @@
 ## 一次性準備（`F:\treepolo-p6`）
 ```
 git pull origin claude/hello-rc9nc6
-.venv\Scripts\activate
-pip install F:\treepolo-p6 --upgrade
+D:\soft\Python313\python.exe -m pip install --no-cache-dir F:\treepolo-p6 --upgrade
 ```
+（安裝前先關掉網頁服務，否則檔案被鎖。不要用 `-e`。）
 
 ## 跑
-1. 啟動網頁介面（和平常一樣：`treepolo-mlb` 的網頁指令）。
+1. 啟動網頁介面：雙擊 `F:\treepolo-p6\啟動介面.bat`，或在 `F:\treepolo-p6` 執行 `D:\soft\Python313\Scripts\treepolo-mlb.exe ui`。
 2. 左邊選單「研究 → 一鍵研究 Run Everything」。
 3. 選運算量（快速約 1 小時；標準約 3 小時；冒煙只確認跑得通）與手別組，按「開始」。
 4. 頁面會依序顯示五個步驟：模型參數搜尋 → 訓練全聯盟模型 → 固定效應對照答案 → 決策引擎與情境表 → 查詢工具與驗收。每個步驟顯示進度與耗時。
@@ -26,6 +26,6 @@ pip install F:\treepolo-p6 --upgrade
 ## 情境查詢
 網頁「研究 → 情境查詢」；或命令列：
 ```
-treepolo-mlb research query <查詢紀錄編號> --group RvR --balls 1 --strikes 2 --outs 1 --bases 100 --prev SL --streak 2
-treepolo-mlb research query <查詢紀錄編號> --group RvR --find pitcher:Skenes
+D:\soft\Python313\Scripts\treepolo-mlb.exe research query <查詢紀錄編號> --group RvR --balls 1 --strikes 2 --outs 1 --bases 100 --prev SL --streak 2
+D:\soft\Python313\Scripts\treepolo-mlb.exe research query <查詢紀錄編號> --group RvR --find pitcher:Skenes
 ```
