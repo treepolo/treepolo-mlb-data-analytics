@@ -77,9 +77,13 @@
    - **如果它已經在 `D:\soft` 底下**：直接用它，不要再裝一份，以下把 `D:\soft\Python313` 換成它的實際位置。
    - **如果它在 C:**（Windows 預設會裝在 `C:\Users\<使用者>\AppData\Local\Programs\Python\Python313`）：不能拿它當共用的 Python，因為之後所有套件（包括約 4–5 GB 的 PyTorch）都會裝進它的資料夾，也就是 C:，而 C: 只剩幾 GB。這種情況才在 `D:\soft\Python313` 裝一份新的，C: 那份不要動、不要刪。
    - 不論哪種情況，先把找到的位置告訴使用者，使用者同意後再進行下一步。
-2. （只有需要新裝時）下載 Python 3.13 最新修正版的官方 Windows 安裝程式（64 位元），下載到 `F:\treepolo-p6-tmp`，用安靜安裝：
-   `python-3.13.x-amd64.exe /quiet InstallAllUsers=0 TargetDir=D:\soft\Python313 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0 AssociateFiles=0`
-   不加進 PATH（避免和系統預設的 3.14 混在一起），一律用完整路徑 `D:\soft\Python313\python.exe`。安裝後刪掉下載的安裝程式。
+2. （只有需要新裝時）**不要用官方安裝程式（.exe）**：電腦上已有同系列（3.13）的「每個使用者」安裝時，安裝程式會把它判定為升級、忽略指定的資料夾、直接升級 C: 那份（2026-11-12 實際發生：C: 的 3.13.7 被升成 3.13.17，D: 沒有建立）。改用 python.org 官方的 NuGet 套件 `python`（免安裝版，不寫登錄檔，不會觸發升級偵測）：
+   - 從 nuget.org 下載 `python` 套件的 3.13 最新版 `.nupkg`（下載前把檔名、來源、大小告訴使用者，確認後再下載），存到 `F:\treepolo-p6-tmp`；
+   - 它是 zip 格式，把裡面的 `tools` 資料夾內容解壓到 `D:\soft\Python313`（`D:\soft\Python313\python.exe` 要直接存在）；
+   - 用 `D:\soft\Python313\python.exe -m ensurepip --upgrade` 裝 pip（若套件裡已有 pip 就略過）；
+   - 確認 `D:\soft\Python313\python.exe -c "import sys, ssl, sqlite3, venv; print(sys.version, sys.prefix)"` 正常；這個版本沒有 tkinter，本專案用不到；
+   - 刪掉下載的 `.nupkg`。
+   不加進 PATH，一律用完整路徑。
 3. **如果用的是原本就有的 Python**：先列出它已經裝了哪些套件（`python.exe -m pip list`），再用 `python.exe -m pip install --dry-run ...`（下面同一串套件）看會新裝、升級或降級哪些。**有任何既有套件會被升級或降級時，先停下來把清單給使用者**，因為使用者其他專案可能正在用那些版本；使用者同意後才裝。只有新增、不改既有版本時可以直接裝。
 4. 套件直接裝進這份 Python（不建虛擬環境），加 `--no-cache-dir`，不留下載快取：
    `D:\soft\Python313\python.exe -m pip install --no-cache-dir numpy scipy scikit-learn duckdb requests reportlab pytest xgboost==3.4.1`
