@@ -1,0 +1,126 @@
+{
+ "W0_nothing_to_find": {
+  "cells": 2952,
+  "excluding_zero": 13,
+  "expected_by_chance": 29.52,
+  "share_excluding_zero": 0.004404
+ },
+ "W1_slider_large_advantage": {
+  "cells": 701,
+  "share_interval_excludes_zero": 0.92582,
+  "share_negative_estimate": 1.0
+ },
+ "W4_W5_slider_vs_fastball_whiff": {
+  "W4_effect": -0.001787,
+  "W4_none": 0.017833,
+  "W4_within": -0.002051,
+  "W5_none": 0.029507,
+  "W5_pitcher_game_effect": 0.026797
+ },
+ "W7_repeat_effect_whiff": {
+  "none": 0.018046,
+  "pitcher": 0.024283,
+  "pitcher_pitch_effect": 0.003498,
+  "pitcher_pitch_within": -0.000824
+ },
+ "anchor_consistency_W1": {
+  "cells": 72,
+  "median_ratio": 1.191304,
+  "model_slider_whiff_effect": 0.071689,
+  "outside_anchor_interval": 25,
+  "same_sign_share": 0.958333
+ },
+ "anchor_consistency_W4": {
+  "cells": 72,
+  "median_ratio": 0.303423,
+  "model_slider_whiff_effect": 0.019806,
+  "outside_anchor_interval": 32,
+  "same_sign_share": 0.541667
+ },
+ "league_model_descriptor_gain": {
+  "P0": [
+   {
+    "comparison": "L0→L3",
+    "hi": 0.002933,
+    "lo": 0.000384,
+    "measure": "level_gain",
+    "mode": "cold_pitcher",
+    "n": 16800,
+    "side": "pitcher",
+    "value": 0.001595
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": 6.3e-05,
+    "lo": -7.2e-05,
+    "measure": "type_contrast",
+    "mode": "cold_pitcher",
+    "n": 60,
+    "side": "pitcher",
+    "value": -7e-06
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": -0.000863,
+    "lo": -0.002991,
+    "measure": "level_gain",
+    "mode": "cold_batter",
+    "n": 16800,
+    "side": "batter",
+    "value": -0.002241
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": 0.000108,
+    "lo": -9.5e-05,
+    "measure": "type_contrast",
+    "mode": "cold_batter",
+    "n": 56,
+    "side": "batter",
+    "value": 7e-06
+   }
+  ],
+  "P7": [
+   {
+    "comparison": "L0→L3",
+    "hi": 0.035313,
+    "lo": 0.027565,
+    "measure": "level_gain",
+    "mode": "cold_pitcher",
+    "n": 16800,
+    "side": "pitcher",
+    "value": 0.030842
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": 0.003841,
+    "lo": 0.001251,
+    "measure": "type_contrast",
+    "mode": "cold_pitcher",
+    "n": 57,
+    "side": "pitcher",
+    "value": 0.002344
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": 0.042037,
+    "lo": 0.029765,
+    "measure": "level_gain",
+    "mode": "cold_batter",
+    "n": 16800,
+    "side": "batter",
+    "value": 0.035359
+   },
+   {
+    "comparison": "L0→L3",
+    "hi": 0.005026,
+    "lo": 0.002082,
+    "measure": "type_contrast",
+    "mode": "cold_batter",
+    "n": 54,
+    "side": "batter",
+    "value": 0.003529
+   }
+  ]
+ }
+}

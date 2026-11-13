@@ -346,6 +346,7 @@ class PitchPolicyMethod(ResearchMethod):
         occ = an.occupancy; valid = occ > 0
         m_rows, s_rows = [], []
         conf = config["cell_confidence"]
+        mean_adv = an.interval(an.advantage, conf)[0]                  # the estimate per (state, action): which cells have a number at all
         from .profiles import PITCH_TYPES
 
         for a, name in enumerate(PITCH_TYPES):

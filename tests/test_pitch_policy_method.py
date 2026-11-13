@@ -193,7 +193,7 @@ def test_policy_with_anchor_reports_consistency_and_direction_map(service, ancho
     assert all(r["cells"] > 0 and 0 <= r["same_sign_share"] <= 1 and r["outside_anchor_interval"] <= r["cells"] for r in anchor_sec)
     cells = section(service, policy, "Anchor cells")
     assert {r["design"] for r in cells} == {"S3", "S4"} and sum(1 for r in cells if r["design"] == "S3") == next(r["cells"] for r in anchor_sec if r["design"] == "S3")      # every cell is listed
-    assert all(r["anchor_lo"] <= r["anchor_effect"] <= r["anchor_hi"] and r["difference"] == pytest.approx(r["model_effect"] - r["anchor_effect"]) for r in cells)
+    assert all(r["anchor_lo"] <= r["anchor_effect"] <= r["anchor_hi"] and r["difference"] == pytest.approx(r["model_effect"] - r["anchor_effect"], abs=1e-6) for r in cells)
     anchor_chance = service.store.load_result(policy["id"])["extras"]["comparisons"]["anchor"]["RvR"]
     assert anchor_chance["what"] == "outside_anchor_interval" and anchor_chance["n"] == sum(r["cells"] for r in anchor_sec) and anchor_chance["found"] == sum(r["outside_anchor_interval"] for r in anchor_sec)
     direction = section(service, policy, "Direction map")

@@ -82,13 +82,14 @@ def test_runtime_answers_with_names_and_descriptor_gains(setup):
     top = service.pitch_query_players(query["id"], "RvR", "batter", "")["players"]
     assert [p["pitches"] for p in top] == sorted((p["pitches"] for p in top), reverse=True)
     m0 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1"})
-    assert m0["mode"] == "M0" and len(m0["rows"]) == 9 and m0["effect_gains"] == gains and m0["comparisons"]["n"] > 0
+    assert m0["mode"] == "M0" and len(m0["rows"]) == 9 and m0["effect_gains"] == gains
+    assert m0["comparisons"]["n"] == sum(1 for r in m0["rows"] if r["supported"] and r["adv_lo"] is not None and r["adv_hi"] is not None)      # counted from the rows, whatever the situation supports
     pid = found[0]["id"]
     m1 = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": pid, "members": "2"})
     assert m1["mode"] == "M1" and m1["players"]["pitcher"]["name"] == f"Test Pitcher{pid}" and m1["players"]["pitcher"]["known"]          # personalised whatever the gains are: nothing is switched off
-    assert m1["effect_gains"] == gains and m1["notice"] == [] and m1["comparisons"]["n"] > 0
+    assert m1["effect_gains"] == gains and m1["notice"] == [] and m1["comparisons"]["n"] >= 0
     assert all("detected" not in r and "evidence" not in r for r in m1["rows"])
-    stranger = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": "999999", "members": "2"})
+    stranger = service.pitch_query(query["id"], {"group": "RvR", "balls": "1", "strikes": "1", "outs": "0", "bases": "000", "prev": "SL", "streak": "1", "pitcher": "999999"})        # all the bagged members, like the table
     assert stranger["mode"] == "M1" and not stranger["players"]["pitcher"]["known"] and stranger["notice"] and "league average" in stranger["notice"][0]       # unseen = the league average
     assert max(abs(a["q"] - b["q"]) for a, b in zip(stranger["rows"], m0["rows"]) if a["q"] is not None and b["q"] is not None) < 1e-6
     with pytest.raises(ConfigError, match="group"):

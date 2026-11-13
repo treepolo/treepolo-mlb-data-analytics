@@ -45,7 +45,7 @@ def test_finished_pipeline_shows_steps_summary_and_opens_the_query_page(url):
         page.wait_for_selector("#rp-open-query", timeout=15000)
         card = page.locator(".rp-card[data-group=RvR]")
         assert card.count() == 1 and "引擎對照" in card.inner_text() and "每隊每季少失分" in card.inner_text()
-        assert "球員描述的預測增益" in card.inner_text() and "純靠運氣" in card.inner_text()      # numbers and the comparison-count note
+        assert "純靠運氣" in card.inner_text()                                                  # the comparison-count note (the gain table appears only when a control was chosen)
         assert "沒通過" not in card.inner_text() and "偵測到" not in card.inner_text()          # no pass / fail wording
         assert "選到的模型設定" in page.locator("#rp-best").inner_text()
         assert page.locator("#rp-start").is_enabled() and page.locator("#rp-cancel").is_disabled()
