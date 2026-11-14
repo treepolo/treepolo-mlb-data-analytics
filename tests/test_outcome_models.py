@@ -87,6 +87,15 @@ def test_effect_groups_follow_the_controls_and_include_the_pitchers_overall_effe
     assert set(g) == {"pitcher", "pitcher_pitch"} and not any(g.values())                    # shrunk towards the pitcher's overall effect first
     within = ctl.effect_groups({**ctl.default_controls(), "control_pitcher": "within"})
     assert within == {"pitcher": True}
+    day = ctl.effect_groups({**ctl.default_controls(), "control_day": "within"})
+    assert day == {"pitcher": False, "pitcher_game": True}                                   # the day effects are not shrunk; the pitcher's overall effect still is
+    assert ctl.effect_groups({**ctl.default_controls(), "control_day": "pitcher_game_effect"}) == {"pitcher": False, "pitcher_game": False}
+    day_pitch = ctl.effect_groups({**ctl.default_controls(), "control_day_pitch": "within"})
+    assert day_pitch == {"pitcher": False, "pitcher_game": True, "pitcher_game_pitch": True}
+    assert "within" in {f.name: f for f in ctl.CONTROL_FIELDS}["control_day"].choices and "within" in {f.name: f for f in ctl.CONTROL_FIELDS}["control_day_pitch"].choices
+    for name in ("control_pitcher", "control_pitcher_pitch", "control_day", "control_day_pitch"):                       # every control that can compare only inside the unit says what auto does not do
+        field = {f.name: f for f in ctl.CONTROL_FIELDS}[name]
+        assert "同組內比較" in field.help_zh and "random effects" in field.help_en and "within" in field.help_en
     full = ctl.effect_groups({**ctl.default_controls(), "control_day_pitch": "effect", "control_survival": "batter_and_count", "control_batter": "effect"})
     assert {"pitcher", "pitcher_game", "pitcher_game_pitch", "batter", "batter_count"} <= set(full)
 
@@ -228,6 +237,28 @@ def test_report_w4_and_w5_slider_whiff_effect_under_each_control():
                     out[f"{key}_penalties"] = model.info["penalties"]
     record("W4_W5_slider_vs_fastball_whiff", **out)
     assert all(np.isfinite(v) for k, v in out.items() if isinstance(v, float))
+
+
+@pytest.mark.report
+def test_report_w5_day_effects_compared_only_inside_the_day():
+    """Known answer: W5's slider does nothing. control_day = within (the day effects are not shrunk) should remove the confounding. The iterations are raised until the optimiser stops by
+    itself (hit_cap 0); the report says how many it used. Numbers only."""
+
+    w, cols = _world("W5", 60_000, 7)
+    n = min(8000, len(cols["game_pk"]))
+    base = {k: v[:n] for k, v in cols.items() if isinstance(v, np.ndarray) and len(v) >= n}
+    out = {}
+    for cap in (1000, 3000, 8000):
+        model = _fit("logistic", cols, max_iter=cap, control_day="within")
+        out["tried_max_iter"] = out.get("tried_max_iter", []) + [cap]
+        if not model.info["hit_cap"]:
+            break
+    i = model.classes.index("whiff")
+    sl = model.predict_proba(dict(base, pitch_type=np.full(n, "SL"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
+    ff = model.predict_proba(dict(base, pitch_type=np.full(n, "FF"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
+    out.update(slider_minus_fastball_whiff=float((sl - ff).mean()), max_iter_used=cap, iterations_used=float(model.info["n_iter"]), hit_cap=int(model.info["hit_cap"]), penalties=model.info["penalties"])
+    record("W5_control_day_within", **out)
+    assert np.isfinite(out["slider_minus_fastball_whiff"])
 
 
 def test_shrinkage_is_a_precision_chosen_by_the_data_and_the_information_of_a_pitch_is_small():

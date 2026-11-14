@@ -37,6 +37,19 @@
   "W5_pitcher_game_effect_manual_100": 0.026423,
   "W5_pitcher_game_effect_manual_100_hit_cap": 0
  },
+ "W5_control_day_within": {
+  "hit_cap": 0,
+  "iterations_used": 5417.0,
+  "max_iter_used": 1000,
+  "penalties": {
+   "pitcher": 4249.011447,
+   "pitcher_game": 0.0001
+  },
+  "slider_minus_fastball_whiff": 0.000196,
+  "tried_max_iter": [
+   1000
+  ]
+ },
  "W7_repeat_effect_whiff": {
   "none": 0.018116,
   "none_hit_cap": 0,

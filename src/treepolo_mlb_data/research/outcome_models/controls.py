@@ -20,8 +20,9 @@ _CONTROL_SPECS = (
      "Each pitcher-and-pitch-type pair gets its own effect, shrunk towards the pitcher's overall effect and then the league."),
     ("control_batter_pitch", ("none", "effect"), "none", "控制：打者對每一種球的反應", "Control: each batter's response to each pitch type",
      "每位打者對每一種球各一個效應（他是不是特別怕滑球）。", "Each batter-and-pitch-type pair gets its own effect."),
-    ("control_day", ("none", "pitcher_game_effect"), "none", "控制：投手當天狀態", "Control: the pitcher's form of the day",
-     "每位投手每場比賽一個效應；預測時用平常狀態（效應 0）。", "One effect per pitcher and game; predictions use the usual form (effect 0)."),
+    ("control_day", ("none", "pitcher_game_effect", "within"), "none", "控制：投手當天狀態", "Control: the pitcher's form of the day",
+     "pitcher_game_effect：每位投手每場比賽一個效應（資料少的往平常狀態收縮），預測時用平常狀態（效應 0）；within：同一位投手同一場比賽之內比較（效應不收縮）。",
+     "pitcher_game_effect: one shrunken effect per pitcher and game, predictions use the usual form (effect 0); within: compare only inside the same pitcher and game (effects not shrunk)."),
     ("control_batter", ("none", "descriptors", "effect"), "none", "控制：打者整體好壞", "Control: batter quality",
      "同投手：none／descriptors／effect。", "As for the pitcher: none, descriptors or effect."),
     ("control_survival", ("none", "batter_and_count"), "none", "控制：存活偏誤（球數＋打者）", "Control: survivorship (count and batter)",
@@ -29,8 +30,9 @@ _CONTROL_SPECS = (
     ("control_location", ("exclude", "include_and_average"), "exclude", "控制：球的位置", "Control: pitch location",
      "exclude：不放進位置；include_and_average：訓練時放入 plate_x、plate_z，預測時對該球種在該球數的歷史位置分布抽樣平均。",
      "exclude, or train with plate_x / plate_z and average the prediction over the historical locations of that pitch type and count."),
-    ("control_day_pitch", ("none", "effect"), "none", "控制：投手當天某一種球的狀態", "Control: the pitcher's form of the day on one pitch type",
-     "投手×比賽×球種一個效應。資料很少，只能強收縮，效果有限。", "One effect per pitcher, game and pitch type. Very thin data: strongly shrunk, limited effect."),
+    ("control_day_pitch", ("none", "effect", "within"), "none", "控制：投手當天某一種球的狀態", "Control: the pitcher's form of the day on one pitch type",
+     "effect：投手×比賽×球種一個效應，資料很少，會被強收縮，效果有限；within：同一位投手同一場比賽同一種球之內比較（效應不收縮）。",
+     "effect: one shrunken effect per pitcher, game and pitch type (very thin data, strongly shrunk, limited effect); within: compare only inside the same pitcher, game and pitch type (not shrunk)."),
 )
 
 CONTROL_NAMES = tuple(spec[0] for spec in _CONTROL_SPECS)
@@ -45,8 +47,20 @@ _PENALTY_LABELS = {"pitcher": ("投手", "pitcher"), "batter": ("打者", "batte
                    "pitcher_game": ("投手×比賽", "pitcher x game"), "pitcher_game_pitch": ("投手×比賽×球種", "pitcher x game x pitch type"), "batter_count": ("打者×球數", "batter x count")}
 WITHIN_PENALTY = 1e-4          # "within" = effects that are not shrunk: a very small penalty only keeps the problem well posed
 
+AUTO_NOTE_ZH = "自動（隨機效應）：適合預測個別球員；若干擾和研究對象（球種、連投）有關聯，會留下部分偏差，要排除干擾請選「同組內比較」。"
+AUTO_NOTE_EN = ("Automatic (random effects): good for predicting individual players; when the nuisance is related to what is studied (pitch type, repeating), some bias is left, "
+                "so choose 'within' to remove it.")
+
+
+def _help(name, choices, zh, en):
+    if "within" in choices:                                              # the controls that can compare only inside the same unit say what the automatic option does not do
+        return (zh + " " + AUTO_NOTE_ZH).strip(), (en + " " + AUTO_NOTE_EN).strip()
+    return zh, en
+
+
 CONTROL_FIELDS: tuple[ConfigField, ...] = tuple(
-    ConfigField(name, "choice", default=default, choices=choices, label_zh=zh, label_en=en, help_zh=hzh, help_en=hen) for name, choices, default, zh, en, hzh, hen in _CONTROL_SPECS
+    ConfigField(name, "choice", default=default, choices=choices, label_zh=zh, label_en=en, help_zh=_help(name, choices, hzh, hen)[0], help_en=_help(name, choices, hzh, hen)[1])
+    for name, choices, default, zh, en, hzh, hen in _CONTROL_SPECS
 ) + (
     ConfigField("effect_penalty_mode", "choice", default="auto", choices=("auto", "manual"), label_zh="效應的收縮強度：自動或手動", label_en="Effect shrinkage: automatic or manual",
                 help_zh="auto（預設）：由資料估計每一組效應的收縮強度（經驗貝氏，和混合效應模型同一個估法）；manual：用下面各組填的數值。",
@@ -118,10 +132,11 @@ def effect_groups(controls: Mapping[str, Any]) -> dict[str, bool]:
         add("batter")
     if controls.get("control_batter_pitch", "none") == "effect":
         add("batter"); add("batter_pitch")
-    if controls.get("control_day", "none") == "pitcher_game_effect":
-        add("pitcher"); add("pitcher_game")
-    if controls.get("control_day_pitch", "none") == "effect":
-        add("pitcher"); add("pitcher_game"); add("pitcher_game_pitch")
+    if controls.get("control_day", "none") in ("pitcher_game_effect", "within"):
+        add("pitcher"); add("pitcher_game", controls["control_day"] == "within")
+    if controls.get("control_day_pitch", "none") in ("effect", "within"):
+        within = controls["control_day_pitch"] == "within"
+        add("pitcher"); add("pitcher_game", within); add("pitcher_game_pitch", within)
     if controls.get("control_survival", "none") == "batter_and_count":
         add("batter"); add("batter_count")
     return groups
