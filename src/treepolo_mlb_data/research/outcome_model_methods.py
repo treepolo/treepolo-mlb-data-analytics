@@ -161,7 +161,9 @@ class OutcomeModelTrainMethod(ResearchMethod):
                          out["gain"], ("group", "mode", "comparison"), "duckdb", DIGITS),
         )
         extras = {"scope": ctx.scope, "model": config["model"], "split": config["split"], "classes": classes, "train_years": self._years(config, years)[0], "test_years": self._years(config, years)[1],
-                  "controls": {k: config[k] for k in ctl.CONTROL_NAMES}, "comparisons": {k: v for k, v in comparisons.items() if v}, "xgboost_available": gbm.xgboost_available()}
+                  "controls": {k: config[k] for k in ctl.CONTROL_NAMES}, "effect_penalty_mode": config["effect_penalty_mode"],
+                  "hit_cap": [{"group": r["group"], "role": r["role"], "mode": r["mode"]} for r in out["fit"] if r.get("hit_cap")],        # fits that stopped at max_iter: not converged
+                  "comparisons": {k: v for k, v in comparisons.items() if v}, "xgboost_available": gbm.xgboost_available()}
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
     @staticmethod

@@ -11,17 +11,52 @@
   "share_negative_estimate": 1.0
  },
  "W4_W5_slider_vs_fastball_whiff": {
-  "W4_effect": -0.001787,
-  "W4_none": 0.017833,
-  "W4_within": -0.002051,
-  "W5_none": 0.029507,
-  "W5_pitcher_game_effect": 0.026797
+  "W4_effect_auto": -0.003073,
+  "W4_effect_auto_hit_cap": 0,
+  "W4_effect_auto_penalties": {
+   "pitcher": 100.372503
+  },
+  "W4_effect_manual_0.0001": -0.00353,
+  "W4_effect_manual_0.0001_hit_cap": 0,
+  "W4_effect_manual_100": -0.000125,
+  "W4_effect_manual_100_hit_cap": 0,
+  "W4_none_auto": 0.017605,
+  "W4_none_auto_hit_cap": 0,
+  "W4_within_auto": -0.00353,
+  "W4_within_auto_hit_cap": 0,
+  "W5_none_auto": 0.029183,
+  "W5_none_auto_hit_cap": 0,
+  "W5_pitcher_game_effect_auto": 0.015761,
+  "W5_pitcher_game_effect_auto_hit_cap": 0,
+  "W5_pitcher_game_effect_auto_penalties": {
+   "pitcher": 2863.999282,
+   "pitcher_game": 19.697724
+  },
+  "W5_pitcher_game_effect_manual_0.0001": 0.000697,
+  "W5_pitcher_game_effect_manual_0.0001_hit_cap": 1,
+  "W5_pitcher_game_effect_manual_100": 0.026423,
+  "W5_pitcher_game_effect_manual_100_hit_cap": 0
  },
  "W7_repeat_effect_whiff": {
-  "none": 0.018046,
-  "pitcher": 0.024283,
-  "pitcher_pitch_effect": 0.003498,
-  "pitcher_pitch_within": -0.000824
+  "none": 0.018116,
+  "none_hit_cap": 0,
+  "pitcher": 0.024246,
+  "pitcher_hit_cap": 0,
+  "pitcher_penalties": {
+   "pitcher": 840.048443
+  },
+  "pitcher_pitch_effect": 0.000175,
+  "pitcher_pitch_effect_hit_cap": 0,
+  "pitcher_pitch_effect_penalties": {
+   "pitcher": 3492.047067,
+   "pitcher_pitch": 316.058116
+  },
+  "pitcher_pitch_within": -0.00049,
+  "pitcher_pitch_within_hit_cap": 0,
+  "pitcher_pitch_within_penalties": {
+   "pitcher": 5107.249616,
+   "pitcher_pitch": 0.0001
+  }
  },
  "anchor_consistency_W1": {
   "cells": 72,

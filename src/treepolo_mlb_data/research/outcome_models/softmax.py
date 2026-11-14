@@ -35,7 +35,7 @@ def log_softmax_rows(z: np.ndarray) -> np.ndarray:
 
 def fit_softmax(x, y: np.ndarray, n_classes: int, penalty: np.ndarray, *, weights: np.ndarray | None = None, offset: np.ndarray | None = None, max_iter: int = 200,
                 init: SoftmaxFit | None = None, trace_every: int = 10, tol: float = 1e-9) -> SoftmaxFit:
-    """Fit ``coef`` and ``intercept``. ``x`` is a scipy sparse matrix (or an array), ``y`` the class index of every row, ``penalty`` one value per column."""
+    """Fit ``coef`` and ``intercept``. ``x`` is a scipy sparse matrix (or an array), ``y`` the class index of every row, ``penalty`` one value per column (or a [column, class] matrix)."""
 
     import time
 
@@ -51,6 +51,7 @@ def fit_softmax(x, y: np.ndarray, n_classes: int, penalty: np.ndarray, *, weight
     wsum = float(w.sum())
     off = None if offset is None else np.asarray(offset, dtype=np.float64)
     lam = np.asarray(penalty, dtype=np.float64)
+    lam2 = lam[:, None] if lam.ndim == 1 else lam                  # one penalty per column, or one per column and class
     onehot_rows = np.arange(n)
     trace: list[tuple[int, float]] = []
     state = {"iter": 0, "last": None}
@@ -65,11 +66,11 @@ def fit_softmax(x, y: np.ndarray, n_classes: int, penalty: np.ndarray, *, weight
             z = z + off
         lsm = log_softmax_rows(z)
         nll = -lsm[onehot_rows, y]
-        loss = float((w * nll).sum() + 0.5 * (lam[:, None] * coef * coef).sum()) / wsum
+        loss = float((w * nll).sum() + 0.5 * (lam2 * coef * coef).sum()) / wsum
         r = np.exp(lsm)
         r[onehot_rows, y] -= 1.0
         r *= w[:, None]
-        g_coef = (xt @ r + lam[:, None] * coef) / wsum
+        g_coef = (xt @ r + lam2 * coef) / wsum
         g_b = r.sum(axis=0) / wsum
         state["last"] = loss
         return loss, np.concatenate([g_coef.ravel(), g_b])

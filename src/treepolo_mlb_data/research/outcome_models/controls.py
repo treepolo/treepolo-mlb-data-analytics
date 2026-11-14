@@ -36,7 +36,9 @@ _CONTROL_SPECS = (
 CONTROL_NAMES = tuple(spec[0] for spec in _CONTROL_SPECS)
 CONTROL_DEFAULTS = {spec[0]: spec[2] for spec in _CONTROL_SPECS}
 
-# penalty (in pseudo-rows) pulling an effect towards 0; larger = stronger shrinkage
+# The penalty of an effect group is the PRECISION (1 / variance) of the normal prior of its effects, in units of the logit of the outcome: larger = stronger shrinkage towards 0.
+# It is NOT a number of pseudo-pitches. One pitch carries little information about an effect (about p * (1 - p) of its logit, a tenth or less for an outcome that happens one pitch in
+# five), so a penalty of 100 ignores effects that hundreds of pitches could show. With ``effect_penalty_mode = auto`` the data choose it (empirical Bayes, as in the mixed model).
 EFFECT_GROUPS = ("pitcher", "batter", "pitcher_pitch", "batter_pitch", "pitcher_game", "pitcher_game_pitch", "batter_count")
 _PENALTY_DEFAULTS = {"pitcher": 20.0, "batter": 20.0, "pitcher_pitch": 50.0, "batter_pitch": 50.0, "pitcher_game": 100.0, "pitcher_game_pitch": 200.0, "batter_count": 50.0}
 _PENALTY_LABELS = {"pitcher": ("投手", "pitcher"), "batter": ("打者", "batter"), "pitcher_pitch": ("投手×球種", "pitcher x pitch type"), "batter_pitch": ("打者×球種", "batter x pitch type"),
@@ -45,9 +47,14 @@ WITHIN_PENALTY = 1e-4          # "within" = effects that are not shrunk: a very 
 
 CONTROL_FIELDS: tuple[ConfigField, ...] = tuple(
     ConfigField(name, "choice", default=default, choices=choices, label_zh=zh, label_en=en, help_zh=hzh, help_en=hen) for name, choices, default, zh, en, hzh, hen in _CONTROL_SPECS
+) + (
+    ConfigField("effect_penalty_mode", "choice", default="auto", choices=("auto", "manual"), label_zh="效應的收縮強度：自動或手動", label_en="Effect shrinkage: automatic or manual",
+                help_zh="auto（預設）：由資料估計每一組效應的收縮強度（經驗貝氏，和混合效應模型同一個估法）；manual：用下面各組填的數值。",
+                help_en="auto (default): the data choose the shrinkage of every effect group (empirical Bayes, as in the mixed model); manual: use the values below."),
 ) + tuple(
-    ConfigField(f"effect_penalty_{g}", "float", default=_PENALTY_DEFAULTS[g], minimum=0.0, label_zh=f"收縮強度：{_PENALTY_LABELS[g][0]}效應", label_en=f"Shrinkage: {_PENALTY_LABELS[g][1]} effect",
-                help_zh="以假想樣本數計，愈大愈往 0（聯盟平均）收縮。", help_en="In pseudo-rows; larger pulls harder towards 0 (the league average).") for g in EFFECT_GROUPS
+    ConfigField(f"effect_penalty_{g}", "float", default=_PENALTY_DEFAULTS[g], minimum=0.0, label_zh=f"收縮強度（手動）：{_PENALTY_LABELS[g][0]}效應", label_en=f"Shrinkage (manual): {_PENALTY_LABELS[g][1]} effect",
+                help_zh="只在「手動」時使用。這是效應先驗的精確度（變異數的倒數，單位是結果的對數機率），不是假想球數：一球對效應的資訊量約只有 p(1−p)，所以 100 就是很強的收縮。愈大愈往 0（聯盟平均）收縮。",
+                help_en="Used only in manual mode. The precision (1 / variance) of the prior of the effects, in logits: not a number of pseudo-pitches. One pitch carries about p(1-p) of information, so 100 is strong shrinkage.") for g in EFFECT_GROUPS
 ) + (
     ConfigField("location_samples", "int", default=50, minimum=1, maximum=1000, label_zh="位置抽樣數", label_en="Location samples", help_zh="control_location＝include_and_average 時，每個預測抽幾個歷史位置平均。",
                 help_en="Historical locations averaged per prediction when control_location = include_and_average."),
@@ -62,7 +69,8 @@ PARAM_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("min_leaf", "int", default=200, minimum=1, label_zh="葉節點最小樣本", label_en="Minimum samples per leaf"),
     ConfigField("learning_rate", "float", default=0.1, minimum=1e-4, maximum=1.0, label_zh="學習率", label_en="Learning rate"),
     ConfigField("l2", "float", default=1.0, minimum=0.0, label_zh="L2 正則化（一般欄位）", label_en="L2 regularisation (ordinary columns)"),
-    ConfigField("max_iter", "int", default=300, minimum=1, label_zh="最多棵數／迭代數", label_en="Maximum rounds / iterations"),
+    ConfigField("max_iter", "int", default=1000, minimum=1, label_zh="最多棵數／迭代數", label_en="Maximum rounds / iterations",
+                help_zh="邏輯迴歸與混合效應是最佳化的迭代數，樹是棵數。撞到上限會在結果的 hit_cap 欄位標出來。", help_en="Optimiser iterations (logistic, mixed) or trees (boosting). Reaching it is flagged in the hit_cap column."),
     ConfigField("early_stopping_rounds", "int", default=20, minimum=1, label_zh="早停輪數（xgboost）", label_en="Early-stopping rounds (xgboost)"),
     ConfigField("backfit_rounds", "int", default=1, minimum=1, maximum=10, label_zh="回頭重估效應的輪數", label_en="Back-fitting rounds",
                 help_zh="gbm 搭配球員效應時：>1 會用樹的輸出當偏移，回頭重估效應，再重訓練樹。", help_en="gbm with player effects: with more than 1, the effects are re-estimated given the trees."),
@@ -77,7 +85,7 @@ PARAM_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("dropout", "float", default=0.1, minimum=0.0, maximum=0.9, label_zh="丟棄率", label_en="Dropout"),
     ConfigField("weight_decay", "float", default=1e-5, minimum=0.0, label_zh="權重衰減（一般權重）", label_en="Weight decay (ordinary weights)"),
     ConfigField("nn_patience", "int", default=3, minimum=1, label_zh="早停：幾輪沒進步就停", label_en="Early stopping: epochs without improvement"),
-    ConfigField("em_rounds", "int", default=4, minimum=1, maximum=30, label_zh="混合效應：變異數估計輪數", label_en="Mixed effects: variance estimation rounds"),
+    ConfigField("em_rounds", "int", default=8, minimum=1, maximum=50, label_zh="收縮強度自動估計的輪數（混合效應、邏輯迴歸 auto）", label_en="Rounds of the automatic shrinkage estimate (mixed, logistic auto)"),
     ConfigField("sequence_cell", "choice", default="gru", choices=("gru", "transformer"), label_zh="序列模型的編碼器", label_en="Sequence encoder"),
     ConfigField("sequence_length", "int", default=6, minimum=1, maximum=30, label_zh="序列模型看前面幾球", label_en="Previous pitches the sequence model looks at"),
 )

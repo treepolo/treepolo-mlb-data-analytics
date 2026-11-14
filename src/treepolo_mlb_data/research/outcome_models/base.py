@@ -26,6 +26,7 @@ from ..config_schema import ConfigError
 from ..profiles import PITCH_TYPES, ProfileModel
 from . import controls as ctl
 from . import design as dz
+from .shrinkage import class_info, info_per_pitch
 
 Progress = Callable[[str, "float | None", "str | None"], None]
 EFFECT_MODES = ("population", "specific")
@@ -48,6 +49,7 @@ class OutcomeModel:
     label_en = ""
     uses_design = True          # the sparse design matrix of ``_pack`` is needed (a model that builds its own features says False)
     supports: dict[str, str] = {}
+    force_auto = False          # the model always lets the data choose the shrinkage of the effects (the mixed model)
     cost_rule = "linear"        # how the time grows (see ``estimate``): linear (rows), rounds (rows x rounds), epochs (rows x epochs), iterations (rows x iterations)
     probe_settings: dict[str, Any] = {}            # the settings of the short trial run that measures the speed (the rest of the settings stay as the user wrote them)
     probe_unit = 1                                 # the number of rounds / epochs / iterations the trial run does (0 = the full run: the time does not grow with a count)
@@ -65,6 +67,8 @@ class OutcomeModel:
         self.info: dict[str, Any] = {}
         self.group: str | None = None                  # the handedness group this model was trained for (set by the research method)
         self.roster: dict[str, dict[int, dict[str, Any]]] = {"pitcher": {}, "batter": {}}
+        self.pitch_info: float = 0.08                  # what one pitch tells about the logit of an outcome, on average over the classes (see ``shrinkage.info_per_pitch``)
+        self.class_info: np.ndarray | None = None      # the same per outcome class: p * (1 - p)
 
     # ------------------------------------------------------------------------------------------------ who the model has seen
     def players(self, side: str) -> tuple[np.ndarray, np.ndarray]:
@@ -74,7 +78,8 @@ class OutcomeModel:
         return np.array([k for k, _ in items], dtype=np.int64), np.array([v["n"] for _, v in items], dtype=np.int64)
 
     def player_info(self, side: str, ident: Any) -> dict[str, Any]:
-        """Pitches seen, the pitch-type counts of a pitcher, and how much of his own data the effect uses (n / (n + penalty); None without effects). ``known`` is False for a player
+        """Pitches seen, the pitch-type counts of a pitcher, and how much of his own data the effect uses (information / (information + penalty), where the information of n pitches is
+        n * ``pitch_info`` and the penalty is the precision of the prior of the effects: the estimated one in the automatic mode; None without effects). ``known`` is False for a player
         the model has not seen: his answers equal the league average."""
 
         try:
@@ -83,13 +88,21 @@ class OutcomeModel:
             return {"id": ident, "side": side, "pitches": 0, "known": False, "arsenal": {}, "shrinkage": None}
         entry = self.roster[side].get(key)
         n = 0 if entry is None else int(entry["n"])
-        penalty = None
-        if side in self.groups and not self.groups[side]:
-            penalty = float(self.settings.get(f"effect_penalty_{side}", 0.0))
-        elif self.groups.get(side):
-            penalty = 0.0
-        return {"id": key, "side": side, "pitches": n, "known": entry is not None, "arsenal": {} if entry is None else dict(entry.get("arsenal", {})),
-                "shrinkage": None if penalty is None or n == 0 else (n / (n + penalty) if (n + penalty) > 0 else None)}
+        shrink = None
+        if side in self.groups and n:
+            by_class = (self.info.get("penalties_by_class") or {}).get(side)
+            v = self.class_info if self.class_info is not None else np.full(max(len(self.classes), 1), float(getattr(self, "pitch_info", 0.08)))
+            if self.groups[side]:
+                pen = np.full(len(v), ctl.WITHIN_PENALTY)
+            elif by_class is not None:
+                pen = np.asarray(by_class, dtype=float)                                       # what the data chose, per outcome class
+            else:
+                pen = np.full(len(v), float((self.info.get("penalties") or {}).get(side, self.settings.get(f"effect_penalty_{side}", 0.0))))
+            information = n * v
+            with np.errstate(divide="ignore", invalid="ignore"):
+                share = np.where(information + pen > 0, information / (information + pen), np.nan)
+            shrink = float(np.nanmean(share)) if np.isfinite(share).any() else None
+        return {"id": key, "side": side, "pitches": n, "known": entry is not None, "arsenal": {} if entry is None else dict(entry.get("arsenal", {})), "shrinkage": shrink}
 
     def _build_roster(self, sub: Mapping[str, np.ndarray]) -> None:
         typ = dz.type_index(sub["pitch_type"])
@@ -117,6 +130,8 @@ class OutcomeModel:
         sub, y = self._encode(train, s, fixed_classes=classes is not None)
         vsub, vy = (None, None) if valid is None else self._encode(valid, s, fixed_classes=True)
         self._prepare(sub, s)
+        shares = np.bincount(y, minlength=len(self.classes)) / max(len(y), 1)
+        self.pitch_info = info_per_pitch(shares); self.class_info = class_info(shares)
         design = self._training_design(sub, s)
         games = np.asarray(sub["game_pk"])
         reps = int(s["bagging_reps"]); rng = np.random.default_rng(int(s["seed"]))
@@ -202,12 +217,21 @@ class OutcomeModel:
             parts.append(np.full(len(self.indexes[g]), ctl.WITHIN_PENALTY if within else float(s[f"effect_penalty_{g}"])))
         return np.concatenate(parts)
 
+    def _use_auto(self, s: Mapping[str, Any], E) -> bool:
+        """Whether the data choose the shrinkage of the effects: the automatic mode (or a model that always does) with at least one effect group that is not 'within'."""
+
+        return bool(self.groups) and E.shape[1] > 0 and any(not w for w in self.groups.values()) and (self.force_auto or s.get("effect_penalty_mode", "auto") == "auto")
+
     def _fit_member(self, sub, y, w, vsub, vy, s, seed, progress, design):
         raise NotImplementedError
 
     def _summarize(self, infos: list[dict[str, Any]], s: Mapping[str, Any]) -> dict[str, Any]:
+        estimated = infos[0].get("estimated_penalties") if infos else None
+        by_class = {g: [float(x) for x in np.atleast_1d(v)] for g, v in (estimated or {}).items()}
         return {"model": self.name, "backend": s["backend"] if self.name == "gbm" else "", "members": len(infos), "effects": {g: len(self.indexes[g]) for g in self.groups},
-                "within": [g for g, w in self.groups.items() if w], "penalties": {g: (ctl.WITHIN_PENALTY if w else float(s[f"effect_penalty_{g}"])) for g, w in self.groups.items()},
+                "within": [g for g, w in self.groups.items() if w], "penalties_estimated": bool(estimated), "pitch_info": float(self.pitch_info),
+                "penalties_by_class": by_class, "classes_order": list(self.classes),
+                "penalties": {g: float(np.median(v)) for g, v in by_class.items()} if estimated else {g: (ctl.WITHIN_PENALTY if w else float(s[f"effect_penalty_{g}"])) for g, w in self.groups.items()},
                 "n_iter": float(np.mean([i.get("n_iter", np.nan) for i in infos])), "hit_cap": any(bool(i.get("hit_cap")) for i in infos), "seconds": float(sum(i.get("seconds", 0.0) for i in infos)),
                 "trace": infos[0].get("trace", []), "descriptors": self.profile is not None, "location": self.pool is not None, "classes": list(self.classes)}
 

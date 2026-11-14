@@ -17,6 +17,7 @@ from .. import league_core as lc
 from . import controls as ctl
 from . import design as dz
 from .base import OutcomeModel
+from .shrinkage import estimated_penalties_for, fit_with_estimated_penalties
 from .softmax import fit_softmax
 
 
@@ -57,6 +58,13 @@ class GbmModel(OutcomeModel):
         sit, _ = dz.situation_design(sub)
         x = sparse.hstack([sit, E], format="csr")
         pen = self._penalties(sit.shape[1], s)
+        self._last_estimated = None
+        if self._use_auto(s, E):
+            _, spans = dz.effect_matrix(sub, self.indexes, list(self.groups))
+            res = fit_with_estimated_penalties(x, y, len(self.classes), pen, n_dense=sit.shape[1], spans=spans, within=self.groups, col_counts=np.asarray(E.sum(axis=0)).ravel(),
+                                               per_pitch=self.class_info, weights=w, offset=tree_margin, max_iter=int(s["max_iter"]), em_rounds=int(s["em_rounds"]), init=init)
+            self._last_estimated = estimated_penalties_for(self.groups, res["penalties"])
+            return res["fit"], sit.shape[1]
         fit = fit_softmax(x, y, len(self.classes), pen, weights=w, offset=tree_margin, max_iter=int(s["max_iter"]), init=init)
         return fit, sit.shape[1]
 
@@ -103,6 +111,8 @@ class GbmModel(OutcomeModel):
                     valid_offset = np.asarray(ev @ eff_coef, dtype=np.float64)
                 elif valid_offset is not None:
                     valid_offset = offset[val_idx]
+        if has_effects and getattr(self, "_last_estimated", None):
+            info["estimated_penalties"] = self._last_estimated
         info["n_iter"] = float(tree.n_iter)
         info["hit_cap"] = bool(backend == "xgboost" and tree.n_iter >= int(s["max_iter"]))
         hist = tree.history

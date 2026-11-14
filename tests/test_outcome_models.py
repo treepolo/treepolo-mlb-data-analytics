@@ -188,34 +188,73 @@ def _repeat_effect(model, cols, action="SL"):
 
 @pytest.mark.report
 def test_report_w7_a_strong_pitch_is_not_a_repeat_effect():
-    """Known answer: in W7 the true repeat effect is 0. Without pitcher-and-pitch effects the model should credit the repeat; with them it should come back towards 0."""
+    """Known answer: in W7 the true repeat effect is 0. Without pitcher-and-pitch effects the model should credit the repeat; with them it should come back towards 0.
+    The shrinkage is chosen by the data (automatic mode); the iterations are 600. Numbers only, with the penalties the data chose and whether the fit hit the iteration cap."""
 
     w, cols = _world("W7", 60_000, 6)
     out = {}
     for name, extra in (("none", {}), ("pitcher", dict(control_pitcher="effect")), ("pitcher_pitch_effect", dict(control_pitcher_pitch="effect")), ("pitcher_pitch_within", dict(control_pitcher_pitch="within"))):
-        out[name] = _repeat_effect(_fit("logistic", cols, **extra), cols)
+        model = _fit("logistic", cols, max_iter=600, **extra)
+        out[name] = _repeat_effect(model, cols)
+        out[f"{name}_hit_cap"] = int(model.info["hit_cap"])
+        if model.info["penalties_estimated"]:
+            out[f"{name}_penalties"] = model.info["penalties"]
     record("W7_repeat_effect_whiff", **out)
-    assert all(np.isfinite(v) for v in out.values())
+    assert all(np.isfinite(v) for k, v in out.items() if isinstance(v, float))
 
 
 @pytest.mark.report
 def test_report_w4_and_w5_slider_whiff_effect_under_each_control():
-    """Known answer: in W4 (pitcher quality) and W5 (form of the day) the slider does nothing. Numbers only: the model's slider whiff effect under each control."""
+    """Known answer: in W4 (pitcher quality) and W5 (form of the day) the slider does nothing, so the slider-minus-fastball whiff difference should be near 0. Numbers only, under each
+    control, with the shrinkage chosen by the data and, for comparison, a manual strong penalty (100) and a manual tiny one (0.0001); 600 iterations."""
 
     out = {}
     for kind, controls in (("W4", ("none", "effect", "within")), ("W5", ("none", "pitcher_game_effect"))):
         w, cols = _world(kind, 60_000, 7)
+        n = min(8000, len(cols["game_pk"]))
+        base = {k: v[:n] for k, v in cols.items() if isinstance(v, np.ndarray) and len(v) >= n}
         for c in controls:
-            extra = {"W4": dict(control_pitcher=c), "W5": dict(control_day=c)}[kind]
-            model = _fit("logistic", cols, **extra)
-            n = min(8000, len(cols["game_pk"]))
-            base = {k: v[:n] for k, v in cols.items() if isinstance(v, np.ndarray) and len(v) >= n}
-            i = model.classes.index("whiff")
-            sl = model.predict_proba(dict(base, pitch_type=np.full(n, "SL"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
-            ff = model.predict_proba(dict(base, pitch_type=np.full(n, "FF"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
-            out[f"{kind}_{c}"] = float((sl - ff).mean())
+            variants = [("auto", {})] if c in ("none", "within") else [("auto", {}), ("manual_100", dict(effect_penalty_mode="manual", effect_penalty_pitcher=100.0, effect_penalty_pitcher_game=100.0)),
+                                                                        ("manual_0.0001", dict(effect_penalty_mode="manual", effect_penalty_pitcher=1e-4, effect_penalty_pitcher_game=1e-4))]
+            for label, extra_mode in variants:
+                extra = {"W4": dict(control_pitcher=c), "W5": dict(control_day=c)}[kind]
+                model = _fit("logistic", cols, max_iter=600, **extra, **extra_mode)
+                i = model.classes.index("whiff")
+                sl = model.predict_proba(dict(base, pitch_type=np.full(n, "SL"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
+                ff = model.predict_proba(dict(base, pitch_type=np.full(n, "FF"), streak_pos=np.ones(n), prev1_pitch_type=np.full(n, "none")), effects="population")[:, i]
+                key = f"{kind}_{c}_{label}"
+                out[key] = float((sl - ff).mean()); out[f"{key}_hit_cap"] = int(model.info["hit_cap"])
+                if model.info["penalties_estimated"]:
+                    out[f"{key}_penalties"] = model.info["penalties"]
     record("W4_W5_slider_vs_fastball_whiff", **out)
-    assert all(np.isfinite(v) for v in out.values())
+    assert all(np.isfinite(v) for k, v in out.items() if isinstance(v, float))
+
+
+def test_shrinkage_is_a_precision_chosen_by_the_data_and_the_information_of_a_pitch_is_small():
+    from treepolo_mlb_data.research.outcome_models import shrinkage as sh
+
+    assert sh.info_per_pitch([0.5, 0.5]) == pytest.approx(0.25) and sh.info_per_pitch([0.9, 0.1]) == pytest.approx(0.09) and 0.05 < sh.info_per_pitch([0.36, 0.17, 0.17, 0.01, 0.004, 0.012, 0.16, 0.10]) < 0.12
+    w, cols = _world("W4", 20_000, 5)
+    auto = _fit("logistic", cols, max_iter=300, control_pitcher="effect", control_batter="effect")
+    assert auto.info["penalties_estimated"] and set(auto.info["penalties"]) == {"pitcher", "batter"} and all(0 < v <= 1e4 for v in auto.info["penalties"].values())
+    assert {g: len(v) for g, v in auto.info["penalties_by_class"].items()} == {"pitcher": 8, "batter": 8} and len(set(auto.info["penalties_by_class"]["pitcher"])) > 1          # one precision per outcome class
+    manual = _fit("logistic", cols, max_iter=300, control_pitcher="effect", control_batter="effect", effect_penalty_mode="manual", effect_penalty_pitcher=7.0, effect_penalty_batter=9.0)
+    assert not manual.info["penalties_estimated"] and manual.info["penalties"] == {"pitcher": 7.0, "batter": 9.0}                  # a manual value is kept as written
+    # the share of his own data a pitcher's effect uses is information / (information + penalty), not pitches / (pitches + penalty)
+    pid = int(manual.players("pitcher")[0][0]); n = manual.player_info("pitcher", pid)["pitches"]
+    got = manual.player_info("pitcher", pid)["shrinkage"]
+    info = n * manual.class_info                                                        # the information of n pitches about each outcome class
+    assert got == pytest.approx(float(np.mean(info / (info + 7.0)))) and got != pytest.approx(n / (n + 7.0))
+    pen = np.asarray(auto.info["penalties_by_class"]["pitcher"]); info_a = n * auto.class_info
+    assert auto.player_info("pitcher", pid)["shrinkage"] == pytest.approx(float(np.mean(info_a / (info_a + pen))))
+
+
+def test_hitting_the_iteration_cap_is_reported():
+    w, cols = _world("W4", 12_000, 5)
+    stopped = _fit("logistic", cols, max_iter=3, control_pitcher="effect")
+    assert stopped.info["hit_cap"] is True
+    done = _fit("logistic", cols, max_iter=1000)                                                                                  # no effects: a small problem that converges
+    assert done.info["hit_cap"] is False and om.fill_defaults({})["max_iter"] == 1000 and om.fill_defaults({})["effect_penalty_mode"] == "auto"
 
 
 # ------------------------------------------------------------------------------------------------ the research method
@@ -238,6 +277,7 @@ def _section(service, run, prefix):
 
 def test_the_method_reports_numbers_for_every_section_and_no_verdict(players):
     run = players.run("outcome_model_train", RUN)["run"]
+    assert "hit_cap" in players.store.load_result(run["id"])["extras"] and players.store.load_result(run["id"])["extras"]["effect_penalty_mode"] == "auto"
     fit = _section(players, run, "Fit summary")
     roles = {(r["role"], r["mode"]) for r in fit}
     assert ("model", "season_specific") in roles and ("model", "season_population") in roles and ("baseline", "season_specific") in roles and ("model", "cold_pitcher") in roles
@@ -286,3 +326,11 @@ def test_param_search_scores_any_model_on_unseen_players_and_a_year(players):
         players.run("param_search", {"scope": SCOPE, "groups": ["RvR"], "model": "logistic", "grid": {"no_such_setting": [1]}})
     with pytest.raises(ConfigError, match="year"):
         players.run("param_search", {"scope": {"game_years": [2023], "game_types": ["R"]}, "groups": ["RvR"], "scoring": ["year"]})
+
+
+def test_a_fit_that_stops_at_the_cap_is_listed_in_the_result(players):
+    run = players.run("outcome_model_train", {**RUN, "max_iter": 2, "compare_baseline": False, "cold_by": []})["run"]
+    extras = players.store.load_result(run["id"])["extras"]
+    assert extras["hit_cap"] and extras["hit_cap"][0]["role"] == "model"
+    fit = _section(players, run, "Fit summary")
+    assert any(r["hit_cap"] == 1 for r in fit)

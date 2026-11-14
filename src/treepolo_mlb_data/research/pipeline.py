@@ -280,7 +280,7 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
     model_extras = service.store.load_result(context["model_run_id"])["extras"] if context.get("model_run_id") else {}
     from .outcome_models import controls as ctl
 
-    out: dict[str, Any] = {"best_params": context.get("best_params") or None, "groups": {}, "replication": policy_extras.get("replication"),
+    out: dict[str, Any] = {"best_params": context.get("best_params") or None, "groups": {}, "replication": policy_extras.get("replication"), "hit_cap": model_extras.get("hit_cap") or [],
                            "model": {"kind": model_extras.get("model"), "controls": {k: v for k, v in (model_extras.get("controls") or {}).items() if v != ctl.CONTROL_DEFAULTS.get(k)}}}
     for g in settings["groups"]:
         r1 = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("states")), None)

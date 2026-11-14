@@ -187,7 +187,7 @@ class ModelCompareMethod(ResearchMethod):
             make_section("Effect differences 兩兩模型的球種效果差", ("group", "model_a", "model_b", "phase", "action", "class", "difference"), rows["diff"], ("group", "model_a", "model_b", "phase", "action", "class"), "duckdb", DIGITS),
             make_section("Controls 各模型用的偏差控制", ("group", "model", "control", "setting", "how", "backend"), rows["controls"], ("group", "model", "control"), "duckdb", DIGITS),
         )
-        extras = {"scope": ctx.scope, "models": names, "classes": classes, "train_years": list(config["train_years"]), "test_years": list(config["test_years"]), "sort_by": config["sort_by"],
+        extras = {"scope": ctx.scope, "models": names, "classes": classes, "hit_cap": [{"group": r["group"], "model": r["model"], "mode": r["mode"]} for r in rows["summary"] if r.get("hit_cap")], "train_years": list(config["train_years"]), "test_years": list(config["test_years"]), "sort_by": config["sort_by"],
                   "comparisons": {"pitch_effects": comparisons}}
         return ResearchResult(sections=sections, extras=extras)
 
