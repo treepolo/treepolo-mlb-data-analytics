@@ -116,10 +116,20 @@ def usage_from_counts(cols: Mapping[str, np.ndarray], shape: pc.Shape, *, kappa:
     share_cell, support_cell = pc.support_rule(cell, min_share, min_count)
     raw = cnt + kappa * share_cell[:, :, :, None, :]
     share_r = raw / np.maximum(raw.sum(axis=4, keepdims=True), 1e-12)
-    S = shape.size; bb, kk, oo, bs, pp, rr = shape.coords()
+    # A (count, previous type, streak) with no pitch at all has no shares of its own: fall back to the (count) shares, then to the group's shares, so that every state has a behaviour
+    empty = raw.sum(axis=4) <= 1e-9
+    if empty.any():
+        by_count = cnt.sum(axis=(2, 3)); by_count_share = np.divide(by_count, by_count.sum(axis=2, keepdims=True), out=np.zeros_like(by_count), where=by_count.sum(axis=2, keepdims=True) > 0)
+        overall = cnt.sum(axis=(0, 1, 2, 3)); overall = overall / max(overall.sum(), 1e-12)
+        fallback = np.where(by_count.sum(axis=2, keepdims=True)[:, :, None, None, :] > 0, by_count_share[:, :, None, None, :], overall)
+        share_r = np.where(empty[..., None], np.broadcast_to(fallback, share_r.shape), share_r)
+    bb, kk, oo, bs, pp, rr = shape.coords()
     obs_full = share_r[bb, kk, pp, rr]; support = support_cell[bb, kk, pp]
     n = cnt[bb, kk, pp, rr]
-    return pc.masked_shares(obs_full, support), support, n
+    # Where no action passes the support rule the pitcher's behaviour is kept as it was seen (all policies play it there, see ``Engine.no_support``); it must not be left at zero,
+    # because a state with no behaviour has no cost and every policy would be pulled towards such holes.
+    obs = np.where(support.any(axis=1, keepdims=True), pc.masked_shares(obs_full, support), obs_full)
+    return obs, support, n
 
 
 def members_dynamics(tensor: np.ndarray, obs: np.ndarray, support: np.ndarray, n: np.ndarray | None = None) -> list[pc.Dynamics]:

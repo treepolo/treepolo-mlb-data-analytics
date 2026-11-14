@@ -265,7 +265,7 @@ class PlayerQuery:
             sup &= mask[None, :]
         dyn = self.engine.dyn
         dyn.P[active] = P
-        dyn.obs[active] = pc.masked_shares(self._base_obs[active], sup); dyn.support[active] = sup
+        dyn.obs[active] = np.where(sup.any(axis=1, keepdims=True), pc.masked_shares(self._base_obs[active], sup), self._base_obs[active]); dyn.support[active] = sup       # no supported action: keep what was seen
         eng = self.engine.rebind(dyn)
         V = eng.evaluate(eng.obs_eff, active=active, tol=1e-10)
         Q = eng.q(V, rows=np.array([state]))[0]

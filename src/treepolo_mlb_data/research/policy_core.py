@@ -205,14 +205,21 @@ class Engine:
 
     def policy_const(self, action: int) -> np.ndarray:
         pi = self.obs_eff.copy()
-        use = self.sup_eff[:, action]
+        use = self.sup_eff[:, action] & ~self.no_support
         pi[use] = 0.0; pi[use, action] = 1.0
+        return pi
+
+    def _freeze(self, pi: np.ndarray) -> np.ndarray:
+        """States with no supported action have no choice: every policy plays what was observed there (so V_unrestricted <= V_trust <= V_observed holds in every state)."""
+
+        if self.no_support.any():
+            pi = pi.copy(); pi[self.no_support] = self.obs_eff[self.no_support]
         return pi
 
     def _argmin_policy(self, Q: np.ndarray) -> np.ndarray:
         masked = np.where(self.sup_eff, Q, np.inf)
         pi = np.zeros_like(Q); pi[np.arange(len(Q)), masked.argmin(axis=1)] = 1.0
-        return pi
+        return self._freeze(pi)
 
     def policy_greedy1(self) -> np.ndarray:
         return self._argmin_policy(self.one_step())
@@ -220,7 +227,7 @@ class Engine:
     def trust_policy(self, Q: np.ndarray, delta: float) -> np.ndarray:
         """Per state, the shares within ``delta`` of the observed shares that minimise the expected Q (see ``trust_shares``)."""
 
-        return trust_shares(Q, self.obs_eff, self.sup_eff, delta)
+        return self._freeze(trust_shares(Q, self.obs_eff, self.sup_eff, delta))
 
     def solve(self, kind: str, trust: float = 0.10, term: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         """(V, pi) of one policy kind; the dynamic-programming kinds iterate the Bellman operator to convergence."""

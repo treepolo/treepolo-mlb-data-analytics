@@ -416,7 +416,12 @@
         el("div", { id: "rp-message", class: "rr-status" }), el("div", { id: "rp-form" }), el("div", { id: "rp-steps" }), el("div", { id: "rp-state" })));
     main.insertBefore(panel, document.querySelector("#result-window"));
     window.treepoloPanels?.register?.(PANEL_ID, ROUTE);
-    document.addEventListener("treepolo:panel-activated", event => { if (event.detail?.panelId === PANEL_ID) guard(open); });
+    document.addEventListener("treepolo:panel-activated", event => {
+      const here = event.detail?.panelId === PANEL_ID;
+      const generic = document.getElementById("result-window");               // the general "Analysis Result / Save / Export" block does not apply to this page
+      if (generic) generic.hidden = here;
+      if (here) guard(open);
+    });
     if (new URL(window.location.href).searchParams.get("page") === ROUTE) window.treepoloPanels?.activate?.(PANEL_ID, { updateUrl: false, source: "initial-route" });
   }
 

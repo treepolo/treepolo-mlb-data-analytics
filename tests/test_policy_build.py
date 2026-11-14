@@ -57,3 +57,22 @@ def test_observed_shares_recover_the_world_behaviour():
     valid = ((p == w.shape.none) == ((b == 0) & (k == 0))) & (n.sum(axis=1) > 400)
     assert valid.sum() > 300
     assert np.abs(obs - w.truth.obs)[valid].mean() < 0.02
+
+
+def test_every_state_has_a_behaviour_also_without_support():
+    """A state with no action that passes the support rule keeps the shares as seen (rows sum to 1); a (count, previous type) never seen falls back to the count's shares."""
+
+    from treepolo_mlb_data.research.profiles import PITCH_TYPES
+
+    shape = pc.Shape()
+    rng = np.random.default_rng(5)
+    n = 400
+    cols = {"pitch_type": rng.choice(["FF", "SL"], n), "prev1_pitch_type": np.where(rng.random(n) < 0.5, "FF", "none"), "balls": np.zeros(n), "strikes": np.zeros(n),
+            "prior_streak": np.zeros(n)}
+    obs, support, cnt = pb.usage_from_counts(cols, shape, min_count=100000)          # nothing passes the support rule
+    assert not support.any()
+    assert np.allclose(obs.sum(axis=1), 1.0)
+    seen = shape.index(0, 0, 0, 0, shape.none, 0)
+    assert obs[seen, PITCH_TYPES.index("FF")] > 0 and obs[seen, PITCH_TYPES.index("CH")] == 0
+    unseen = shape.index(3, 2, 0, 0, PITCH_TYPES.index("CU"), 1)                       # no pitch in this situation: falls back to the whole group
+    assert obs[unseen, PITCH_TYPES.index("FF")] > 0

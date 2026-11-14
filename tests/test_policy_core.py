@@ -10,7 +10,7 @@ from treepolo_mlb_data.research import policy_core as pc
 FOUL = pc.OC["foul"]
 
 
-def random_world(shape, seed, foul=True, sparse_support=False):
+def random_world(shape, seed, foul=True, sparse_support=False, holes=False):
     rng = np.random.default_rng(seed)
     S, A = shape.size, shape.n_actions
     P = rng.dirichlet(np.ones(pc.C) * 2.0, size=(S, A))
@@ -21,7 +21,9 @@ def random_world(shape, seed, foul=True, sparse_support=False):
     if sparse_support:
         support = rng.random((S, A)) < 0.7
         support[np.arange(S), rng.integers(0, A, S)] = True
-    obs = pc.masked_shares(share, support)
+    if holes:                                     # states where no action passes the support rule: the behaviour stays as it was seen (what ``usage_from_counts`` builds)
+        support[rng.random(S) < 0.4] = False
+    obs = np.where(support.any(axis=1, keepdims=True), pc.masked_shares(share, support), share)
     re_pa = np.sort(rng.random((3, 8)) * 1.5, axis=1)[:, ::-1] * np.array([[1.0], [0.7], [0.4]]) + np.linspace(0, 0.8, 8)[None, :]
     env = pc.Environment(re_pa=re_pa, re_cnt=rng.random((shape.n_balls, shape.n_strikes, 3, 8)) + 0.2,
                          jbip=rng.random((A, 3, 8)) * 1.2, start=rng.random((3, 8)) + 0.1)
@@ -222,3 +224,28 @@ def test_support_rule_and_member_interval():
     assert pc.chance_summary(lo, hi, 0.95, mask=np.array([True, True, False, True, False]))["n"] == 2
     row = pc.chance_row(10, 0.9, 3, "outside_anchor_interval")
     assert row == {"n": 10, "confidence": 0.9, "expected_by_chance": pytest.approx(1.0), "found": 3, "what": "outside_anchor_interval"}
+
+
+@pytest.mark.parametrize("seed", range(8))
+@pytest.mark.parametrize("holes", [False, True])
+def test_policy_values_are_ordered_in_every_state(seed, holes):
+    """V_unrestricted <= V_trust <= V_observed in every state, also where no action is supported (the behaviour there is kept as observed and costs what it costs).
+
+    Real data once gave dp_unrestricted worse than the observed behaviour: states without support had no behaviour, so the observed value there was 0 (a free hole) while a policy
+    that had to choose paid the real cost."""
+
+    shape = pc.Shape(3, 2, 4)
+    dyn, env = random_world(shape, seed, sparse_support=True, holes=holes)
+    eng = pc.Engine(shape, dyn, env)
+    assert bool(eng.no_support.any()) == holes
+    assert np.allclose(dyn.obs.sum(axis=1), 1.0)
+    V_o, pi_o = eng.solve("observed"); V_t, pi_t = eng.solve("dp_trust", 0.10); V_u, pi_u = eng.solve("dp_unrestricted")
+    assert not np.isnan(V_o).any() and not np.isnan(V_t).any() and not np.isnan(V_u).any()
+    assert (V_u <= V_t + 1e-9).all() and (V_t <= V_o + 1e-9).all()
+    assert eng.start_value(V_u) <= eng.start_value(V_t) + 1e-9 <= eng.start_value(V_o) + 2e-9
+    if holes:
+        assert (V_o[eng.no_support] > 0).all()                                     # not a free hole
+        for pi in (pi_t, pi_u):
+            assert np.allclose(pi[eng.no_support], eng.obs_eff[eng.no_support])      # no choice there
+    for pi in (pi_o, pi_t, pi_u):
+        assert np.allclose(pi.sum(axis=1), 1.0)

@@ -127,7 +127,9 @@ def test_situation_table_artifact_round_trips(service, result):
     shape = pc.Shape()
     assert arrays["q"].shape == (shape.size, 9) and arrays["p_outcome"].shape == (shape.size, 9, 8)
     assert np.allclose(arrays["p_outcome"].sum(axis=2), 1, atol=1e-4)
-    assert (arrays["dp_trust"][~arrays["support"]] == 0).all()
+    unsupported = ~arrays["support"] & arrays["support"].any(axis=1, keepdims=True)      # a state with no supported action keeps the observed behaviour (every policy plays it there)
+    assert (arrays["dp_trust"][unsupported] == 0).all()
+    assert np.allclose(arrays["dp_trust"].sum(axis=1), 1.0, atol=1e-6)
 
 
 def test_same_settings_are_reused_and_errors_are_clear(service, result, model_run, patched):
