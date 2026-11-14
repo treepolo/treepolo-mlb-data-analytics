@@ -76,3 +76,30 @@ def test_every_state_has_a_behaviour_also_without_support():
     assert obs[seen, PITCH_TYPES.index("FF")] > 0 and obs[seen, PITCH_TYPES.index("CH")] == 0
     unseen = shape.index(3, 2, 0, 0, PITCH_TYPES.index("CU"), 1)                       # no pitch in this situation: falls back to the whole group
     assert obs[unseen, PITCH_TYPES.index("FF")] > 0
+
+
+def test_support_is_judged_by_count_and_type_and_shared_by_the_whole_count():
+    """A type is supported in a count when it has enough pitches there (any previous type, streak, outs, bases); every state of the count shares the answer. Coverage lists numbers."""
+
+    shape = pc.Shape()
+    rng = np.random.default_rng(11)
+    types = ["FF"] * 2100 + ["SL"] * 750 + ["CH"] * 150 + ["FF"] * 200
+    balls = [0] * 3000 + [1] * 200
+    n = len(types)
+    prev = rng.choice(["FF", "SL", "CH"], n)
+    cols = {"pitch_type": np.array(types), "prev1_pitch_type": prev, "balls": np.array(balls, dtype=float), "strikes": np.zeros(n), "prior_streak": np.ones(n)}
+    obs, support, cnt = pb.usage_from_counts(cols, shape, min_share=0.05, min_count=300)
+    ff, sl, ch = (PITCH_TYPES.index(t) for t in ("FF", "SL", "CH"))
+    b, k, o, base, p, r = shape.coords()
+    zero_zero = (b == 0) & (k == 0)
+    assert (support[zero_zero][:, [ff, sl]]).all() and not support[zero_zero][:, ch].any()           # 150 CH pitches: below the minimum count, in every state of the count
+    assert not support[(b == 1) & (k == 0)].any()                                                  # 200 pitches in the count: nothing reaches the minimum
+    assert np.allclose(obs.sum(axis=1), 1.0)
+    assert (obs[zero_zero][:, ch] == 0).all()                                                       # the unsupported type has no observed share where supported ones exist
+    cov = pb.support_coverage(cols, shape, support, cnt)
+    assert cov["states"] == shape.size and cov["supported_states"] == int(zero_zero.sum()) and cov["no_support_states"] == shape.size - int(zero_zero.sum())
+    assert cov["pitches"] == n and cov["pitch_share_unsupported"] == (150 + 200) / n
+    assert cov["supported_types"] == "FF SL"
+    # a looser rule supports more
+    _, looser, _ = pb.usage_from_counts(cols, shape, min_share=0.0, min_count=100)
+    assert looser[zero_zero][:, ch].all() and looser[(b == 1) & (k == 0)][:, ff].all()

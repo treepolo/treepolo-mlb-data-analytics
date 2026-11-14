@@ -354,6 +354,7 @@
       const r1 = g.r1;
       const card = el("div", { class: "rp-card", "data-group": group }, el("h4", { text: `${group}` }),
         el("div", { class: "hint", text: `引擎對照（照實際配球算出的期望失分，和真實資料統計出的得分期望值表差多少；0＝完全一致）：各狀態中位數差 ${num(r1.median_abs_diff)}、最大差 ${num(r1.max_abs_diff)}、打席起點差 ${num(r1.start_diff)}` }));
+      if (g.support) card.append(el("div", { class: "hint", "data-section": "support-coverage", text: `支持涵蓋（只依球數×球種判斷）：${g.support.supported_states} / ${g.support.states} 個狀態有被支持的球種，無支持 ${g.support.no_support_states} 個；實際投球有 ${num(g.support.pitch_share_unsupported * 100, 1)}% 落在不被支持的球種；被支持的球種：${g.support.supported_types || "無"}` }));
       if (g.policies.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["政策", "算法", "每打席少失分", "區間", "每隊每季少失分"].map(h => el("th", { text: h })))),
         el("tbody", {}, ...g.policies.map(p => el("tr", {}, el("td", { text: p.policy }), el("td", { text: p.kind }), el("td", { text: num(p.saving_pa) }), el("td", { text: p.lo == null ? "—" : `[${num(p.lo)}, ${num(p.hi)}]` }), el("td", { text: num(p.saving_per_team_season, 1) }))))));
       if (g.effect_gains.length) {

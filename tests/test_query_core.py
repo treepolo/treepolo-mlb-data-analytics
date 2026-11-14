@@ -69,7 +69,10 @@ def test_m0_rows_follow_the_table_and_the_closed_forms(built):
     res = table.lookup(1, 2, 1, "100", "SL", 2)
     assert res["mode"] == "M0" and res["group"] == "RvR" and len(res["rows"]) == 9
     rows = {r["action"]: r for r in res["rows"]}
-    assert rows["KC"]["flag"] == "unsupported" and rows["KC"]["supported"] is False and rows["KC"]["overlap_group"] is None
+    assert all((r["flag"] == "unsupported") == (not r["supported"]) and (r["supported"] or r["overlap_group"] is None) for r in res["rows"])
+    # support is judged by count and type, so the answer is the same in every state of the count (this world has every type in every count; the rule itself is tested in test_policy_build)
+    other = {r["action"]: r["supported"] for r in table.lookup(1, 2, 2, "010", "FF", 1)["rows"]}
+    assert other == {a: r["supported"] for a, r in rows.items()}
     assert all("detected" not in r and "evidence" not in r and "indistinct_group" not in r for r in res["rows"])        # no verdict, only numbers, intervals and overlap letters
     chance = res["comparisons"]
     sup_rows = [r for r in res["rows"] if r["supported"] and r["adv_lo"] is not None and r["adv_hi"] is not None]

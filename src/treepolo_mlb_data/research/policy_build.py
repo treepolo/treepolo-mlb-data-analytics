@@ -99,8 +99,12 @@ def fit_outcome_members(cols: Mapping[str, np.ndarray], *, backend: str = "hgb",
 
 def usage_from_counts(cols: Mapping[str, np.ndarray], shape: pc.Shape, *, kappa: float = 30.0, min_share: float = 0.05, min_count: int = 300
                       ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Observed behaviour per state: shares by (count, previous type, streak) shrunk towards the (count, previous type) shares, the support rule on the
-    (count, previous type) cell (plan 2.3), and the pitch counts. Outs and bases do not enter (the behaviour is pooled over them)."""
+    """Observed behaviour per state: shares by (count, previous type, streak) shrunk towards the (count, previous type) shares, the support rule, and the pitch counts.
+    Outs and bases do not enter (the behaviour is pooled over them).
+
+    The support rule looks at the count and the pitch type only: a type is supported in a count when it was thrown at least ``min_count`` times and at least ``min_share`` of
+    the pitches in that count, pooled over previous type, streak, outs and bases; every state of that count shares the answer. (Splitting by previous type and streak as well
+    left most states without any supported type in the smaller hand groups.)"""
 
     A = shape.n_actions
     ptype = np.asarray(cols["pitch_type"]).astype(str)
@@ -113,23 +117,49 @@ def usage_from_counts(cols: Mapping[str, np.ndarray], shape: pc.Shape, *, kappa:
     cnt = np.zeros((shape.n_balls, shape.n_strikes, A + 1, pc.STREAKS, A))
     np.add.at(cnt, (b[ok], k[ok], prev[ok], r[ok], a[ok]), 1.0)
     cell = cnt.sum(axis=3)                                       # (b, k, prev, action)
-    share_cell, support_cell = pc.support_rule(cell, min_share, min_count)
+    share_cell, _ = pc.support_rule(cell, min_share, min_count)           # the (count, previous type) shares: the target of the shrinkage
+    by_count = cnt.sum(axis=(2, 3))                                       # (b, k, action): the pitches of the count
+    _, support_count = pc.support_rule(by_count, min_share, min_count)
     raw = cnt + kappa * share_cell[:, :, :, None, :]
     share_r = raw / np.maximum(raw.sum(axis=4, keepdims=True), 1e-12)
     # A (count, previous type, streak) with no pitch at all has no shares of its own: fall back to the (count) shares, then to the group's shares, so that every state has a behaviour
     empty = raw.sum(axis=4) <= 1e-9
     if empty.any():
-        by_count = cnt.sum(axis=(2, 3)); by_count_share = np.divide(by_count, by_count.sum(axis=2, keepdims=True), out=np.zeros_like(by_count), where=by_count.sum(axis=2, keepdims=True) > 0)
+        by_count_share = np.divide(by_count, by_count.sum(axis=2, keepdims=True), out=np.zeros_like(by_count), where=by_count.sum(axis=2, keepdims=True) > 0)
         overall = cnt.sum(axis=(0, 1, 2, 3)); overall = overall / max(overall.sum(), 1e-12)
         fallback = np.where(by_count.sum(axis=2, keepdims=True)[:, :, None, None, :] > 0, by_count_share[:, :, None, None, :], overall)
         share_r = np.where(empty[..., None], np.broadcast_to(fallback, share_r.shape), share_r)
     bb, kk, oo, bs, pp, rr = shape.coords()
-    obs_full = share_r[bb, kk, pp, rr]; support = support_cell[bb, kk, pp]
+    obs_full = share_r[bb, kk, pp, rr]; support = support_count[bb, kk]
     n = cnt[bb, kk, pp, rr]
     # Where no action passes the support rule the pitcher's behaviour is kept as it was seen (all policies play it there, see ``Engine.no_support``); it must not be left at zero,
     # because a state with no behaviour has no cost and every policy would be pulled towards such holes.
-    obs = np.where(support.any(axis=1, keepdims=True), pc.masked_shares(obs_full, support), obs_full)
+    masked = pc.masked_shares(obs_full, support)
+    # a state whose own pitches were all of unsupported types has no share left on the supported ones: use the count's shares there
+    count_share = np.divide(by_count, by_count.sum(axis=2, keepdims=True), out=np.zeros_like(by_count), where=by_count.sum(axis=2, keepdims=True) > 0)
+    masked = np.where(masked.sum(axis=1, keepdims=True) > 0, masked, pc.masked_shares(count_share[bb, kk], support))
+    obs = np.where(support.any(axis=1, keepdims=True), masked, obs_full)
     return obs, support, n
+
+
+def support_coverage(cols: Mapping[str, np.ndarray], shape: pc.Shape, support: np.ndarray, n: np.ndarray) -> dict[str, Any]:
+    """How much of the game the support rule covers (numbers only): states with at least one supported type, states with none, how many of those states were seen in the data
+    at all, and the share of the actual pitches thrown with a type that is not supported where it was thrown."""
+
+    A = shape.n_actions
+    has = support.any(axis=1); seen = n.sum(axis=1) > 0
+    ptype = np.asarray(cols["pitch_type"]).astype(str)
+    a = np.array([PITCH_TYPES.index(t) if t in PITCH_TYPES else -1 for t in ptype]) if len(ptype) else np.zeros(0, dtype=int)
+    prev = np.array([PITCH_TYPES.index(t) if t in PITCH_TYPES else A for t in np.asarray(cols["prev1_pitch_type"]).astype(str)])
+    b = np.asarray(cols["balls"]).astype(int); k = np.asarray(cols["strikes"]).astype(int)
+    ok = (a >= 0) & (b < shape.n_balls) & (k < shape.n_strikes)
+    zeros = np.zeros(int(ok.sum()), dtype=int)
+    state = shape.index(b[ok], k[ok], zeros, zeros, prev[ok], state_streak(cols["prior_streak"])[ok])      # support does not depend on outs and bases
+    pitches = int(ok.sum())
+    off = int((~support[state, a[ok]]).sum())
+    return {"states": int(shape.size), "supported_states": int(has.sum()), "no_support_states": int((~has).sum()), "seen_states": int(seen.sum()),
+            "seen_no_support_states": int((seen & ~has).sum()), "pitches": pitches, "pitch_share_unsupported": off / pitches if pitches else float("nan"),
+            "supported_types": " ".join(t for i, t in enumerate(PITCH_TYPES) if support[:, i].any())}
 
 
 def members_dynamics(tensor: np.ndarray, obs: np.ndarray, support: np.ndarray, n: np.ndarray | None = None) -> list[pc.Dynamics]:

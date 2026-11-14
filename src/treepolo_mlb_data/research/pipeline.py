@@ -291,6 +291,7 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
         out["groups"][g] = {
             # how far the engine's observed-play value is from the run expectancy table: numbers only (0 = identical)
             "r1": {"median_abs_diff": r1 and r1["median_abs_diff"], "max_abs_diff": r1 and r1["max_abs_diff"], "start_diff": start and start["median_abs_diff"]},
+            "support": next((r for r in rows(context.get("policy_run_id"), "Support coverage") if r["group"] == g), None),
             "policies": [{"policy": v["policy"], "kind": v["kind"], "saving_pa": v["saving_pa"], "lo": v["lo"], "hi": v["hi"], "saving_per_team_season": v["saving_per_team_season"]} for v in values],
             "effect_gains": [{"mode": r["mode"], "comparison": r["comparison"], "value": r["delta_logloss"], "lo": r["lo"], "hi": r["hi"], "n": r["n"]} for r in gains],
             "actions": [{"action": m["action"], "advantage": m["advantage"], "adv_lo": m["adv_lo"], "adv_hi": m["adv_hi"], "marginal": m["marginal"], "supported_share": m["supported_share"]} for m in marg],

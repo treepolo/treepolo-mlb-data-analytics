@@ -108,7 +108,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 5     # 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 6     # 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -128,8 +128,12 @@ class PitchPolicyMethod(ResearchMethod):
                     help_en="With two or more years, a model is trained on each year alone and the estimates are listed side by side; numbers only."),
         ConfigField("cross_eval", "bool", default=True, label_zh="交叉評估（一季選、另一季評）", label_en="Cross evaluation (choose on one season, judge on the other)"),
         ConfigField("cross_members", "int", default=5, minimum=1, maximum=50, label_zh="交叉評估每季成員數", label_en="Members per season for the cross evaluation"),
-        ConfigField("min_share", "float", default=0.05, minimum=0.0, maximum=1.0, label_zh="支持規則：最小份額", label_en="Support rule: minimum share"),
-        ConfigField("min_count", "int", default=300, minimum=1, label_zh="支持規則：最小球數", label_en="Support rule: minimum pitches"),
+        ConfigField("min_share", "float", default=0.05, minimum=0.0, maximum=1.0, label_zh="支持規則：最小份額", label_en="Support rule: minimum share",
+                    help_zh="只依「球數 × 球種」判斷：這個球種在該球數的所有投球（不分前一球、連投、出局、壘包）裡至少占這個比例，才算被支持；同一球數的所有狀態共用。",
+                    help_en="Judged by count and pitch type only: the type must be at least this share of the pitches of the count (any previous type, streak, outs, bases); every state of the count shares it."),
+        ConfigField("min_count", "int", default=300, minimum=1, label_zh="支持規則：最小球數", label_en="Support rule: minimum pitches",
+                    help_zh="只依「球數 × 球種」判斷：這個球種在該球數至少要投這麼多球，才算被支持；同一球數的所有狀態共用。",
+                    help_en="Judged by count and pitch type only: the type must have been thrown at least this many times in the count; every state of the count shares it."),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
                     help_zh="用該紀錄的 J_BIP 取代描述性估計，並做錨點一致性檢查（計畫 3.6）。", help_en="Uses its J_BIP instead of the descriptive estimate and runs the anchor consistency check."),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
@@ -192,7 +196,7 @@ class PitchPolicyMethod(ResearchMethod):
         cols_all = fetch_columns(ctx, config, config["groups"], years, re_by_state=re.re_by_state)
         shape = pc.Shape()
         r1_rows, value_rows, risk_rows, marg_rows, support_rows, artifacts = [], [], [], [], [], []
-        direction_rows, anchor_rows, anchor_cell_rows, replication_rows = [], [], [], []
+        direction_rows, anchor_rows, anchor_cell_rows, replication_rows, coverage_rows = [], [], [], [], []
         comparisons: dict[str, dict[str, Any]] = {"marginal": {}, "direction": {}, "anchor": {}}
         for group in config["groups"]:
             sel = np.nonzero(cols_all["group"] == group)[0]
@@ -208,6 +212,7 @@ class PitchPolicyMethod(ResearchMethod):
             tensor = pb.model_tensor(model, shape, group, effects="population")
             obs, support, n = pb.usage_from_counts(cols, shape, min_share=config["min_share"], min_count=config["min_count"])
             dyns = pb.members_dynamics(tensor, obs, support, n)
+            coverage_rows.append({"group": group, **pb.support_coverage(cols, shape, support, n)})
             kinds = tuple(k for k in pc.POLICIES if k in config["policies"])
             an = pb.analyze(dyns, env, shape, kinds=kinds, trust=config["trust_region"], delta=config["marginal_shift"])
             r1_rows += self._r1(group, cols, an, env, shape)
@@ -244,6 +249,9 @@ class PitchPolicyMethod(ResearchMethod):
             make_section("Direction map 方向圖（球數×前一球 × 球種；邊際價值；全部列出）", ("group", "context", "balls", "strikes", "prev", "action", "marginal", "advantage", "adv_lo", "adv_hi", "n"),
                          direction_rows, ("group", "context", "action"), "duckdb", DIGITS),
             make_section("Support 支持表", ("group", "action", "supported_share", "observed_share"), support_rows, ("group", "action"), "duckdb", DIGITS),
+            make_section("Support coverage 支持涵蓋（狀態數、無支持狀態數、實際投球落在不被支持球種的比例；只有數字）",
+                         ("group", "states", "supported_states", "no_support_states", "seen_states", "seen_no_support_states", "pitches", "pitch_share_unsupported", "supported_types"),
+                         coverage_rows, ("group",), "duckdb", DIGITS),
         )
         if replication_rows:
             sections = sections + (make_section("Replication 換年份重看（每個年份單獨訓練的估計；context＝ALL 是整個球種的彙總）",
