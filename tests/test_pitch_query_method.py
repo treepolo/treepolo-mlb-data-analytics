@@ -136,3 +136,11 @@ def test_method_guards(setup):
     rt = service.query_runtime(only_m0["id"])
     with pytest.raises(ConfigError, match="M0"):
         rt.search("RvR", "pitcher", "")
+
+
+def test_the_interval_check_of_the_acceptance_skips_rows_without_an_interval():
+    from treepolo_mlb_data.research.query_methods import intervals_ordered
+
+    ok = {"supported": True, "q": 0.5, "q_lo": 0.4, "q_hi": 0.6}
+    assert intervals_ordered([ok]) and not intervals_ordered([{**ok, "q_lo": 0.55}])
+    assert intervals_ordered([{**ok, "q_lo": None, "q_hi": None}, {"supported": False, "q": None, "q_lo": None, "q_hi": None}])        # one member: no interval, nothing to order

@@ -30,6 +30,12 @@ np = _Lazy("numpy")
 qc = _Lazy(".query_core")
 
 
+def intervals_ordered(rows) -> bool:
+    """``q_lo <= q <= q_hi`` for every supported row that has an interval. A row without one (a single member has no spread, so no interval) has nothing to put in order."""
+
+    return all(x["q_lo"] <= x["q"] <= x["q_hi"] for x in rows if x["supported"] and x["q"] is not None and x["q_lo"] is not None and x["q_hi"] is not None)
+
+
 def _run_of_kind(ctx: ResearchContext, run_id: int, kind: str) -> dict[str, Any]:
     run = ctx.store.get_run(int(run_id)) if ctx.store is not None else None
     if run is None or run["kind"] != kind or run["status"] != "success":
@@ -143,7 +149,7 @@ class PitchQueryMethod(ResearchMethod):
             second = pq.query(0, 0, 1, "000", "none", 1, **args)
             same = max(abs((x["q"] or 0.0) - (y["q"] or 0.0)) for x, y in zip(first["rows"], second["rows"]))
             sums = [abs(sum(x["outcomes"].values()) - 1.0) for x in first["rows"] if x["supported"]]
-            ordered = all(x["q_lo"] <= x["q"] <= x["q_hi"] for x in first["rows"] if x["supported"] and x["q"] is not None)
+            ordered = intervals_ordered(first["rows"])
             accept.append({"group": group, "check": f"{mode} repeats and is well formed", "situation": f"pitcher {pit}, batter {bat}", "max_abs_diff": float(max(same, max(sums) if sums else 0.0)),
                            "passed": int(same < 1e-12 and (not sums or max(sums) < 1e-9) and ordered)})
             latency.append({"group": group, "mode": mode, "pairs": first["sampling"]["pairs"], "members": first["sampling"]["members"], "seconds": seconds})
