@@ -6,8 +6,9 @@ another group already covers is left out) and for the count, outs, runners and p
 shrinkage, the interactions of the previous pitch with the pitch type left out so that these effects are estimated as plain coefficients), so agreeing with the logistic model's
 numbers is a check, not an identity.
 
-With ``control_pitcher_pitch = within`` the fixed effect of every pitcher-and-pitch-type pair swallows what is the same for all pitches of that type, so the overall difference between
-pitch types is not identified: only differences inside the same pitcher and the same pitch type are. The repeat effects below are exactly such differences."""
+With ``control_pitcher_pitch = within`` the fixed effect of every pitcher-and-pitch-type pair swallows what is the same for all pitches of that type: the overall level of each pitch type is
+not controlled for (the logistic model calibrates it to the observed share), only comparisons inside the same pitcher and the same pitch type are. The repeat and previous-pitch effects
+below are exactly such comparisons."""
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -18,8 +19,10 @@ from .outcome_models import design as dz
 
 SITUATION_FE = ("count", "outs", "bases", "type", "count*type", "bases*outs")      # the blocks that do not involve the previous pitch or the streak
 COLUMNS = ("group", "class", "term", "effect", "se", "lo", "hi", "n")
-NOTE_PITCHER_PITCH_ZH = "開 control_pitcher_pitch=within 時，球種之間的整體差異無法識別，只能比較同一投手、同一球種內部的差異。"
-NOTE_PITCHER_PITCH_EN = "With control_pitcher_pitch = within, the overall difference between pitch types is not identified: only differences inside the same pitcher and the same pitch type can be compared."
+NOTE_PITCHER_PITCH_ZH = ("開 control_pitcher_pitch=within 時，球種之間的整體水準是校準到實際比例（等於沒有控制）；"
+                         "只有同一投手、同一球種內部的比較（連投、上一球）有控制。")
+NOTE_PITCHER_PITCH_EN = ("With control_pitcher_pitch = within, the overall level of each pitch type is calibrated to the observed share (so it is NOT controlled for); "
+                         "only comparisons inside the same pitcher and the same pitch type (repeat, previous pitch) are controlled.")
 
 
 def identification_notes(controls: Mapping[str, Any]) -> list[dict[str, str]]:

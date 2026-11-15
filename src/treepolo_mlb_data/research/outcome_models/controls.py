@@ -16,8 +16,9 @@ _CONTROL_SPECS = (
      "none：不控制；descriptors：用投手描述特徵（歷史模式）；effect：每位投手一個效應（資料少的往聯盟平均收縮）；within：只在同一位投手自己的球之間比較（效應不收縮）。",
      "none; descriptors (history-mode descriptors); effect (one shrunken effect per pitcher); within (compare only inside the same pitcher, effects not shrunk)."),
     ("control_pitcher_pitch", ("none", "effect", "within"), "none", "控制：投手的每一種球各自的好壞", "Control: each pitcher's quality on each pitch type",
-     "擋「敢連投的人本來那顆球就強」：每位投手的每一種球各一個效應，資料少的組合往該投手整體、再往聯盟平均收縮；within＝只在同一投手同一球種之間比較（連投效應就是這樣估的）。",
-     "Each pitcher-and-pitch-type pair gets its own effect, shrunk towards the pitcher's overall effect and then the league."),
+     "擋「敢連投的人本來那顆球就強」：每位投手的每一種球各一個效應，資料少的組合往該投手整體、再往聯盟平均收縮；within＝只在同一投手同一球種之間比較（連投效應就是這樣估的）；這時球種之間的整體水準是校準到實際比例（等於沒有控制），只有同一投手、同一球種內部的比較（連投、上一球）有控制。",
+     "Each pitcher-and-pitch-type pair gets its own effect, shrunk towards the pitcher's overall effect and then the league. With within, the overall level of each pitch type is calibrated to the observed share "
+     "(not controlled for); only comparisons inside the same pitcher and pitch type (repeat, previous pitch) are controlled."),
     ("control_batter_pitch", ("none", "effect"), "none", "控制：打者對每一種球的反應", "Control: each batter's response to each pitch type",
      "每位打者對每一種球各一個效應（他是不是特別怕滑球）。", "Each batter-and-pitch-type pair gets its own effect."),
     ("control_day", ("none", "pitcher_game_effect", "within"), "none", "控制：投手當天狀態", "Control: the pitcher's form of the day",
@@ -177,6 +178,6 @@ def describe_controls(controls: Mapping[str, Any], *, model: str, backend: str) 
         value = controls.get(name, CONTROL_DEFAULTS[name])
         text = how.get(value, value) + (f"；{via}" if value in ("effect", "within", "pitcher_game_effect", "batter_and_count") else "")
         if name == "control_pitcher_pitch" and value == "within":
-            text += "；球種之間的整體差異無法識別，只能比較同一投手、同一球種內部的差異"
+            text += "；球種之間的整體水準是校準到實際比例（等於沒有控制），只有同一投手、同一球種內部的比較（連投、上一球）有控制"
         rows.append({"control": name, "setting": value, "how": text, "model": model, "backend": backend if model == "gbm" else ""})
     return rows

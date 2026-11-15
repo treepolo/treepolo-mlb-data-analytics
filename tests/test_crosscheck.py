@@ -13,10 +13,11 @@ pytest.importorskip("torch")
 
 def test_the_note_says_that_pitch_types_cannot_be_compared_as_a_whole_with_pitcher_pitch_within():
     notes = crosscheck.identification_notes({**ctl.default_controls(), "control_pitcher_pitch": "within"})
-    assert len(notes) == 1 and "無法識別" in notes[0]["zh"] and "not identified" in notes[0]["en"] and notes[0]["control"] == "control_pitcher_pitch"
+    assert len(notes) == 1 and "校準到實際比例" in notes[0]["zh"] and "等於沒有控制" in notes[0]["zh"] and "連投、上一球" in notes[0]["zh"] and notes[0]["control"] == "control_pitcher_pitch"
+    assert "NOT controlled for" in notes[0]["en"] and "calibrated to the observed share" in notes[0]["en"]
     assert crosscheck.identification_notes(ctl.default_controls()) == []
     how = {r["control"]: r["how"] for r in ctl.describe_controls({**ctl.default_controls(), "control_pitcher_pitch": "within"}, model="logistic", backend="xgboost")}
-    assert "同一投手、同一球種" in how["control_pitcher_pitch"]
+    assert "同一投手、同一球種" in how["control_pitcher_pitch"] and "校準到實際比例" in how["control_pitcher_pitch"]
 
 
 def test_overall_effects_that_a_finer_group_covers_are_left_out_of_the_fixed_effects():
