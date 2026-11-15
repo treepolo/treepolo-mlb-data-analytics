@@ -352,6 +352,7 @@
       out.push(el("div", { class: "hint", id: "rp-model", text: `用的模型：${MODEL_LABEL[s.model.kind] || s.model.kind}；偏差控制：${used.length ? used.join("、") : "沒有（全部關閉）"}。決策引擎與情境表是在這些假設下算的。` }));
       (s.model.notes || []).forEach(n => out.push(el("div", { class: "hint rp-note", "data-control": n.control, text: `注意：${n.zh}` })));
     }
+    (s.policy_notes || []).forEach(n => out.push(el("div", { class: "hint rp-note", "data-control": n.control, text: `注意：${n.zh}` })));
     if (s.hit_cap && s.hit_cap.length) out.push(el("div", { class: "rp-error", id: "rp-hit-cap", text: `⚠ 有 ${s.hit_cap.length} 個擬合撞到迭代上限（hit_cap），表示還沒收斂，數字可能還在變：${s.hit_cap.map(x => `${x.group} ${x.role === "baseline" ? "對照" : "模型"} ${x.mode}`).join("、")}。到設定裡把 max_iter 調高再跑。` }));
     if (s.best_params) out.push(el("div", { class: "hint", id: "rp-best", text: `選到的模型設定：${Object.entries(s.best_params).map(([k, v]) => `${PARAM_LABEL[k] || k} ${v}`).join("、")}` }));
     Object.entries(s.groups).forEach(([group, g]) => {
@@ -359,8 +360,7 @@
       const card = el("div", { class: "rp-card", "data-group": group }, el("h4", { text: `${group}` }),
         el("div", { class: "hint", text: `引擎對照（照實際配球算出的期望失分，和真實資料統計出的得分期望值表差多少；0＝完全一致）：各狀態中位數差 ${num(r1.median_abs_diff)}、最大差 ${num(r1.max_abs_diff)}、打席起點差 ${num(r1.start_diff)}` }));
       if (g.support) card.append(el("div", { class: "hint", "data-section": "support-coverage", text: `支持涵蓋（只依球數×球種判斷）：${g.support.supported_states} / ${g.support.states} 個狀態有被支持的球種，無支持 ${g.support.no_support_states} 個；實際投球有 ${num(g.support.pitch_share_unsupported * 100, 1)}% 落在不被支持的球種；被支持的球種：${g.support.supported_types || "無"}` }));
-      if (g.policies.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["政策", "算法", "每打席少失分", "區間", "每隊每季少失分"].map(h => el("th", { text: h })))),
-        el("tbody", {}, ...g.policies.map(p => el("tr", {}, el("td", { text: p.policy }), el("td", { text: p.kind }), el("td", { text: num(p.saving_pa) }), el("td", { text: interval(p.lo, p.hi) }), el("td", { text: num(p.saving_per_team_season, 1) }))))));
+      if (g.policies.length) card.append(policyTable(g.policies));
       if (g.effect_gains.length) {
         card.append(el("div", { class: "hint", text: "球員描述或效應的預測增益（對「全部控制都關掉」的同一個模型；沒見過的球員、沒訓練過的年份；正值＝加了控制比較準；只列數字，不下判斷）：" }));
         card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["評估對象", "比較", "數值（對數損失改善）", "區間", "樣本數"].map(h => el("th", { text: h })))),
@@ -369,10 +369,37 @@
       }
       if (g.actions.length) card.append(el("table", { class: "rp-table" }, el("thead", {}, el("tr", {}, ...["球種", "相對一般配球", "區間", "多投 10pp 的變化"].map(h => el("th", { text: h })))),
         el("tbody", {}, ...g.actions.map(a => el("tr", {}, el("td", { text: a.action }), el("td", { text: num(a.advantage) }), el("td", { text: interval(a.adv_lo, a.adv_hi) }), el("td", { text: num(a.marginal) }))))));
+      if (g.pitcher_engine) card.append(...pitcherEngine(g.pitcher_engine));
       Object.entries(g.comparisons || {}).forEach(([section, c]) => card.append(el("div", { class: "hint rp-chance", "data-section": section, text: chanceText(section, c) })));
       out.push(card);
     });
     if (s.replication) out.push(el("div", { class: "hint", id: "rp-replication", text: `換年份重看：${s.replication.years.join("、")} 每個年份單獨訓練一份模型（每年 ${s.replication.members_per_year} 個成員），各年份的估計並排放在「研究紀錄」該次執行的 Replication 區段；只並排數字，不做同號就算重現的判斷。` }));
+    return out;
+  }
+
+  // Policy values: one row per policy. The cross-season columns (choose on one season, judge on the other) come first: the same-data numbers choose and judge on the same data and are optimistic.
+  function policyTable(policies) {
+    const isCross = p => String(p.kind).startsWith("cross");
+    const names = [...new Set(policies.map(p => p.policy))];
+    const head = ["政策", "換年份交叉：每打席少失分", "換年份交叉：區間", "同資料：每打席少失分（含挑選的樂觀偏差）", "同資料：區間", "每隊每季少失分（換年份交叉）"];
+    const body = names.map(name => {
+      const c = policies.find(p => p.policy === name && isCross(p)), d = policies.find(p => p.policy === name && !isCross(p));
+      return el("tr", { "data-policy": name }, el("td", { text: name }), el("td", { text: c ? num(c.saving_pa) : "—" }), el("td", { text: c ? interval(c.lo, c.hi) : "—" }),
+        el("td", { text: d ? num(d.saving_pa) : "—" }), el("td", { text: d ? interval(d.lo, d.hi) : "—" }), el("td", { text: c ? num(c.saving_per_team_season, 1) : "—" }));
+    });
+    return el("table", { class: "rp-table", id: "rp-policy-table" }, el("thead", {}, el("tr", {}, ...head.map(h => el("th", { text: h })))), el("tbody", {}, ...body));
+  }
+
+  // The per-pitcher engine: what share of the plate appearances it covers, and the savings added up by plate appearances (no interval).
+  function pitcherEngine(pe) {
+    const out = [];
+    if (pe.info && pe.info.enabled === false) return [el("div", { class: "hint", "data-section": "pitcher-engine", text: `逐投手引擎沒有算：${pe.info.reason}` })];
+    if (!pe.summary || !pe.summary.length) return out;
+    const c = pe.coverage;
+    if (c) out.push(el("div", { class: "hint", "data-section": "pitcher-engine", text: `逐投手引擎（每位投手用自己的投手×球種效應，事後經驗貝氏收縮；當天狀態＝平常，打者＝聯盟平均）：算了 ${c.pitchers_used} / ${c.pitchers_total} 位投手（至少 ${c.min_pa} 個打席），涵蓋 ${num(c.pa_share * 100, 1)}% 的打席。` }));
+    out.push(el("table", { class: "rp-table", id: "rp-pitcher-table" }, el("thead", {}, el("tr", {}, ...["政策", "每打席少失分（按打席加權）", "投手之間 10%／中位／90%", "每隊每季少失分", "聯盟平均引擎的每打席少失分"].map(h => el("th", { text: h })))),
+      el("tbody", {}, ...pe.summary.map(r => el("tr", {}, el("td", { text: r.policy }), el("td", { text: num(r.saving_pa) }), el("td", { text: `${num(r.saving_p10)} ／ ${num(r.saving_median)} ／ ${num(r.saving_p90)}` }),
+        el("td", { text: num(r.saving_per_team_season, 1) }), el("td", { text: num(r.league_saving_pa) }))))));
     return out;
   }
 

@@ -147,6 +147,22 @@ def test_bootstrap_members_start_from_the_full_fit_and_differ_a_little(w4):
     assert 1e-5 < spread < 0.3
 
 
+def test_every_bootstrap_member_runs_until_it_has_converged_and_says_so(w4):
+    """A member starts from the full fit and runs by the same criterion and the same cap as the full fit (no fixed 40 sweeps): the sweeps of the main fit and of every member, and whether each
+    converged, are in the model's info."""
+
+    model = _fit(w4, "grouped", control_pitcher="effect", bagging_reps=3)
+    info = model.info
+    assert info["main_fit"]["sweeps"] >= 1 and not info["main_fit"]["hit_cap"] and info["n_iter"] == info["main_fit"]["sweeps"]
+    fits = info["member_fits"]
+    assert [m["member"] for m in fits] == [1, 2, 3] and all(m["converged"] and m["sweeps"] >= 1 and m["seconds"] >= 0 for m in fits) and not info["hit_cap"]
+    one = _fit(w4, "grouped", control_pitcher="effect")                                          # one member: the main fit is the member
+    assert one.info["main_fit"]["sweeps"] == one.info["member_fits"][0]["sweeps"] and len(one.info["member_fits"]) == 1
+    capped = _fit(w4, "grouped", control_pitcher="effect", bagging_reps=2, max_iter=2)           # a cap of two sweeps: nothing converges, and every fit says so
+    assert capped.info["hit_cap"] and capped.info["main_fit"]["hit_cap"] and not any(m["converged"] for m in capped.info["member_fits"])
+    assert max(m["sweeps"] for m in capped.info["member_fits"]) <= 2
+
+
 def test_the_descriptor_controls_and_the_location_still_use_the_original_solver():
     from treepolo_mlb_data.research.synthetic import simulate_players
 

@@ -68,7 +68,7 @@ def controls_active(settings: dict[str, Any]) -> bool:
 
 class OutcomeModelTrainMethod(ResearchMethod):
     kind = "outcome_model_train"
-    version = 1
+    version = 2     # 2: bootstrap members run until they converge (the sweeps and the convergence of every fit are in the Members section)
     label_zh = "訓練結果模型（可消除偏差、可選多種模型）"
     label_en = "Train an outcome model (bias controls, several models)"
     requires_scope = True
@@ -134,7 +134,7 @@ class OutcomeModelTrainMethod(ResearchMethod):
         # cold_only with an empty cold_by is allowed: the model is trained once on every year in scope and no unseen-player folds are run (they belong to the comparison mode and the setting search)
 
     # ------------------------------------------------------------------------------------------------ run
-    LISTS = ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls", "crosscheck")
+    LISTS = ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls", "crosscheck", "members")
 
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         years = scope_years(ctx.scope)
@@ -190,13 +190,17 @@ class OutcomeModelTrainMethod(ResearchMethod):
             make_section("Effect gain 球員描述或效應的預測增益（對「全部控制都關掉」的對照；沒見過的球員、沒用過的年份；正值＝比較準）", ("group", "mode", "comparison", "delta_logloss", "lo", "hi", "se", "n"),
                          out["gain"], ("group", "mode", "comparison"), "duckdb", DIGITS),
         )
+        if out["members"]:
+            sections = sections + (make_section("Members 重抽樣成員與主擬合的收斂（每個擬合用的掃描次數與是否收斂；member 0＝用全部資料的主擬合，各成員從它出發，用同一個收斂標準跑到收斂）",
+                                                ("group", "role", "member", "kind", "sweeps", "converged", "seconds"), out["members"], ("group", "role", "member"), "duckdb", DIGITS),)
         if out["crosscheck"]:
             sections = sections + (make_section("Cross-check 交叉驗證（pyfixest 線性機率模型：連投、上一球對各結果類別的機率變化；固定效應照這次的控制；標準誤按比賽分群；只是報告，不給決策引擎用）",
                                                 crosscheck.COLUMNS, out["crosscheck"], ("group", "class", "term"), "duckdb", DIGITS),)
         notes = crosscheck.identification_notes({k: config[k] for k in ctl.CONTROL_NAMES})
         extras = {"scope": ctx.scope, "model": config["model"], "split": config["split"], "classes": classes, "train_years": self._years(config, years)[0], "test_years": self._years(config, years)[1],
                   "controls": {k: config[k] for k in ctl.CONTROL_NAMES}, "effect_penalty_mode": config["effect_penalty_mode"],
-                  "hit_cap": [{"group": r["group"], "role": r["role"], "mode": r["mode"]} for r in out["fit"] if r.get("hit_cap")],        # fits that stopped at max_iter: not converged
+                  "hit_cap": [{"group": r["group"], "role": r["role"], "mode": r["mode"]} for r in out["fit"] if r.get("hit_cap")]
+                  + [{"group": r["group"], "role": r["role"], "mode": f"member {r['member']}"} for r in out["members"] if not r["converged"]],        # fits that stopped at max_iter: not converged
                   "comparisons": {k: v for k, v in comparisons.items() if v}, "xgboost_available": gbm.xgboost_available(),
                   "notes": notes, "cross_check": out["crosscheck_info"] or {"available": False, "reason": "not requested / 沒有要求" if not config["cross_check"] else "no controls to check / 沒有控制可檢查"}}
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
@@ -230,6 +234,16 @@ class OutcomeModelTrainMethod(ResearchMethod):
         main = fit_model(ctr, settings)
         active = controls_active(settings) or main.profile is not None
         base = fit_model(ctr, baseline_settings(settings)) if (config["compare_baseline"] and active) else None
+        for role, model in (("model", main), ("baseline", base)):                      # how every fit that the intervals come from ended: sweeps used and whether it converged
+            if model is None:
+                continue
+            main_fit, member_fits = model.info.get("main_fit"), model.info.get("member_fits") or []
+            if main_fit:
+                out["members"].append({"group": group, "role": role, "member": 0, "kind": "main fit (all the data)", "sweeps": main_fit["sweeps"], "converged": int(not main_fit["hit_cap"]),
+                                       "seconds": main_fit["seconds"]})
+            if main_fit is None or len(member_fits) > 1:
+                out["members"] += [{"group": group, "role": role, "member": m["member"], "kind": "bootstrap member (by game)" if len(member_fits) > 1 else "fit", "sweeps": m["sweeps"],
+                                    "converged": int(m["converged"]), "seconds": m["seconds"]} for m in member_fits]
         sub_tr, ytr = main._encode(ctr, main.settings, fixed_classes=True)
         prior_tr = np.bincount(ytr, minlength=K) / max(len(ytr), 1)
         out["controls"] += [{"group": group, **r} for r in ctl.describe_controls(settings, model=kind, backend=settings["backend"])]

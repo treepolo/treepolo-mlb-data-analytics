@@ -239,11 +239,16 @@ class OutcomeModel:
     def _summarize(self, infos: list[dict[str, Any]], s: Mapping[str, Any]) -> dict[str, Any]:
         estimated = infos[0].get("estimated_penalties") if infos else None
         by_class = {g: [float(x) for x in np.atleast_1d(v)] for g, v in (estimated or {}).items()}
+        main = infos[0].get("main") if infos else None                                        # the fit on all the data that the bootstrap members start from (grouped logistic only)
+        member_fits = [{"member": i + 1, "sweeps": float(info.get("n_iter", np.nan)), "converged": not bool(info.get("hit_cap")),
+                        "seconds": float(info.get("own_seconds", info.get("seconds", 0.0)))} for i, info in enumerate(infos)]
         return {"model": self.name, "backend": s["backend"] if self.name == "gbm" else "", "members": len(infos), "effects": {g: len(self.indexes[g]) for g in self.groups},
                 "within": [g for g, w in self.groups.items() if w], "penalties_estimated": bool(estimated), "pitch_info": float(self.pitch_info),
                 "penalties_by_class": by_class, "classes_order": list(self.classes),
                 "penalties": {g: float(np.median(v)) for g, v in by_class.items()} if estimated else {g: (ctl.WITHIN_PENALTY if w else float(s[f"effect_penalty_{g}"])) for g, w in self.groups.items()},
-                "n_iter": float(np.mean([i.get("n_iter", np.nan) for i in infos])), "hit_cap": any(bool(i.get("hit_cap")) for i in infos), "seconds": float(sum(i.get("seconds", 0.0) for i in infos)),
+                "n_iter": float(main["sweeps"]) if main else float(np.mean([i.get("n_iter", np.nan) for i in infos])),
+                "hit_cap": bool(main and main["hit_cap"]) or any(bool(i.get("hit_cap")) for i in infos), "seconds": float(sum(i.get("seconds", 0.0) for i in infos)),
+                "main_fit": main, "member_fits": member_fits,
                 "trace": infos[0].get("trace", []), "descriptors": self.profile is not None, "location": self.pool is not None, "classes": list(self.classes)}
 
     # ------------------------------------------------------------------------------------------------ prediction

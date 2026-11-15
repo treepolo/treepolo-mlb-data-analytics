@@ -89,7 +89,8 @@ def test_pipeline_runs_every_step_and_summarises(finished):
     assert job["state"] == "done" and job["error"] is None and job["query_run_id"]
     assert [s["id"] for s in job["steps"]] == ["search", "model", "anchor", "policy", "query"] and all(s["status"] == "done" and s["run_id"] for s in job["steps"])
     g = job["summary"]["groups"]["RvR"]
-    assert set(g) == {"r1", "support", "policies", "effect_gains", "actions", "comparisons"} and g["support"]["states"] > 0 and g["support"]["supported_states"] + g["support"]["no_support_states"] == g["support"]["states"] and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
+    assert set(g) == {"r1", "support", "policies", "effect_gains", "actions", "comparisons", "pitcher_engine"} and g["support"]["states"] > 0 and g["support"]["supported_states"] + g["support"]["no_support_states"] == g["support"]["states"] and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
+    assert {n["control"] for n in job["summary"]["policy_notes"]} >= {"same_data", "upper_bound"} and "info" in g["pitcher_engine"]            # the notes the page shows under the policy table
     assert set(g["r1"]) == {"median_abs_diff", "max_abs_diff", "start_diff"}                  # numbers only: no pass / fail
     assert g["effect_gains"] == [] and len(g["actions"]) >= 2                                # no controls were chosen, so there is nothing to compare with the no-controls baseline
     assert job["summary"]["model"] == {"kind": "gbm", "controls": {}, "notes": []}

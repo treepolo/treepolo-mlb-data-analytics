@@ -4,8 +4,8 @@ Two ways to solve the same model:
 
 * ``grouped`` (the default whenever it applies): ``fastglm.GroupedSoftmax``. Identical situations are merged, each effect group is solved unit by unit with exact Newton steps
   (the 'within' effects are fixed effects, handled the way ``fixest`` handles them: every unit is compared with itself), the shrinkage is estimated from the data while the sweeps run,
-  and the work goes to the GPU when there is one (PyTorch). The bagged members that give the intervals are game-level bootstraps that start from the solution of the full fit and only
-  re-solve a few sweeps; a fit that follows another (the unseen-player folds) starts from it and keeps its shrinkage. Needs PyTorch.
+  and the work goes to the GPU when there is one (PyTorch). The bagged members that give the intervals are game-level bootstraps that start from the solution of the full fit and run until
+  they have converged by the same criterion as the full fit (the sweeps of each member and whether it converged are in ``info["member_fits"]``); a fit that follows another (the unseen-player folds) starts from it and keeps its shrinkage. Needs PyTorch.
 * ``lbfgs``: the original solver, everything in one L-BFGS on a sparse design matrix (``softmax.fit_softmax``). It is the only one that can do the descriptor controls
   (control_pitcher / control_batter = descriptors) and the pitch location, and it is what the grouped solver is checked against in the tests.
 """
@@ -25,8 +25,6 @@ from .base import OutcomeModel
 from .shrinkage import estimated_penalties_for, fit_with_estimated_penalties
 from .softmax import fit_softmax, softmax_rows
 
-
-MEMBER_SWEEPS = 40          # sweeps a bootstrap member may use to re-solve from the solution of the full fit
 
 
 class LogisticModel(OutcomeModel):
@@ -181,7 +179,8 @@ class LogisticModel(OutcomeModel):
                     solver.lam[g] = solver.torch.full((K,), float(s[f"effect_penalty_{g}"]), dtype=solver.torch.float64, device=solver.dev)
         cap = int(s["max_iter"])
         follow = start is not None
-        main = solver.fit(max_sweeps=cap, tol=1e-5 if follow else 1e-6, estimate=estimate, progress=(lambda i, c: progress("outcome_model", None, f"sweep {i}") if progress else None))
+        tol = 1e-5 if follow else 1e-6                      # the convergence criterion of the main fit, which every bootstrap member uses as well
+        main = solver.fit(max_sweeps=cap, tol=tol, estimate=estimate, progress=(lambda i, c: progress("outcome_model", None, f"sweep {i}") if progress else None))
         solver.center()
         members, infos = [], []
         reps = int(s["bagging_reps"])
@@ -194,9 +193,11 @@ class LogisticModel(OutcomeModel):
             parts = [e["dense"]] + [e["effects"][g] for g in self.groups]
             return {"coef": np.concatenate(parts, axis=0).astype(np.float32), "intercept": e["intercept"].astype(np.float64), "n_dense": int(dz.SIT_WIDTH)}
 
+        main_fit = {"sweeps": int(main["sweeps"]), "hit_cap": bool(main["hit_cap"]), "seconds": float(main["seconds"])}
         if reps <= 1:
             members.append(member_of(exp))
-            infos.append({"n_iter": main["sweeps"], "hit_cap": main["hit_cap"], "seconds": time.monotonic() - started, "trace": main["trace"], "estimated_penalties": est})
+            infos.append({"n_iter": main["sweeps"], "hit_cap": main["hit_cap"], "seconds": time.monotonic() - started, "own_seconds": float(main["seconds"]), "trace": main["trace"],
+                          "estimated_penalties": est, "main": main_fit})
         else:
             rng = np.random.default_rng(int(s["seed"]))
             for r in range(reps):
@@ -209,11 +210,11 @@ class LogisticModel(OutcomeModel):
                 solver.set_state(base_state)
                 if not has_groups:
                     solver.load_numpy(exp["dense"], exp["intercept"], {})
-                run = solver.fit(max_sweeps=min(cap, MEMBER_SWEEPS), tol=1e-4, estimate=False)          # a bootstrap member re-solves from the full fit with a fixed budget of sweeps
+                run = solver.fit(max_sweeps=cap, tol=tol, estimate=False)          # a bootstrap member starts from the full fit and runs until it has converged by the same criterion as the full fit
                 solver.center()
                 members.append(member_of(solver.export()))
-                infos.append({"n_iter": main["sweeps"] if r == 0 else run["sweeps"], "hit_cap": bool(main["hit_cap"]) if r == 0 else False, "seconds": run["seconds"] + (main["seconds"] if r == 0 else 0.0), "trace": main["trace"] if r == 0 else [],
-                              "estimated_penalties": est if r == 0 else None})
+                infos.append({"n_iter": run["sweeps"], "hit_cap": bool(run["hit_cap"]), "seconds": run["seconds"] + (main["seconds"] if r == 0 else 0.0), "own_seconds": float(run["seconds"]),
+                              "trace": main["trace"] if r == 0 else [], "estimated_penalties": est if r == 0 else None, "main": main_fit if r == 0 else None})
                 if progress:
                     progress("outcome_model", (r + 1) / reps, f"member {r + 1}/{reps}")
         return members, infos

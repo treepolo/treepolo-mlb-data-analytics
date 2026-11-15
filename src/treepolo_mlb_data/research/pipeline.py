@@ -125,7 +125,7 @@ def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, An
     elif step == "anchor":
         cfg = {"scope": scope, "groups": settings["groups"], "re_scope": scope, "max_rows": 3_500_000}       # the anchor has no random part
     elif step == "policy":
-        members = 1 if one_fit_models(settings) else t["cross_members"]            # the model of every season is trained once
+        members = max(int(settings.get("interval_reps", 1)), 1) if one_fit_models(settings) else t["cross_members"]      # the model of every season gets as many bootstrap members as the model itself
         cfg = {**common, "re_scope": scope, "model_run_id": context["model_run_id"], "cross_members": members, "replication_members": min(3, members), "cross_eval": True,
                "anchor_run_id": context.get("anchor_run_id", 0), "max_rows": 3_500_000}
     else:
@@ -319,7 +319,11 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
             "effect_gains": [{"mode": r["mode"], "comparison": r["comparison"], "value": r["delta_logloss"], "lo": r["lo"], "hi": r["hi"], "n": r["n"]} for r in gains],
             "actions": [{"action": m["action"], "advantage": m["advantage"], "adv_lo": m["adv_lo"], "adv_hi": m["adv_hi"], "marginal": m["marginal"], "supported_share": m["supported_share"]} for m in marg],
             "comparisons": {section: per_group[g] for section, per_group in (policy_extras.get("comparisons") or {}).items() if g in per_group},
+            "pitcher_engine": {"summary": [r for r in rows(context.get("policy_run_id"), "Pitcher engine 逐投手引擎彙總") if r["group"] == g],
+                               "coverage": next((r for r in rows(context.get("policy_run_id"), "Pitcher engine coverage") if r["group"] == g), None),
+                               "info": ((policy_extras.get("pitcher_engine") or {}).get("groups") or {}).get(g)},
         }
+    out["policy_notes"] = policy_extras.get("notes") or []
     return out
 
 

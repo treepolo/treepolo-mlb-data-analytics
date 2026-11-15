@@ -68,13 +68,15 @@ def outcome_tensor(members: Sequence[gbm.FittedGbm], classes: Sequence[str], sha
     return out
 
 
-def model_tensor(model, shape: pc.Shape, group: str = "RvR", effects: str = "population") -> np.ndarray:
+def model_tensor(model, shape: pc.Shape, group: str = "RvR", effects: str = "population", extra: Mapping[str, np.ndarray] | None = None) -> np.ndarray:
     """[M, S, A, C] outcome probabilities of every bagged member of an ``OutcomeModel`` for every situation, in the order of ``policy_core.OUTCOMES``.
 
     ``effects="population"`` asks for the league-average player (the situation table); a model that was trained with ``control_location = include_and_average`` averages over the
-    historical locations itself."""
+    historical locations itself. ``extra``: more columns for the grid rows (``effects="specific"``: the pitcher and the batter the situations are asked for)."""
 
     cols = cell_columns(shape, group)
+    if extra:
+        cols = {**cols, **{k: np.asarray(v) for k, v in extra.items()}}
     proba = model.predict_members(cols, effects=effects)                        # [M, S*A, classes of the model]
     col_of = {name: i for i, name in enumerate(model.classes)}
     out = np.zeros((proba.shape[0], shape.size, shape.n_actions, pc.C))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import zlib
 from typing import Any
 
@@ -36,6 +37,7 @@ pc = _Lazy(".policy_core")
 pb = _Lazy(".policy_build")
 lc = _Lazy(".league_core")
 gbm = _Lazy(".gbm")
+pe = _Lazy(".pitcher_engine")
 POLICY_NAMES = ("observed", "const_FF", "greedy1", "dp_unrestricted", "dp_trust")
 PA_PER_TEAM_SEASON = 6200
 
@@ -108,7 +110,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 6     # 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 7     # 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -134,6 +136,11 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("min_count", "int", default=300, minimum=1, label_zh="支持規則：最小球數", label_en="Support rule: minimum pitches",
                     help_zh="只依「球數 × 球種」判斷：這個球種在該球數至少要投這麼多球，才算被支持；同一球數的所有狀態共用。",
                     help_en="Judged by count and pitch type only: the type must have been thrown at least this many times in the count; every state of the count shares it."),
+        ConfigField("pitcher_engine", "bool", default=True, label_zh="逐投手引擎（每位投手用自己的投手×球種效應）", label_en="Per-pitcher engine (every pitcher with his own pitcher x pitch-type effects)",
+                    help_zh="模型要有投手×球種效應（control_pitcher_pitch 開）。效應先做事後經驗貝氏收縮（資料少的往平均拉），當天狀態設為平常、打者是聯盟平均打者；每位投手各解一次引擎，按出場打席數加權加總。",
+                    help_en="The model needs pitcher x pitch-type effects. The effects are shrunk after the fit by empirical Bayes, the day is the usual one and the batter the league average; the engine is solved once per pitcher and added up weighted by plate appearances."),
+        ConfigField("pitcher_min_pa", "int", default=200, minimum=1, label_zh="逐投手引擎：投手最少出場打席數（資料量門檻）", label_en="Per-pitcher engine: minimum plate appearances of a pitcher",
+                    help_zh="只算打席數達到門檻的投手；結果會報告這些投手涵蓋了多少比例的打席。", help_en="Only pitchers with at least this many plate appearances; the result says what share of all plate appearances they cover."),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
                     help_zh="用該紀錄的 J_BIP 取代描述性估計，並做錨點一致性檢查（計畫 3.6）。", help_en="Uses its J_BIP instead of the descriptive estimate and runs the anchor consistency check."),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
@@ -197,6 +204,8 @@ class PitchPolicyMethod(ResearchMethod):
         shape = pc.Shape()
         r1_rows, value_rows, risk_rows, marg_rows, support_rows, artifacts = [], [], [], [], [], []
         direction_rows, anchor_rows, anchor_cell_rows, replication_rows, coverage_rows = [], [], [], [], []
+        pitcher_summary, pitcher_detail, pitcher_cov, pitcher_info = [], [], [], {}
+        progress = ctx.progress
         comparisons: dict[str, dict[str, Any]] = {"marginal": {}, "direction": {}, "anchor": {}}
         for group in config["groups"]:
             sel = np.nonzero(cols_all["group"] == group)[0]
@@ -204,6 +213,9 @@ class PitchPolicyMethod(ResearchMethod):
                 raise ConfigError(f"Group {group} has no rows / 分組 {group} 沒有資料")
             cols = lc.take(cols_all, sel)
             env = build_environment(cols, re.re_by_state, shape)
+            if progress:
+                progress("pitch_policy", None, f"group {group}")
+            year_models = {"need": max(int(config["cross_members"]) if config["cross_eval"] else 1, int(config["replication_members"]), 1)}      # the model of each season alone, trained once for both uses
             anchor = self._load_anchor(ctx, config, group)
             if anchor is not None:
                 env.jbip = np.where(np.isfinite(anchor["jbip"]) & (anchor["jbip"] != 0), anchor["jbip"], env.jbip)
@@ -216,9 +228,9 @@ class PitchPolicyMethod(ResearchMethod):
             kinds = tuple(k for k in pc.POLICIES if k in config["policies"])
             an = pb.analyze(dyns, env, shape, kinds=kinds, trust=config["trust_region"], delta=config["marginal_shift"])
             r1_rows += self._r1(group, cols, an, env, shape)
-            value_rows += self._values(group, an, config)
             if config["cross_eval"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
-                value_rows += self._cross(group, cols, model, env, shape, obs, support, n, config, kinds)
+                value_rows += self._cross(group, cols, model, env, shape, obs, support, n, config, kinds, year_models)           # the cross-season rows come first
+            value_rows += self._values(group, an, config)
             risk_rows += self._risk(group, dyns, env, shape, config)
             m_rows, s_rows = self._marginals(group, an, config)
             marg_rows += m_rows; support_rows += s_rows
@@ -231,16 +243,31 @@ class PitchPolicyMethod(ResearchMethod):
                 anchor_rows += summary_rows; anchor_cell_rows += cell_rows
                 comparisons["anchor"][group] = pc.chance_row(sum(r["cells"] for r in summary_rows), 0.95, sum(r["outside_anchor_interval"] for r in summary_rows), "outside_anchor_interval")
             if config["replication_members"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
-                replication_rows += self._replicate(group, cols, model, env, shape, obs, support, n, config)
+                replication_rows += self._replicate(group, cols, model, env, shape, obs, support, n, config, year_models)
+            if config["pitcher_engine"]:
+                why = pe.unavailable(model)
+                if why:
+                    pitcher_info[group] = {"enabled": False, "reason": why}
+                else:
+                    sub_g, _ = model._encode(cols, model.settings, fixed_classes=True)
+                    league = {k: float(np.mean(an.saving_pa[k])) for k in kinds}
+                    s_rows, d_rows, cov = pe.run(group, sub_g, model, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]),
+                                                 pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league,
+                                                 progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: pitcher engine {i}/{total}")) if progress else None)
+                    pitcher_summary += s_rows; pitcher_detail += d_rows
+                    pitcher_cov.append({**cov, "tau_by_class": json.dumps(cov["tau_by_class"], ensure_ascii=False)})
+                    pitcher_info[group] = {"enabled": True, "pitchers_used": cov["pitchers_used"], "pitchers_total": cov["pitchers_total"], "pa_share": cov["pa_share"]}
+                    del sub_g
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config, env))
         model_extras = ctx.store.load_result(int(config["model_run_id"]))["extras"]
         extras = {"scope": ctx.scope, "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "model_run_id": config["model_run_id"], "model": model_extras.get("model"),
                   "model_controls": model_extras.get("controls"), "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)",
-                  "mode": f"M0 league average player of the {model_extras.get('model')} model", "comparisons": {k: v for k, v in comparisons.items() if v}}
+                  "mode": f"M0 league average player of the {model_extras.get('model')} model", "comparisons": {k: v for k, v in comparisons.items() if v},
+                  "notes": policy_notes(config, bool(pitcher_summary)), "pitcher_engine": {"enabled": bool(config["pitcher_engine"]), "min_pa": int(config["pitcher_min_pa"]), "groups": pitcher_info}}
         sections = (
             make_section("R1 對照（觀察到的配球重現得分期望值）", ("group", "item", "n_states", "median_abs_diff", "max_abs_diff", "value"), r1_rows, ("group", "item"), "duckdb", DIGITS),
-            make_section("Policy value 政策價值（每打席）", ("group", "policy", "kind", "start_value", "saving_pa", "lo", "hi", "saving_per_pitch", "saving_per_team_season", "hr_probability",
+            make_section("Policy value 政策價值（每打席；換年份交叉在前，同資料在後：同資料的數字含挑選的樂觀偏差）", ("group", "policy", "kind", "start_value", "saving_pa", "lo", "hi", "saving_per_pitch", "saving_per_team_season", "hr_probability",
                                                               "pitches_per_pa"), value_rows, ("group", "policy", "kind"), "duckdb", DIGITS),
             make_section("Risk frontier 取捨前緣（λ 對全壘打）", ("group", "lambda", "expected_runs", "lo", "hi", "hr_probability", "hr_lo", "hr_hi", "saving_vs_observed"), risk_rows,
                          ("group", "lambda"), "duckdb", DIGITS),
@@ -264,6 +291,18 @@ class PitchPolicyMethod(ResearchMethod):
                                    make_section("Anchor cells 錨點逐格對照（全部列出）", ("group", "design", "phase", "action", "class", "model_effect", "anchor_effect", "anchor_lo", "anchor_hi",
                                                                                      "difference", "same_sign"), anchor_cell_rows, ("group", "design", "phase", "action", "class"), "duckdb", DIGITS))
             extras["anchor_run_id"] = config["anchor_run_id"]
+        if pitcher_summary:
+            kinds_p = [r["policy"] for r in pitcher_summary if r["group"] == pitcher_summary[0]["group"]]
+            sections = sections + (
+                make_section("Pitcher engine 逐投手引擎彙總（每位投手用自己的投手×球種效應，效應已事後做經驗貝氏收縮；當天狀態＝平常，打者＝聯盟平均；按出場打席加權；沒有區間）",
+                             ("group", "policy", "pitchers", "pa_share", "saving_pa", "saving_p10", "saving_median", "saving_p90", "saving_per_team_season", "start_value", "hr_probability",
+                              "league_saving_pa"), pitcher_summary, ("group", "policy"), "duckdb", DIGITS),
+                make_section("Pitcher engine coverage 逐投手引擎涵蓋（打席數門檻、涵蓋的投手與打席比例；tau＝各結果類別的真實效應標準差估計）",
+                             ("group", "min_pa", "pitchers_total", "pitchers_used", "pa_total", "pa_used", "pa_share", "pitch_share", "units", "units_pulled_over_half", "tau_by_class"),
+                             pitcher_cov, ("group",), "duckdb", DIGITS),
+                make_section("Pitcher engine detail 逐投手引擎明細（每位投手一列；saving＝比實際配球每打席少失分）",
+                             ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
+                             pitcher_detail, ("group", "pitcher"), "duckdb", DIGITS))
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
     # ------------------------------------------------------------------------------------------------ sections
@@ -308,24 +347,52 @@ class PitchPolicyMethod(ResearchMethod):
                          "pitches_per_pa": an.pitches_per_pa})
         return rows
 
+    def _year_model(self, cache, group, cols, model, config, year, members):
+        """The model trained on one season alone, with ``members`` bagged members. It is trained once per season with as many members as either use needs (``cache['need']``) and shared
+        between the cross-season evaluation and the per-year replication."""
+
+        key = (group, int(year))
+        have = cache.get(key)
+        need = max(int(cache.get("need", members)), int(members))
+        if have is None or len(have.members) < need:
+            sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == year)[0])
+            have = self._train_like(model, sub, need, config["seed"] + int(year))
+            cache[key] = have
+        return self._prefix(have, int(members))
+
     @staticmethod
-    def _cross(group, cols, model, env, shape, obs, support, n, config, kinds):
-        """Winner's-curse-free saving (plan 4.3): choose the policy on the dynamics fitted to one season, judge it on the other, both directions. The same model with the same controls is
-        trained on each season alone."""
+    def _prefix(model, k: int):
+        """The same model with only its first ``k`` bagged members."""
+
+        if len(model.members) <= k:
+            return model
+        import copy
+
+        view = copy.copy(model)
+        view.members = list(model.members[:k])
+        return view
+
+    def _cross(self, group, cols, model, env, shape, obs, support, n, config, kinds, cache):
+        """Winner's-curse-free saving (plan 4.3) with intervals: every bagged member of the model of the first season chooses the policy and the same-numbered member of the model of the last
+        season judges it, and the other way round (the mean of the two directions is that member's saving); the interval is the spread of the members. One member gives no interval."""
 
         years = sorted(int(y) for y in np.unique(cols["game_year"]))
+        k = max(int(config["cross_members"]), 1)
         sets = []
         for y in (years[0], years[-1]):
-            sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            alone = PitchPolicyMethod._train_like(model, sub, max(int(config["cross_members"]), 1), config["seed"] + y)
+            alone = self._year_model(cache, group, cols, model, config, y, k)
             sets.append(pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n))
         rows = []
         for kind in kinds:
             if kind in ("observed",):
                 continue
-            v = pb.cross_saving(sets[0], sets[1], env, shape, kind, config["trust_region"])
-            rows.append({"group": group, "policy": kind, "kind": f"cross {years[0]}/{years[-1]}", "start_value": float("nan"), "saving_pa": v, "lo": float("nan"), "hi": float("nan"),
-                         "saving_per_pitch": float("nan"), "saving_per_team_season": v * PA_PER_TEAM_SEASON, "hr_probability": float("nan"), "pitches_per_pa": float("nan")})
+            per_member = []
+            for m in range(k):
+                guard_checkpoint("cross-season evaluation")
+                per_member.append(pb.cross_saving([sets[0][m]], [sets[1][m]], env, shape, kind, config["trust_region"]))
+            mean, lo, hi = pc.member_interval(np.array(per_member)[:, None], config["confidence"])
+            rows.append({"group": group, "policy": kind, "kind": f"cross {years[0]}/{years[-1]}", "start_value": float("nan"), "saving_pa": float(mean[0]), "lo": float(lo[0]), "hi": float(hi[0]),
+                         "saving_per_pitch": float("nan"), "saving_per_team_season": float(mean[0]) * PA_PER_TEAM_SEASON, "hr_probability": float("nan"), "pitches_per_pa": float("nan")})
         return rows
 
     @staticmethod
@@ -439,15 +506,14 @@ class PitchPolicyMethod(ResearchMethod):
 
         return new_model(model.name).fit(rows, None, {**model.settings, "bagging_reps": int(members), "seed": int(seed)}, None, classes=model.classes, reference=model)
 
-    def _replicate(self, group, cols, model, env, shape, obs, support, n, config):
+    def _replicate(self, group, cols, model, env, shape, obs, support, n, config, cache):
         """Per year: an outcome model trained on that year alone (``replication_members`` bagged members), the same marginal and direction numbers from it, side by side.
         The usage shares and the support rule come from all the years (what pitchers did), only the outcome model is per year. Numbers only: nothing is judged to have replicated."""
 
         years = sorted(int(y) for y in np.unique(cols["game_year"]))
         out = []
         for y in years:
-            sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            alone = self._train_like(model, sub, max(int(config["replication_members"]), 1), config["seed"] + 1000 + y)
+            alone = self._year_model(cache, group, cols, model, config, y, max(int(config["replication_members"]), 1))
             dyns = pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n)
             an = pb.analyze(dyns, env, shape, kinds=("observed",), trust=config["trust_region"], delta=config["marginal_shift"])
             m_rows, _ = self._marginals(group, an, config)
@@ -463,6 +529,30 @@ class PitchPolicyMethod(ResearchMethod):
     def _table_artifact(group, an, tensor, config, env):
         return ArtifactData(f"situation_table_{group}", f"Situation table of group {group}: arrays over [state, action(, outcome)] packed as npz/zlib/base64 (state layout in extras)",
                             ("part", "payload"), tuple(pack_arrays(situation_arrays(group, an, tensor, env, config))))
+
+
+def guard_checkpoint(label: str) -> None:
+    from .resource_guard import guard
+
+    guard.checkpoint(label)
+
+
+NOTE_SAME_DATA = {"zh": "「同資料」那欄的數字，政策是在同一份資料上挑出來、又在同一份資料上評價，含挑選的樂觀偏差（贏家的詛咒）；「換年份交叉」是一年挑、另一年評價（每個重抽樣成員各做一次），沒有這個偏差，所以放在前面。",
+                  "en": "The 'same data' numbers choose a policy on the data and judge it on the same data, so they contain the optimism of the selection (winner's curse); the cross-season numbers choose on one "
+                        "season and judge on the other (once per bagged member), which does not, and come first."}
+
+
+def policy_notes(config, with_pitcher_engine: bool) -> list[dict[str, str]]:
+    from .pitcher_engine import ASSUMPTION_EN, ASSUMPTION_ZH
+
+    notes = [{"control": "same_data", **NOTE_SAME_DATA}, {"control": "upper_bound", "zh": ASSUMPTION_ZH, "en": ASSUMPTION_EN}]
+    if with_pitcher_engine:
+        notes.append({"control": "pitcher_engine", "zh": "逐投手引擎：每位投手用自己的投手×球種效應（先事後經驗貝氏收縮，資料少的往平均拉），當天狀態設為平常、打者是聯盟平均打者；觀察到的配球與支持規則仍是聯盟的；"
+                                                         f"只算至少 {int(config['pitcher_min_pa'])} 個打席的投手，每位各解一次引擎，按出場打席數加權；沒有區間。",
+                      "en": "Per-pitcher engine: every pitcher with his own pitcher x pitch-type effects (shrunk after the fit by empirical Bayes), the usual day and the league-average batter; the observed mix "
+                            f"and the support rule are the league's; only pitchers with at least {int(config['pitcher_min_pa'])} plate appearances, the engine solved once per pitcher and added up "
+                            "weighted by plate appearances; no interval."})
+    return notes
 
 
 def situation_arrays(group, an, tensor, env, config) -> dict:

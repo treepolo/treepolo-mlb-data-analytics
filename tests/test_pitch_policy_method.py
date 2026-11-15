@@ -95,6 +95,75 @@ def test_run_reproduces_run_expectancy_and_finds_the_slider(service, result, w1)
     assert all("detected_share" not in r for r in marg.values())                  # numbers and intervals only: no detection share
 
 
+def test_the_cross_season_rows_come_first_carry_intervals_and_the_notes_are_there(service, result):
+    """The cross-season numbers (every bagged member chooses on one season and is judged on the other) are listed before the same-data numbers, which contain the optimism of the selection."""
+
+    rows = [r for r in section(service, result, "Policy value") if r["group"] == "RvR"]
+    kinds = [r["kind"] for r in rows]
+    first_same = next(i for i, k in enumerate(kinds) if k == "same data")
+    assert first_same > 0 and all(k.startswith("cross") for k in kinds[:first_same]) and all(k == "same data" for k in kinds[first_same:])
+    cross = rows[:first_same]
+    assert all(r["lo"] is not None and r["hi"] is not None and r["lo"] <= r["saving_pa"] <= r["hi"] for r in cross)                 # two members: an interval
+    res = service.store.load_result(result["id"])
+    assert "同資料" in next(s["title"] for s in res["sections"] if s["title"].startswith("Policy value"))
+    notes = {n["control"]: n for n in res["extras"]["notes"]}
+    assert {"same_data", "upper_bound"} <= set(notes) and "上限" in notes["upper_bound"]["zh"] and "upper bound" in notes["upper_bound"]["en"] and "樂觀" in notes["same_data"]["zh"]
+    assert res["extras"]["pitcher_engine"]["groups"]["RvR"]["enabled"] is False                                                     # boosted trees have no pitcher x pitch-type effects
+
+
+def test_one_member_gives_the_cross_season_rows_no_interval(service, model_run, patched):
+    run = service.run("pitch_policy", {**BASE, "model_run_id": model_run["id"], "cross_members": 1, "replication_members": 0, "policies": ["observed", "dp_trust"], "lambda_grid": [0.0]})["run"]
+    cross = [r for r in section(service, run, "Policy value") if r["kind"].startswith("cross")]
+    assert cross and all(r["saving_pa"] is not None and r["lo"] is None and r["hi"] is None for r in cross)                         # no spread, no interval (not the estimate twice)
+
+
+@pytest.fixture(scope="module")
+def logistic_run(service, w1):
+    pytest.importorskip("torch")
+    mp = pytest.MonkeyPatch()
+    world, cols = w1
+    mp.setattr(omm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+    try:
+        run = service.run("outcome_model_train", {**MODEL, "model": "logistic", "control_pitcher_pitch": "within", "control_batter": "effect", "bagging_reps": 2, "max_iter": 300, "device": "cpu",
+                                                   "cold_by": [], "compare_baseline": False, "cross_check": False})["run"]
+    finally:
+        mp.undo()
+    return run
+
+
+def test_the_members_of_the_trained_model_say_how_each_fit_ended(service, logistic_run):
+    rows = section(service, logistic_run, "Members")
+    assert [r["member"] for r in rows] == [0, 1, 2] and rows[0]["kind"].startswith("main fit") and all(r["converged"] == 1 and r["sweeps"] >= 1 for r in rows)
+    fit = section(service, logistic_run, "Fit summary")
+    assert fit[0]["n_iter"] == rows[0]["sweeps"] and fit[0]["hit_cap"] == 0                                                           # the fit row reports the main fit
+
+
+def test_the_per_pitcher_engine_is_in_the_result_with_its_coverage(service, w1, logistic_run):
+    from treepolo_mlb_data.research import pitcher_engine as pe
+
+    mp = pytest.MonkeyPatch()
+    world, cols_all = w1
+    n_all = len(cols_all["game_pk"])
+    keep = np.isin(cols_all["pitcher"], np.unique(cols_all["pitcher"])[:5])                                                              # five pitchers: the engine is solved once for each
+    cols = {k: (v[keep] if isinstance(v, np.ndarray) and len(v) == n_all else v) for k, v in cols_all.items()}
+    mp.setattr(pm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+    mp.setattr(pm, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
+    ids, pa, _ = pe.plate_appearances(cols)
+    min_pa = int(pa.min())
+    try:
+        run = service.run("pitch_policy", {**BASE, "model_run_id": logistic_run["id"], "cross_eval": False, "replication_members": 0, "policies": ["observed", "dp_trust"], "lambda_grid": [0.0],
+                                            "pitcher_min_pa": min_pa})["run"]
+    finally:
+        mp.undo()
+    summary = section(service, run, "Pitcher engine 逐投手引擎彙總"); cov = section(service, run, "Pitcher engine coverage"); detail = section(service, run, "Pitcher engine detail")
+    assert {r["policy"] for r in summary} == {"observed", "dp_trust"} and len(cov) == 1 and cov[0]["pitchers_used"] == len(detail) == len(ids) == 5 and 0 < cov[0]["pa_share"] <= 1
+    assert cov[0]["pitchers_total"] == 5 and cov[0]["min_pa"] == min_pa
+    trust = next(r for r in summary if r["policy"] == "dp_trust")
+    assert trust["saving_pa"] == pytest.approx(sum(r["pa"] * r["saving_dp_trust"] for r in detail) / sum(r["pa"] for r in detail), rel=1e-6, abs=1e-8)
+    res = service.store.load_result(run["id"])
+    assert res["extras"]["pitcher_engine"]["groups"]["RvR"]["enabled"] and "pitcher_engine" in {n["control"] for n in res["extras"]["notes"]}
+
+
 def test_comparison_counts_and_per_year_replication_are_listed(service, result):
     res = service.store.load_result(result["id"])
     direction = section(service, result, "Direction map")
