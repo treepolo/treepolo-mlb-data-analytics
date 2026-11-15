@@ -120,7 +120,7 @@ def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, An
         cfg = {**common, **machine, **model, "trials": t["trials"], "folds": t["folds"], "tune_rows": t["tune_rows"], "max_iter": t["max_iter"], "max_rows": 3_500_000}
     elif step == "model":
         one = one_fit_models(settings)               # trained once; the unseen-player folds belong to the comparison mode and the setting search
-        cfg = {**common, **machine, **model, **best, "max_iter": t["max_iter"], "bagging_reps": int(settings.get("interval_reps", 1)) if one else t["members"], "cold_by": [] if one else ["pitcher", "batter"],
+        cfg = {**common, **machine, **model, **best, "max_iter": 1000 if one else t["max_iter"], "bagging_reps": int(settings.get("interval_reps", 1)) if one else t["members"], "cold_by": [] if one else ["pitcher", "batter"],
                "cold_folds": t["folds"], "split": "cold_only", "bootstrap_reps": t["bootstrap_reps"], "save_package": True, "replication_members": 0, "max_rows": 3_500_000}
     elif step == "anchor":
         cfg = {"scope": scope, "groups": settings["groups"], "re_scope": scope, "max_rows": 3_500_000}       # the anchor has no random part

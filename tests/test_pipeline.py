@@ -252,6 +252,7 @@ def test_logistic_is_trained_once_without_folds_and_the_search_is_skipped_when_t
     auto = pl.normalize_settings(base)
     model = pl.step_config("model", auto, {}); policy = pl.step_config("policy", auto, {"model_run_id": 1})
     assert model["bagging_reps"] == 1 and model["cold_by"] == [] and model["split"] == "cold_only"                      # one fit, no unseen-player folds
+    assert model["max_iter"] == 1000 and pl.step_config("model", pl.normalize_settings({**base, "model": "gbm"}), {})["max_iter"] == pl.TIERS["fast"]["max_iter"]       # sweeps of the grouped solver, not the tier's tree count
     assert policy["cross_members"] == 1 and policy["replication_members"] == 1                                         # the model of every season is trained once
     assert pl.search_skip_reason(auto) and "自動收縮" in pl.search_skip_reason(auto)
     assert pl.normalize_settings({**base, "interval_reps": 7})["interval_reps"] == 7 and pl.step_config("model", pl.normalize_settings({**base, "interval_reps": 7}), {})["bagging_reps"] == 7
