@@ -3,6 +3,7 @@ per handedness group, trained on the whole league, evaluated on unseen players a
 from __future__ import annotations
 
 import base64
+import gc
 import zlib
 from typing import Any
 
@@ -13,6 +14,7 @@ from ..analysis.pitch_table import build_pitch_table
 from . import modeling as md
 from .config_schema import ConfigError, ConfigField
 from .guards import PURPOSES, RESERVED_YEARS, check_purpose, scope_years
+from .resource_guard import guard
 from .methods import ArtifactData, ResearchContext, ResearchMethod, ResearchResult, register_method
 from .runner import run_checked
 from .sections import make_section
@@ -57,11 +59,20 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
                               filters=config["filters"])
     fetch = FETCH + (("pitch_value", "state_code") if re_by_state is not None else ())        # run values need the run-expectancy table
     chunks: dict[str, list[np.ndarray]] = {c: [] for c in fetch}
+    try:                                                                         # a (group, season) takes about 2.6 KB per row while it is converted; a hand group is at most 40% of a season
+        from .scope import compute_scope_fingerprint
+
+        rows_in_scope = int(compute_scope_fingerprint(ctx.config.database_path, ctx.scope)["total_rows"]) if ctx.scope else 0
+    except Exception:
+        rows_in_scope = 0
+    need_bytes = int(max(rows_in_scope / max(len(list(years)), 1) * 0.4 * 2600, 32 * 2 ** 20))
     for group in groups:
         for year in years:
             cond = Boolean("and", (Binary(Column("hand_group"), "=", Literal(group)), Binary(Column("game_year"), "=", Literal(int(year)))))
             node = Limit(Sort(Project(Filter(table, cond), tuple(NamedExpr(c, Column(c)) for c in fetch), PITCH_GRAIN),
                               (OrderKey(Column("game_pk")), OrderKey(Column("pitch_uid")))), int(row_limit) if row_limit else config["max_rows"] + 1)
+            guard.checkpoint("load data")
+            guard.require(need_bytes, f"loading {group} {year}")                  # wait or stop safely if this would not leave the user's share of the memory
             result = run_checked(ctx, node)
             if not row_limit and len(result.rows) > config["max_rows"]:
                 raise ConfigError(f"Group {group} {year} has more than max_rows rows / 分組 {group} {year} 的列數超過上限")
@@ -78,6 +89,7 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
                 else:
                     chunks[c].append(np.array([np.nan if v is None else float(v) for v in values], dtype=np.float64))
             del result
+            gc.collect()
     cols = {c: (np.concatenate(v) if v else np.array([])) for c, v in chunks.items()}
     cols["group"] = cols.pop("hand_group")
     dates = np.array([str(v) for v in cols["game_date"]]); key = np.char.add(np.char.add(dates, "|"), cols["game_pk"].astype(str))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -109,7 +110,10 @@ def handle_post(service: ResearchService, path: str, payload: dict[str, Any]) ->
     if route == "pipeline/estimate":
         from .estimate import estimate
 
-        return 200, estimate(service, payload)
+        from .resource_guard import guard
+
+        with guard.job("research:estimate", log_path=Path(service.config.research_state_database_path).with_name("research_resource_monitor.log")):
+            return 200, estimate(service, payload)
     if route == "compare/start":
         return 200, service.pipeline().start_compare(payload)
     if route == "pipeline/full-config":

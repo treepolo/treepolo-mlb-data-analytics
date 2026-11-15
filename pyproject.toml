@@ -15,12 +15,14 @@ dependencies = [
   "scipy>=1.14,<2",
   "scikit-learn>=1.6,<2",
   "reportlab>=4.2,<5",
+  "psutil>=5.9",                    # the protection of the user's computer (research/resource_guard.py) reads the free memory, CPU load and process priority
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
 gpu = ["xgboost>=3.4,<4"]
 torch = ["torch>=2.4"]            # nn_embed and sequence; install the CUDA build from https://download.pytorch.org/whl/cu128 for a GPU
+pyfixest = ["pyfixest>=0.30"]     # the cross-check section of outcome_model_train (feols, standard errors clustered by game)
 
 [project.scripts]
 treepolo-mlb = "treepolo_mlb_data.cli:main"

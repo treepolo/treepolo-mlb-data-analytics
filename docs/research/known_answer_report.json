@@ -11,63 +11,63 @@
   "share_negative_estimate": 1.0
  },
  "W4_W5_slider_vs_fastball_whiff": {
-  "W4_effect_auto": -0.003073,
+  "W4_effect_auto": -0.003254,
   "W4_effect_auto_hit_cap": 0,
   "W4_effect_auto_penalties": {
-   "pitcher": 100.372503
+   "pitcher": 277.408677
   },
-  "W4_effect_manual_0.0001": -0.00353,
+  "W4_effect_manual_0.0001": -0.003756,
   "W4_effect_manual_0.0001_hit_cap": 0,
-  "W4_effect_manual_100": -0.000125,
+  "W4_effect_manual_100": -0.00013,
   "W4_effect_manual_100_hit_cap": 0,
-  "W4_none_auto": 0.017605,
+  "W4_none_auto": 0.017588,
   "W4_none_auto_hit_cap": 0,
-  "W4_within_auto": -0.00353,
+  "W4_within_auto": -0.003852,
   "W4_within_auto_hit_cap": 0,
-  "W5_none_auto": 0.029183,
+  "W5_none_auto": 0.02917,
   "W5_none_auto_hit_cap": 0,
-  "W5_pitcher_game_effect_auto": 0.015761,
+  "W5_pitcher_game_effect_auto": 0.016294,
   "W5_pitcher_game_effect_auto_hit_cap": 0,
   "W5_pitcher_game_effect_auto_penalties": {
-   "pitcher": 2863.999282,
-   "pitcher_game": 19.697724
+   "pitcher": 10000.0,
+   "pitcher_game": 18.363885
   },
-  "W5_pitcher_game_effect_manual_0.0001": 0.000697,
-  "W5_pitcher_game_effect_manual_0.0001_hit_cap": 1,
-  "W5_pitcher_game_effect_manual_100": 0.026423,
+  "W5_pitcher_game_effect_manual_0.0001": 0.00017,
+  "W5_pitcher_game_effect_manual_0.0001_hit_cap": 0,
+  "W5_pitcher_game_effect_manual_100": 0.026427,
   "W5_pitcher_game_effect_manual_100_hit_cap": 0
  },
  "W5_control_day_within": {
   "hit_cap": 0,
-  "iterations_used": 5417.0,
+  "iterations_used": 10.0,
   "max_iter_used": 1000,
   "penalties": {
-   "pitcher": 4249.011447,
+   "pitcher": 1000000000000.0,
    "pitcher_game": 0.0001
   },
-  "slider_minus_fastball_whiff": 0.000196,
+  "slider_minus_fastball_whiff": 0.00022,
   "tried_max_iter": [
    1000
   ]
  },
  "W7_repeat_effect_whiff": {
-  "none": 0.018116,
+  "none": 0.018118,
   "none_hit_cap": 0,
-  "pitcher": 0.024246,
+  "pitcher": 0.024432,
   "pitcher_hit_cap": 0,
   "pitcher_penalties": {
-   "pitcher": 840.048443
+   "pitcher": 1971.418009
   },
-  "pitcher_pitch_effect": 0.000175,
+  "pitcher_pitch_effect": 0.000195,
   "pitcher_pitch_effect_hit_cap": 0,
   "pitcher_pitch_effect_penalties": {
-   "pitcher": 3492.047067,
-   "pitcher_pitch": 316.058116
+   "pitcher": 10000.0,
+   "pitcher_pitch": 816.912427
   },
-  "pitcher_pitch_within": -0.00049,
+  "pitcher_pitch_within": -0.000621,
   "pitcher_pitch_within_hit_cap": 0,
   "pitcher_pitch_within_penalties": {
-   "pitcher": 5107.249616,
+   "pitcher": 1000000000000.0,
    "pitcher_pitch": 0.0001
   }
  },
@@ -84,6 +84,68 @@
   "model_slider_whiff_effect": 0.019806,
   "outside_anchor_interval": 32,
   "same_sign_share": 0.541667
+ },
+ "grouped_solver_vs_lbfgs_known_answers": {
+  "W4_none_grouped": 0.034096,
+  "W4_none_grouped_hit_cap": 0,
+  "W4_none_grouped_n_iter": 6.0,
+  "W4_none_lbfgs": 0.034107,
+  "W4_none_lbfgs_hit_cap": 0,
+  "W4_none_lbfgs_n_iter": 376.0,
+  "W4_pitcher_effect_grouped": 0.002949,
+  "W4_pitcher_effect_grouped_hit_cap": 0,
+  "W4_pitcher_effect_grouped_n_iter": 48.0,
+  "W4_pitcher_effect_lbfgs": 0.002711,
+  "W4_pitcher_effect_lbfgs_hit_cap": 0,
+  "W4_pitcher_effect_lbfgs_n_iter": 1064.0,
+  "W4_pitcher_within_grouped": 0.001577,
+  "W4_pitcher_within_grouped_hit_cap": 0,
+  "W4_pitcher_within_grouped_n_iter": 18.0,
+  "W4_pitcher_within_lbfgs": 0.001363,
+  "W4_pitcher_within_lbfgs_hit_cap": 0,
+  "W4_pitcher_within_lbfgs_n_iter": 343.0,
+  "W5_day_effect_grouped": 0.015519,
+  "W5_day_effect_grouped_hit_cap": 0,
+  "W5_day_effect_grouped_n_iter": 61.0,
+  "W5_day_effect_lbfgs": 0.014937,
+  "W5_day_effect_lbfgs_hit_cap": 0,
+  "W5_day_effect_lbfgs_n_iter": 2352.0,
+  "W5_day_within_grouped": 0.000332,
+  "W5_day_within_grouped_hit_cap": 0,
+  "W5_day_within_grouped_n_iter": 9.0,
+  "W5_day_within_lbfgs": 9.6e-05,
+  "W5_day_within_lbfgs_hit_cap": 0,
+  "W5_day_within_lbfgs_n_iter": 2479.0,
+  "W5_none_grouped": 0.026698,
+  "W5_none_grouped_hit_cap": 0,
+  "W5_none_grouped_n_iter": 5.0,
+  "W5_none_lbfgs": 0.026716,
+  "W5_none_lbfgs_hit_cap": 0,
+  "W5_none_lbfgs_n_iter": 401.0,
+  "W7_none_grouped": 0.015876,
+  "W7_none_grouped_hit_cap": 0,
+  "W7_none_grouped_n_iter": 5.0,
+  "W7_none_lbfgs": 0.015876,
+  "W7_none_lbfgs_hit_cap": 0,
+  "W7_none_lbfgs_n_iter": 379.0,
+  "W7_pitcher_grouped": 0.020769,
+  "W7_pitcher_grouped_hit_cap": 0,
+  "W7_pitcher_grouped_n_iter": 43.0,
+  "W7_pitcher_lbfgs": 0.020491,
+  "W7_pitcher_lbfgs_hit_cap": 0,
+  "W7_pitcher_lbfgs_n_iter": 1041.0,
+  "W7_pitcher_pitch_effect_grouped": -0.005498,
+  "W7_pitcher_pitch_effect_grouped_hit_cap": 0,
+  "W7_pitcher_pitch_effect_grouped_n_iter": 62.0,
+  "W7_pitcher_pitch_effect_lbfgs": -0.004198,
+  "W7_pitcher_pitch_effect_lbfgs_hit_cap": 0,
+  "W7_pitcher_pitch_effect_lbfgs_n_iter": 1664.0,
+  "W7_pitcher_pitch_within_grouped": -0.00755,
+  "W7_pitcher_pitch_within_grouped_hit_cap": 0,
+  "W7_pitcher_pitch_within_grouped_n_iter": 11.0,
+  "W7_pitcher_pitch_within_lbfgs": -0.006313,
+  "W7_pitcher_pitch_within_lbfgs_hit_cap": 0,
+  "W7_pitcher_pitch_within_lbfgs_n_iter": 1932.0
  },
  "league_model_descriptor_gain": {
   "P0": [

@@ -77,6 +77,10 @@ def fit_softmax(x, y: np.ndarray, n_classes: int, penalty: np.ndarray, *, weight
 
     def callback(_v):
         state["iter"] += 1
+        if state["iter"] % 10 == 0:
+            from ..resource_guard import guard
+
+            guard.checkpoint("L-BFGS")                                       # waits or stops safely when the computer is short of memory
         if trace_every and state["iter"] % trace_every == 0 and state["last"] is not None:
             trace.append((state["iter"], float(state["last"])))
 

@@ -29,13 +29,16 @@ from . import controls as ctl
 from . import design as dz
 from . import register
 from .base import OutcomeModel
+from ..resource_guard import guard
 
 
 def torch_device(setting: str) -> torch.device:
     cuda = torch.cuda.is_available()
     if setting == "cuda" and not cuda:
         raise ConfigError("device 'cuda' was requested but PyTorch cannot use a GPU here / 要求 cuda 但這裡的 PyTorch 無法使用 GPU")
-    return torch.device("cuda" if (setting in ("auto", "cuda") and cuda) else "cpu")
+    if setting in ("auto", "cuda") and cuda:
+        return torch.device(guard.device("auto"))                       # the card only when it has free memory beyond what the display needs
+    return torch.device("cpu")
 
 
 class Net(nn.Module):
@@ -173,6 +176,9 @@ class _TorchModel(OutcomeModel):
                             pen = sum(0.5 * lam[g] * (net.emb[g].weight ** 2).sum() for g in self.groups) / max(total_w, 1e-9) if self.groups else 0.0
                             opt.zero_grad(); (loss + pen).backward(); opt.step()
                     total += float(per_row.sum().item()); wsum += float(wb.sum().item())
+                    if device.type == "cuda":
+                        guard.gpu_pause(torch)                                              # short pieces of work on the card, with rests, so the screen keeps its turn
+                    guard.checkpoint("training batch")
                     pos += len(ids)
                 except torch.cuda.OutOfMemoryError:
                     if device.type != "cuda" or batch <= 32:

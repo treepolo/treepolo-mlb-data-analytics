@@ -20,6 +20,7 @@ import numpy as np
 from scipy import sparse
 
 from .. import gbm
+from ..resource_guard import guard
 from .. import league_core as lc
 from .. import modeling as md
 from ..config_schema import ConfigError
@@ -119,8 +120,10 @@ class OutcomeModel:
 
     # ------------------------------------------------------------------------------------------------ training
     def fit(self, train: Mapping[str, np.ndarray], valid: Mapping[str, np.ndarray] | None = None, settings: Mapping[str, Any] | None = None,
-            progress: Progress | None = None, classes: Sequence[str] | None = None) -> "OutcomeModel":
-        """``classes``: the class names and their order, when several fits must line up (cross-validation folds, years); otherwise taken from the data."""
+            progress: Progress | None = None, classes: Sequence[str] | None = None, reference: "OutcomeModel | None" = None) -> "OutcomeModel":
+        """``classes``: the class names and their order, when several fits must line up (cross-validation folds, years); otherwise taken from the data.
+        ``reference``: a model of the same kind fitted on more of the same data; a model that can (logistic) starts from its solution and keeps its shrinkage, which makes a fit on
+        a subset (an unseen-player fold) cheap. Other models ignore it."""
 
         s = fill_defaults(settings or {})
         self.settings = s
@@ -132,20 +135,28 @@ class OutcomeModel:
         self._prepare(sub, s)
         shares = np.bincount(y, minlength=len(self.classes)) / max(len(y), 1)
         self.pitch_info = info_per_pitch(shares); self.class_info = class_info(shares)
+        guard.checkpoint("fit: start")
         design = self._training_design(sub, s)
-        games = np.asarray(sub["game_pk"])
-        reps = int(s["bagging_reps"]); rng = np.random.default_rng(int(s["seed"]))
-        self.members, infos = [], []
-        for r in range(reps):
-            w = None if reps == 1 else gbm.poisson_game_weights(games, rng)
-            member, info = self._fit_member(sub, y, w, vsub, vy, s, int(s["seed"]) + 1000 * (r + 1), progress, design)
-            self.members.append(member); infos.append(info)
-            if progress:
-                progress("outcome_model", (r + 1) / reps, f"member {r + 1}/{reps}")
+        self.members, infos = self._fit_members(sub, y, vsub, vy, s, progress, design, reference)
         self.info = self._summarize(infos, s)
         for key in [k for k in self.__dict__ if k.startswith("_x_")]:           # training-only matrices must not be stored with the model
             delattr(self, key)
         return self
+
+    def _fit_members(self, sub, y, vsub, vy, s, progress, design, reference=None):
+        """The bagged members and what each fit reported. The default: ``bagging_reps`` fits of ``_fit_member``, each on a game-level Poisson bootstrap (one plain fit for 1)."""
+
+        games = np.asarray(sub["game_pk"])
+        reps = int(s["bagging_reps"]); rng = np.random.default_rng(int(s["seed"]))
+        members, infos = [], []
+        for r in range(reps):
+            w = None if reps == 1 else gbm.poisson_game_weights(games, rng)
+            guard.checkpoint("fit: member")
+            member, info = self._fit_member(sub, y, w, vsub, vy, s, int(s["seed"]) + 1000 * (r + 1), progress, design)
+            members.append(member); infos.append(info)
+            if progress:
+                progress("outcome_model", (r + 1) / reps, f"member {r + 1}/{reps}")
+        return members, infos
 
     def _encode(self, cols: Mapping[str, np.ndarray], s: Mapping[str, Any], fixed_classes: bool = False):
         merge = s["class_merge"]

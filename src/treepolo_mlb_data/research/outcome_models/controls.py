@@ -79,6 +79,11 @@ PARAM_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("backend", "choice", default="xgboost", choices=("xgboost", "hgb"), label_zh="梯度提升樹後端", label_en="Boosted-tree backend", help_zh="只有 gbm 用；hgb（scikit-learn）不支援偏移量，所以不能搭配球員效應。",
                 help_en="Only gbm uses it; hgb has no base margin, so it cannot be combined with player effects."),
     ConfigField("device", "choice", default="auto", choices=("auto", "cpu", "cuda"), label_zh="裝置", label_en="Device", help_zh="auto：有 GPU 就用。", help_en="auto uses a GPU when present."),
+    ConfigField("solver", "choice", default="auto", choices=("auto", "grouped", "lbfgs"), label_zh="邏輯迴歸的解法", label_en="Logistic regression solver",
+                help_zh="auto／grouped：合併相同情境、效應逐組逐單位用牛頓法解（固定效應＝同組內比較）、可用 GPU（PyTorch）；lbfgs：舊解法，所有欄位丟進一個 L-BFGS，慢，但可做描述特徵與位置。"
+                        "多類別用 softmax 的完整 K×K 區塊（不是每類各一個二元模型）。",
+                help_en="auto / grouped: identical situations merged, every effect group solved unit by unit with Newton steps (fixed effects = compare inside the unit), GPU through PyTorch when present; "
+                        "lbfgs: the original solver (all columns in one L-BFGS): slow, but it can do the descriptor controls and the location. Multi-class uses the full K x K blocks of the softmax."),
     ConfigField("max_depth", "int", default=6, minimum=1, maximum=30, label_zh="樹深", label_en="Tree depth"),
     ConfigField("min_leaf", "int", default=200, minimum=1, label_zh="葉節點最小樣本", label_en="Minimum samples per leaf"),
     ConfigField("learning_rate", "float", default=0.1, minimum=1e-4, maximum=1.0, label_zh="學習率", label_en="Learning rate"),
@@ -88,7 +93,9 @@ PARAM_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("early_stopping_rounds", "int", default=20, minimum=1, label_zh="早停輪數（xgboost）", label_en="Early-stopping rounds (xgboost)"),
     ConfigField("backfit_rounds", "int", default=1, minimum=1, maximum=10, label_zh="回頭重估效應的輪數", label_en="Back-fitting rounds",
                 help_zh="gbm 搭配球員效應時：>1 會用樹的輸出當偏移，回頭重估效應，再重訓練樹。", help_en="gbm with player effects: with more than 1, the effects are re-estimated given the trees."),
-    ConfigField("bagging_reps", "int", default=1, minimum=1, maximum=200, label_zh="袋裝成員數（比賽層級 Poisson 重抽樣）", label_en="Bagging members (game-level Poisson bootstrap)"),
+    ConfigField("bagging_reps", "int", default=1, minimum=1, maximum=200, label_zh="袋裝成員數（比賽層級 Poisson 重抽樣）", label_en="Bagging members (game-level Poisson bootstrap)",
+                help_zh="1＝只訓練一次、沒有區間（邏輯迴歸與混合效應的預設）。要區間時才設成 >1：每個成員按比賽重抽樣，從完整擬合出發只再解幾次，次數就是這個設定。",
+                help_en="1 = one fit and no intervals (the default of logistic and mixed). Set more only when intervals are wanted: every member is a game-level bootstrap that starts from the full fit and re-solves a few sweeps."),
     # the settings of the models that learn with PyTorch (nn_embed, sequence) and of the mixed-effects model
     ConfigField("nn_learning_rate", "float", default=0.003, minimum=1e-6, maximum=1.0, label_zh="神經網路學習率", label_en="Neural-network learning rate"),
     ConfigField("batch_size", "int", default=4096, minimum=16, label_zh="批次大小（顯存不足會自動減半）", label_en="Batch size (halved automatically when the GPU memory runs out)"),
@@ -168,6 +175,8 @@ def describe_controls(controls: Mapping[str, Any], *, model: str, backend: str) 
     rows = []
     for name in CONTROL_NAMES:
         value = controls.get(name, CONTROL_DEFAULTS[name])
-        rows.append({"control": name, "setting": value, "how": how.get(value, value) + (f"；{via}" if value in ("effect", "within", "pitcher_game_effect", "batter_and_count") else ""),
-                     "model": model, "backend": backend if model == "gbm" else ""})
+        text = how.get(value, value) + (f"；{via}" if value in ("effect", "within", "pitcher_game_effect", "batter_and_count") else "")
+        if name == "control_pitcher_pitch" and value == "within":
+            text += "；球種之間的整體差異無法識別，只能比較同一投手、同一球種內部的差異"
+        rows.append({"control": name, "setting": value, "how": text, "model": model, "backend": backend if model == "gbm" else ""})
     return rows

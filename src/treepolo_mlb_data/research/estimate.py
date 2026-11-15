@@ -42,10 +42,12 @@ def group_counts(config, years) -> dict[tuple[str, int], int]:
         conn.close()
 
 
-def _fits(cold_by, cold_folds: int, with_baseline: bool) -> float:
+def _fits(cold_by, cold_folds: int, with_baseline: bool, rule: str = "linear") -> float:
     """How many full-size fits a run needs, counting a fold as (folds - 1) / folds of one."""
 
     folds = len(cold_by) * (cold_folds - 1) if cold_by else 0
+    if rule == "grouped":                      # a fold of the grouped logistic solver starts from the full fit and keeps its shrinkage (about a quarter of a fit); the baseline has no player effects (cheap)
+        return (1.0 + 0.25 * folds) * (1.1 if with_baseline else 1.0)
     one = 1.0 + folds
     return one * (2.0 if with_baseline else 1.0)
 
@@ -61,6 +63,8 @@ def scale(rule: str, probe_seconds: float, probe_rows: int, rows: int, st: Mappi
         return per_row * rows * (int(st.get("epochs", 1)) / max(probe_unit, 1)) * members
     if rule == "iterations":                   # mixed effects: rows x iterations x members
         return per_row * rows * (int(st.get("max_iter", 1)) / max(probe_unit, 1)) * members
+    if rule == "grouped":                      # one full fit, and every bootstrap member starts from it and re-solves a few sweeps (about a tenth of a fit)
+        return per_row * rows * (1.0 + 0.1 * members if members > 1 else 1.0)
     return per_row * rows * members            # linear: the trial ran to the end, so only the rows grow
 
 
@@ -109,9 +113,9 @@ def estimate(service, payload: Mapping[str, Any]) -> dict[str, Any]:
             model.fit(cols, None, probe, None, classes=classes)
             probe_seconds = time.monotonic() - t0
             one = scale(cls.cost_rule, probe_seconds, len(cols["game_pk"]), n_train or len(cols["game_pk"]), st, cls.probe_unit)
-            seconds = one * _fits(cold_by, folds, with_baseline)
+            seconds = one * _fits(cold_by, folds, with_baseline, cls.cost_rule)
             rows_out.append({"group": group, "model": name, "rows_train": int(n_train), "probe_rows": int(len(cols["game_pk"])), "probe_seconds": probe_seconds, "seconds_one_fit": one,
-                             "fits": _fits(cold_by, folds, with_baseline), "seconds": seconds, "low": seconds * 0.5, "high": seconds * 2.0, "rule": cls.cost_rule})
+                             "fits": _fits(cold_by, folds, with_baseline, cls.cost_rule), "seconds": seconds, "low": seconds * 0.5, "high": seconds * 2.0, "rule": cls.cost_rule})
     return {"estimates": rows_out, "skipped": skipped, "total_seconds": float(sum(r["seconds"] for r in rows_out)), "trial_seconds": time.monotonic() - started, "note": NOTE,
             "assumptions": {"sample_fraction": SAMPLE_FRACTION, "cold_by": cold_by, "cold_folds": folds, "compare_baseline": with_baseline,
                             "rule": "trees: rows x rounds x members; neural network: rows x epochs x members; logistic: rows x members; a trial on about 2% of the rows"}}

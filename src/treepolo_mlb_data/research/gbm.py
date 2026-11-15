@@ -13,6 +13,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from .resource_guard import guard
+
 BACKENDS = ("xgboost", "hgb")
 DEVICES = ("auto", "cpu", "cuda")
 EPS = 1e-15
@@ -131,7 +133,10 @@ def fit_gbm(backend: str, device: str, params: Mapping[str, Any], x_train, y_tra
     must be the classes present in ``y_train``, in increasing order."""
 
     p = {**DEFAULT_PARAMS, **dict(params)}
+    guard.checkpoint("boosted trees")
     device = resolve_device(backend, device)
+    if device == "cuda" and guard.device("auto") == "cpu":
+        device = "cpu"                                                   # the graphics card is short of free memory right now: the trees go to the CPU
     y_train = np.asarray(y_train, dtype=np.int64)
     classes = tuple(int(c) for c in np.unique(y_train))
     started = time.monotonic()
@@ -152,7 +157,7 @@ def fit_gbm(backend: str, device: str, params: Mapping[str, Any], x_train, y_tra
                          base_margin=None if base_margin is None else np.asarray(base_margin, dtype=np.float32))
     xparams = {"objective": "multi:softprob", "num_class": len(classes), "tree_method": "hist", "device": device, "max_depth": int(p["max_depth"]),
                "eta": float(p["learning_rate"]), "lambda": float(p["l2"]), "min_child_weight": max(float(p["min_leaf"]) * 0.1, 1e-3), "seed": int(seed),
-               "eval_metric": "mlogloss", "verbosity": 0}
+               "eval_metric": "mlogloss", "verbosity": 0, "nthread": int(guard.thread_count())}
     evals = []; stop = None
     if x_valid is not None and y_valid is not None and len(y_valid):
         yv = np.array([index.get(int(v), -1) for v in y_valid]); keep = yv >= 0

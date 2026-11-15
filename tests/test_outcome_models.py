@@ -365,3 +365,18 @@ def test_a_fit_that_stops_at_the_cap_is_listed_in_the_result(players):
     assert extras["hit_cap"] and extras["hit_cap"][0]["role"] == "model"
     fit = _section(players, run, "Fit summary")
     assert any(r["hit_cap"] == 1 for r in fit)
+
+
+def test_trained_once_with_no_folds_the_method_still_reports_the_fit_itself(players):
+    """cold_only with an empty cold_by trains once on every year in scope (the default of the one-click flow for the logistic model): one 'train' row per role with the time, the
+    sweeps and whether it converged, no unseen-player folds and no effect-gain section."""
+
+    cfg = {**RUN, "split": "cold_only", "cold_by": [], "bagging_reps": 1, "compare_baseline": True, "cross_check": False, "max_iter": 1000}
+    run = players.run("outcome_model_train", cfg)["run"]
+    assert run["status"] == "success"
+    fit = _section(players, run, "Fit summary")
+    assert {(r["role"], r["mode"]) for r in fit} == {("model", "train"), ("baseline", "train")}
+    row = next(r for r in fit if r["role"] == "model")
+    assert row["logloss"] > 0 and row["fit_seconds"] is not None and row["n_iter"] > 0 and row["hit_cap"] == 0
+    assert _section(players, run, "Effect gain") == []
+    assert players.store.load_result(run["id"])["extras"]["hit_cap"] == []

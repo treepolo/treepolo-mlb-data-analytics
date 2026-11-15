@@ -63,7 +63,28 @@ def normalize_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
         if name not in choices or value not in choices[name]:
             raise ConfigError(f"controls: {name}={value!r} is not valid / controls：{name}={value!r} 不合法")
     return {"tier": tier, "groups": groups, "backend": backend, "device": device, "years": sorted(years), "seed": int(raw.get("seed", 20240601)), "overrides": overrides,
-            "model": model, "controls": controls, "search": bool(raw.get("search", True))}
+            "model": model, "controls": controls, "search": bool(raw.get("search", True)), "interval_reps": max(int(raw.get("interval_reps", 1)), 1)}
+
+
+SHRUNK_BY_DATA = ("logistic", "mixed")          # models whose effect shrinkage the data choose (empirical Bayes): nothing to search for in the penalties
+
+
+def one_fit_models(settings: Mapping[str, Any]) -> bool:
+    """True for the models that are trained once by default (their intervals, when wanted, come from game-level bootstrap refits: ``interval_reps``); the trees keep the tier's members."""
+
+    return str(settings.get("model")) in SHRUNK_BY_DATA
+
+
+def search_skip_reason(settings: Mapping[str, Any]) -> str | None:
+    """Why the setting search is not worth doing, or None. Logistic regression with the automatic shrinkage: the data choose the penalties and the remaining settings do not need a search."""
+
+    if not one_fit_models(settings):
+        return None
+    if settings.get("steps") is not None:
+        mode = (settings["steps"].get("model") or {}).get("effect_penalty_mode", "auto")
+    else:
+        mode = ((settings.get("overrides") or {}).get("model") or {}).get("effect_penalty_mode", "auto")
+    return "邏輯迴歸用自動收縮：收縮強度由資料估計，不需要搜尋參數" if mode != "manual" else None
 
 
 def _file_step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
@@ -98,12 +119,14 @@ def step_config(step: str, settings: Mapping[str, Any], context: Mapping[str, An
     if step == "search":
         cfg = {**common, **machine, **model, "trials": t["trials"], "folds": t["folds"], "tune_rows": t["tune_rows"], "max_iter": t["max_iter"], "max_rows": 3_500_000}
     elif step == "model":
-        cfg = {**common, **machine, **model, **best, "max_iter": t["max_iter"], "bagging_reps": t["members"], "cold_by": ["pitcher", "batter"], "cold_folds": t["folds"], "split": "cold_only",
-               "bootstrap_reps": t["bootstrap_reps"], "save_package": True, "replication_members": 0, "max_rows": 3_500_000}
+        one = one_fit_models(settings)               # trained once; the unseen-player folds belong to the comparison mode and the setting search
+        cfg = {**common, **machine, **model, **best, "max_iter": t["max_iter"], "bagging_reps": int(settings.get("interval_reps", 1)) if one else t["members"], "cold_by": [] if one else ["pitcher", "batter"],
+               "cold_folds": t["folds"], "split": "cold_only", "bootstrap_reps": t["bootstrap_reps"], "save_package": True, "replication_members": 0, "max_rows": 3_500_000}
     elif step == "anchor":
         cfg = {"scope": scope, "groups": settings["groups"], "re_scope": scope, "max_rows": 3_500_000}       # the anchor has no random part
     elif step == "policy":
-        cfg = {**common, "re_scope": scope, "model_run_id": context["model_run_id"], "cross_members": t["cross_members"], "replication_members": min(3, t["cross_members"]), "cross_eval": True,
+        members = 1 if one_fit_models(settings) else t["cross_members"]            # the model of every season is trained once
+        cfg = {**common, "re_scope": scope, "model_run_id": context["model_run_id"], "cross_members": members, "replication_members": min(3, members), "cross_eval": True,
                "anchor_run_id": context.get("anchor_run_id", 0), "max_rows": 3_500_000}
     else:
         cfg = {"scope": scope, "policy_run_id": context["policy_run_id"], "package_run_id": context["model_run_id"], "seed": settings["seed"]}
@@ -222,8 +245,8 @@ class PipelineManager:
                 if self._cancel.is_set():
                     self._update(state="cancelled", finished_at=_now()); return
                 started = time.monotonic()
-                if sid == "search" and not settings["search"]:                 # the settings typed in the full settings mode are used as they are
-                    self._update(i, status="done", message="略過：使用設定裡填的參數", seconds=0.0, fraction=1.0, reused=False)
+                if sid == "search" and (not settings["search"] or search_skip_reason(settings)):                 # the settings typed in the full settings mode are used as they are
+                    self._update(i, status="done", message="略過：" + (search_skip_reason(settings) or "使用設定裡填的參數"), seconds=0.0, fraction=1.0, reused=False)
                     context["best_params"] = {}
                     continue
                 if sid == "anchor" and (settings.get("enabled") or {}).get("anchor") is False:
@@ -281,7 +304,7 @@ def summarize(service, context: Mapping[str, Any], settings: Mapping[str, Any]) 
     from .outcome_models import controls as ctl
 
     out: dict[str, Any] = {"best_params": context.get("best_params") or None, "groups": {}, "replication": policy_extras.get("replication"), "hit_cap": model_extras.get("hit_cap") or [],
-                           "model": {"kind": model_extras.get("model"), "controls": {k: v for k, v in (model_extras.get("controls") or {}).items() if v != ctl.CONTROL_DEFAULTS.get(k)}}}
+                           "model": {"kind": model_extras.get("model"), "controls": {k: v for k, v in (model_extras.get("controls") or {}).items() if v != ctl.CONTROL_DEFAULTS.get(k)}, "notes": model_extras.get("notes") or []}}
     for g in settings["groups"]:
         r1 = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("states")), None)
         start = next((r for r in rows(context.get("policy_run_id"), "R1") if r["group"] == g and str(r["item"]).startswith("start")), None)
@@ -331,7 +354,7 @@ def full_config(raw: Mapping[str, Any]) -> dict[str, Any]:
             full.pop("re_scope", None)
         steps[FILE_STEP_KEYS[sid]] = _jsonable(full)
     return {"format": FILE_FORMAT, "created_at": _now(), "groups": list(settings["groups"]), "years": list(settings["years"]), "steps": steps,
-            "enabled": {"search": bool(settings["search"]), "anchor": True}}
+            "enabled": {"search": bool(settings["search"]) and not search_skip_reason(settings), "anchor": True}}
 
 
 def validate_document(service, doc: Any) -> list[dict[str, str]]:

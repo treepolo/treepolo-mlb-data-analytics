@@ -80,6 +80,7 @@ def test_the_cost_rules_scale_the_trial_time_as_documented():
     assert est.scale("epochs", 2.0, 1000, 1_000_000, st, 1) == pytest.approx(2.0 / 1000 * 1_000_000 * 10 * 2)               # rows x epochs x members
     assert est.scale("linear", 2.0, 1000, 500_000, {"bagging_reps": 1}, 0) == pytest.approx(1000.0)                          # the trial ran to the end: only the rows grow
     assert est._fits(["pitcher", "batter"], 3, False) == 1 + 2 * 2 and est._fits([], 3, False) == 1 and est._fits(["pitcher"], 5, True) == 2 * (1 + 4)
+    assert est._fits(["pitcher", "batter"], 3, False, "grouped") == 1 + 0.25 * 4 and est._fits([], 3, True, "grouped") == pytest.approx(1.1)
 
 
 def test_the_estimate_times_a_short_trial_and_reports_what_it_assumed(players):
@@ -88,7 +89,8 @@ def test_the_estimate_times_a_short_trial_and_reports_what_it_assumed(players):
     assert [r["model"] for r in out["estimates"]] == MODELS and [s["model"] for s in out["skipped"]] == ["no_such_model"]
     for r in out["estimates"]:
         assert r["probe_seconds"] > 0 and r["seconds"] > 0 and r["low"] == pytest.approx(r["seconds"] * 0.5) and r["high"] == pytest.approx(r["seconds"] * 2.0)
-        assert r["rows_train"] >= r["probe_rows"] > 0 and r["fits"] == 1 + 2                       # the main fit and three folds of two thirds each
+        assert r["rows_train"] >= r["probe_rows"] > 0
+        assert r["fits"] == (1.5 if r["rule"] == "grouped" else 1 + 2)                             # the main fit and three folds of two thirds each; a fold of the grouped logistic solver starts from the full fit (a quarter of a fit)
     assert out["total_seconds"] == pytest.approx(sum(r["seconds"] for r in out["estimates"])) and out["trial_seconds"] > 0 and "0.5" in out["note"] and out["assumptions"]["cold_folds"] == 3
     with pytest.raises(ConfigError, match="models"):
         est.estimate(players, {"models": []})

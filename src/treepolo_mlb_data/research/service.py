@@ -26,6 +26,7 @@ from . import model_compare_methods  # noqa: F401  (registers model_compare)
 from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
+from .resource_guard import guard
 from .store import ResearchStore
 
 RUN_KEY_FORMAT = "research-run-v1"
@@ -200,7 +201,8 @@ class ResearchService:
         ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report, store=self.store)
         started = time.monotonic()
         try:
-            output = method.run(ctx, resolved)
+            with guard.job(f"research:{kind}", log_path=Path(self.config.research_state_database_path).with_name("research_resource_monitor.log")):         # the protection of the user's computer: priority, threads, monitor, safe stop
+                output = method.run(ctx, resolved)
             sections = [dict(section) for section in output.sections]
             result = {"version": RESULT_FORMAT, "kind": kind, "sections": sections, "extras": dict(output.extras)}
             artifacts = [

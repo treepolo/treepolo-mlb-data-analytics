@@ -9,6 +9,7 @@ import base64
 import zlib
 from typing import Any
 
+from . import crosscheck
 from .config_schema import ConfigError, ConfigField
 from .guards import scope_years
 from .lazy import Lazy
@@ -87,6 +88,9 @@ class OutcomeModelTrainMethod(ResearchMethod):
         ConfigField("min_class_count", "int", default=50, minimum=1, label_zh="類別最小訓練樣本", label_en="Minimum training rows per class"),
         ConfigField("compare_baseline", "bool", default=True, label_zh="另訓練一份「全部控制都關掉」的對照", label_en="Also train a no-controls baseline",
                     help_zh="用來算球員描述／效應的預測增益；多花一份訓練時間。", help_en="Needed for the predictive gain of the controls; costs one more fit."),
+        ConfigField("cross_check", "bool", default=True, label_zh="交叉驗證：用 pyfixest 的線性機率模型估連投、上一球的效果（報告的一段）", label_en="Cross-check the repeat and previous-pitch effects with pyfixest (a report section)",
+                    help_zh="每個結果類別一個線性機率模型（feols），固定效應照這次的控制，標準誤按比賽分群。只是報告的一段，不給決策引擎用；沒有安裝 pyfixest 就略過。",
+                    help_en="One linear probability model (feols) per outcome class, fixed effects as the controls of this run, standard errors clustered by game. A report section only; the decision engine never uses it. Skipped when pyfixest is not installed."),
         ConfigField("replication_members", "int", default=3, minimum=0, maximum=50, label_zh="換年份重看：每個年份單獨訓練的成員數（0＝不做）", label_en="Per-year replication: members per single year (0 = skip)",
                     help_zh="訓練年份有兩個以上時，每個年份各自單獨訓練，並排列出各年份的球種效果。", help_en="With two or more training years, each year is trained alone and the pitch effects are listed side by side."),
         ConfigField("effect_sample", "int", default=20000, minimum=100, label_zh="算球種效果用的列數", label_en="Rows used for the pitch effects"),
@@ -126,15 +130,15 @@ class OutcomeModelTrainMethod(ResearchMethod):
             years = set(scope_years(ctx.scope)); train, test = set(config["train_years"]), set(config["test_years"])
             if not train or not test or train & test or not (train | test) <= years:
                 raise ConfigError("train_years and test_years must be non-empty, disjoint and inside the scope / 訓練與留出年份必須非空、不重疊且在範圍內")
-        elif not config["cold_by"]:
-            raise ConfigError("cold_only needs cold_by / cold_only 需要 cold_by")
+        # cold_only with an empty cold_by is allowed: the model is trained once on every year in scope and no unseen-player folds are run (they belong to the comparison mode and the setting search)
 
     # ------------------------------------------------------------------------------------------------ run
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         years = scope_years(ctx.scope)
         cols_all = fetch_columns(ctx, config, config["groups"], years)
         progress = ctx.progress
-        out: dict[str, list] = {k: [] for k in ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls")}
+        out: dict[str, list] = {k: [] for k in ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls", "crosscheck")}
+        out["crosscheck_info"] = {}
         artifacts, comparisons, classes = [], {"pitch_effects": {}}, None
         for gi, group in enumerate(config["groups"]):
             sel = np.nonzero(cols_all["group"] == group)[0]
@@ -160,10 +164,15 @@ class OutcomeModelTrainMethod(ResearchMethod):
             make_section("Effect gain 球員描述或效應的預測增益（對「全部控制都關掉」的對照；沒見過的球員、沒用過的年份；正值＝比較準）", ("group", "mode", "comparison", "delta_logloss", "lo", "hi", "se", "n"),
                          out["gain"], ("group", "mode", "comparison"), "duckdb", DIGITS),
         )
+        if out["crosscheck"]:
+            sections = sections + (make_section("Cross-check 交叉驗證（pyfixest 線性機率模型：連投、上一球對各結果類別的機率變化；固定效應照這次的控制；標準誤按比賽分群；只是報告，不給決策引擎用）",
+                                                crosscheck.COLUMNS, out["crosscheck"], ("group", "class", "term"), "duckdb", DIGITS),)
+        notes = crosscheck.identification_notes({k: config[k] for k in ctl.CONTROL_NAMES})
         extras = {"scope": ctx.scope, "model": config["model"], "split": config["split"], "classes": classes, "train_years": self._years(config, years)[0], "test_years": self._years(config, years)[1],
                   "controls": {k: config[k] for k in ctl.CONTROL_NAMES}, "effect_penalty_mode": config["effect_penalty_mode"],
                   "hit_cap": [{"group": r["group"], "role": r["role"], "mode": r["mode"]} for r in out["fit"] if r.get("hit_cap")],        # fits that stopped at max_iter: not converged
-                  "comparisons": {k: v for k, v in comparisons.items() if v}, "xgboost_available": gbm.xgboost_available()}
+                  "comparisons": {k: v for k, v in comparisons.items() if v}, "xgboost_available": gbm.xgboost_available(),
+                  "notes": notes, "cross_check": out["crosscheck_info"] or {"available": False, "reason": "not requested / 沒有要求" if not config["cross_check"] else "no controls to check / 沒有控制可檢查"}}
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
     @staticmethod
@@ -247,6 +256,11 @@ class OutcomeModelTrainMethod(ResearchMethod):
                     if key in losses["model"] and key in losses["baseline"]:
                         (lm, idx), (lb, _) = losses["model"][key], losses["baseline"][key]
                         out["gain"].append({"group": group, "mode": key, "comparison": "baseline→model", "n": int(len(lm)), **self._gain(lb - lm, games_te[idx], config)})
+        # ---- nothing is held out and no folds are asked for: one row for the fit itself (time, sweeps, whether it converged) and how it does on the rows it was trained on
+        if cte is None and not config["cold_by"]:
+            for role, model in (("model", main), ("baseline", base)):
+                if model is not None:
+                    add_fit(role, "train", model, ytr, model.predict_proba(sub_tr, effects="specific"), len(ytr))
         # ---- players the model has not seen, inside the training years
         folds_done: dict[str, Any] = {}
         for by in config["cold_by"]:
@@ -260,7 +274,7 @@ class OutcomeModelTrainMethod(ResearchMethod):
                 for role, st in (("model", settings), ("baseline", baseline_settings(settings))):
                     if role == "baseline" and base is None:
                         continue
-                    fold_model = om.new_model(kind).fit(lc.take(sub_tr, tr), None, {**st, "bagging_reps": 1}, None, classes=classes)
+                    fold_model = om.new_model(kind).fit(lc.take(sub_tr, tr), None, {**st, "bagging_reps": 1}, None, classes=classes, reference=main if role == "model" else base)
                     probas[role][[pos[int(i)] for i in te]] = fold_model.predict_proba(lc.take(sub_tr, te), effects="specific")
                     secs[role] += fold_model.info.get("seconds", 0.0)
             yv = ytr[eval_idx]
@@ -281,13 +295,18 @@ class OutcomeModelTrainMethod(ResearchMethod):
         eff_rows = self._effect_rows(main, sub_tr, ref_rows, config, rng, group)
         out["effects"] += eff_rows
         comparisons["pitch_effects"][group] = pc.chance_summary([r["lo"] if r["lo"] is not None else np.nan for r in eff_rows], [r["hi"] if r["hi"] is not None else np.nan for r in eff_rows], config["confidence"])
+        # ---- cross-check of the repeat and previous-pitch effects with pyfixest (a report section only)
+        if config["cross_check"] and main.groups:
+            cc_rows, cc_info = crosscheck.run(group, sub_tr, ytr, list(classes), main.groups, confidence=config["confidence"])
+            out["crosscheck"] += cc_rows
+            out["crosscheck_info"] = {**out["crosscheck_info"], **cc_info} if cc_info.get("available") or not out["crosscheck_info"] else out["crosscheck_info"]
         # ---- each training year alone
         if len(train_years) >= 2 and config["replication_members"] > 0:
             for yv_ in train_years:
                 yrows = lc.take(sub_tr, np.nonzero(np.asarray(sub_tr["game_year"]) == yv_)[0])
                 if len(yrows["game_pk"]) == 0:
                     continue
-                alone = om.new_model(kind).fit(yrows, None, {**settings, "bagging_reps": max(int(config["replication_members"]), 2)}, None, classes=classes)
+                alone = om.new_model(kind).fit(yrows, None, {**settings, "bagging_reps": max(int(config["replication_members"]), 2)}, None, classes=classes, reference=main)
                 for r in self._effect_rows(alone, sub_tr, yrows, config, rng, group):
                     out["replication"].append({"group": group, "year": int(yv_), **{k: r[k] for k in ("phase", "action", "class", "effect", "lo", "hi", "n")}})
         # ---- the stored model

@@ -2,7 +2,7 @@
 estimated from the data (empirical Bayes, see ``shrinkage``).
 
 It is the logistic model with the automatic shrinkage always on: whatever ``effect_penalty_mode`` says, the data choose the penalty of every effect group. The estimated penalties are
-in the fit summary. The problem is sparse and the solver is L-BFGS on the CPU, so this model needs no PyTorch.
+in the fit summary. It uses the grouped solver of the logistic model (``fastglm``, GPU when there is one); without PyTorch, or with the descriptor controls, the original L-BFGS solver.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class MixedModel(LogisticModel):
     label_zh = "混合效應模型"
     label_en = "Mixed-effects model"
     force_auto = True
-    cost_rule = "iterations"
-    probe_settings = {"bagging_reps": 1, "em_rounds": 1}
-    probe_unit = 1
+    cost_rule = "grouped"
+    probe_settings = {"bagging_reps": 1}
+    probe_unit = 0
     supports = {name: "隨機效應（常態先驗，變異數由資料估計）" for name in ctl.CONTROL_NAMES}

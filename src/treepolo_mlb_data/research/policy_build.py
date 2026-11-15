@@ -10,6 +10,7 @@ from . import gbm
 from . import league_core as lc
 from . import modeling as md
 from . import policy_core as pc
+from .resource_guard import guard
 from .profiles import PITCH_TYPES
 
 
@@ -197,6 +198,7 @@ def analyze(members: Sequence[pc.Dynamics], env: pc.Environment, shape: pc.Shape
     pol_sum = {k: np.zeros((shape.size, shape.n_actions)) for k in kinds}
     ppp = np.zeros(M); occ = np.zeros(shape.size); v_obs = np.zeros(shape.size)
     for m, dyn in enumerate(members):
+        guard.checkpoint("decision engine member")
         eng = pc.Engine(shape, dyn, env, lam=lam)
         solved = pc.solve_all(eng, tuple(dict.fromkeys(("observed", *kinds))), trust)
         for k in kinds:

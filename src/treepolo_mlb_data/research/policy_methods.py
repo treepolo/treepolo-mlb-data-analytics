@@ -317,7 +317,7 @@ class PitchPolicyMethod(ResearchMethod):
         sets = []
         for y in (years[0], years[-1]):
             sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            alone = PitchPolicyMethod._train_like(model, sub, max(config["cross_members"], 2), config["seed"] + y)
+            alone = PitchPolicyMethod._train_like(model, sub, max(int(config["cross_members"]), 1), config["seed"] + y)
             sets.append(pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n))
         rows = []
         for kind in kinds:
@@ -437,7 +437,7 @@ class PitchPolicyMethod(ResearchMethod):
 
         from .outcome_models import new_model
 
-        return new_model(model.name).fit(rows, None, {**model.settings, "bagging_reps": int(members), "seed": int(seed)}, None, classes=model.classes)
+        return new_model(model.name).fit(rows, None, {**model.settings, "bagging_reps": int(members), "seed": int(seed)}, None, classes=model.classes, reference=model)
 
     def _replicate(self, group, cols, model, env, shape, obs, support, n, config):
         """Per year: an outcome model trained on that year alone (``replication_members`` bagged members), the same marginal and direction numbers from it, side by side.
@@ -447,7 +447,7 @@ class PitchPolicyMethod(ResearchMethod):
         out = []
         for y in years:
             sub = lc.take(cols, np.nonzero(np.asarray(cols["game_year"]) == y)[0])
-            alone = self._train_like(model, sub, max(int(config["replication_members"]), 2), config["seed"] + 1000 + y)
+            alone = self._train_like(model, sub, max(int(config["replication_members"]), 1), config["seed"] + 1000 + y)
             dyns = pb.members_dynamics(pb.model_tensor(alone, shape, group, effects="population"), obs, support, n)
             an = pb.analyze(dyns, env, shape, kinds=("observed",), trust=config["trust_region"], delta=config["marginal_shift"])
             m_rows, _ = self._marginals(group, an, config)

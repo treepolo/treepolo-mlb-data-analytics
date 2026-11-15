@@ -145,7 +145,7 @@ class ModelCompareMethod(ResearchMethod):
                     proba = np.zeros((len(eval_idx), K)); secs = 0.0
                     for tr, te in folds:
                         t0 = time.monotonic()
-                        fold = om.new_model(name).fit(lc.take(sub_tr, tr), None, {**st, "bagging_reps": 1}, None, classes=classes)
+                        fold = om.new_model(name).fit(lc.take(sub_tr, tr), None, {**st, "bagging_reps": 1}, None, classes=classes, reference=model)
                         proba[[pos[int(i)] for i in te]] = fold.predict_proba(lc.take(sub_tr, te), effects="specific"); secs += time.monotonic() - t0
                     evals.append((f"cold_{by}", proba, ytr[eval_idx], int(np.mean([len(t) for t, _ in folds])), secs))
                 for mode, proba, y, n_train, secs in evals:

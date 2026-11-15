@@ -347,6 +347,7 @@
     if (s.model && s.model.kind) {
       const used = Object.entries(s.model.controls || {}).map(([k, v]) => `${CONTROL_LABEL[k] || k}＝${v}`);
       out.push(el("div", { class: "hint", id: "rp-model", text: `用的模型：${MODEL_LABEL[s.model.kind] || s.model.kind}；偏差控制：${used.length ? used.join("、") : "沒有（全部關閉）"}。決策引擎與情境表是在這些假設下算的。` }));
+      (s.model.notes || []).forEach(n => out.push(el("div", { class: "hint rp-note", "data-control": n.control, text: `注意：${n.zh}` })));
     }
     if (s.hit_cap && s.hit_cap.length) out.push(el("div", { class: "rp-error", id: "rp-hit-cap", text: `⚠ 有 ${s.hit_cap.length} 個擬合撞到迭代上限（hit_cap），表示還沒收斂，數字可能還在變：${s.hit_cap.map(x => `${x.group} ${x.role === "baseline" ? "對照" : "模型"} ${x.mode}`).join("、")}。到設定裡把 max_iter 調高再跑。` }));
     if (s.best_params) out.push(el("div", { class: "hint", id: "rp-best", text: `選到的模型設定：${Object.entries(s.best_params).map(([k, v]) => `${PARAM_LABEL[k] || k} ${v}`).join("、")}` }));

@@ -92,7 +92,7 @@ def test_pipeline_runs_every_step_and_summarises(finished):
     assert set(g) == {"r1", "support", "policies", "effect_gains", "actions", "comparisons"} and g["support"]["states"] > 0 and g["support"]["supported_states"] + g["support"]["no_support_states"] == g["support"]["states"] and {p["policy"] for p in g["policies"]} >= {"observed", "dp_trust", "dp_unrestricted"}
     assert set(g["r1"]) == {"median_abs_diff", "max_abs_diff", "start_diff"}                  # numbers only: no pass / fail
     assert g["effect_gains"] == [] and len(g["actions"]) >= 2                                # no controls were chosen, so there is nothing to compare with the no-controls baseline
-    assert job["summary"]["model"] == {"kind": "gbm", "controls": {}}
+    assert job["summary"]["model"] == {"kind": "gbm", "controls": {}, "notes": []}
     assert all("detected_share" not in a for a in g["actions"])
     chance = g["comparisons"]["direction"]
     assert chance["n"] > 0 and chance["expected_by_chance"] == pytest.approx(chance["n"] * (1 - chance["confidence"])) and 0 <= chance["found"] <= chance["n"]
@@ -167,7 +167,7 @@ STEP_OF = {"search": "search", "model": "train", "anchor": "anchor", "policy": "
 
 def test_the_full_settings_file_is_what_the_simple_mode_would_run(world):
     doc = pl.full_config(SIMPLE)
-    assert doc["format"] == 1 and doc["groups"] == ["RvR"] and doc["years"] == [2023, 2024] and set(doc["steps"]) == set(STEP_OF.values()) and doc["enabled"] == {"search": True, "anchor": True}
+    assert doc["format"] == 1 and doc["groups"] == ["RvR"] and doc["years"] == [2023, 2024] and set(doc["steps"]) == set(STEP_OF.values()) and doc["enabled"] == {"search": False, "anchor": True}                  # logistic with the automatic shrinkage: nothing to search
     assert pl.validate_document(world, doc) == []
     again = json.loads(json.dumps(doc, ensure_ascii=False))                                  # a file written and read back is the same document
     assert again == doc and pl.validate_document(world, again) == []
@@ -245,3 +245,19 @@ def test_a_pipeline_can_run_from_a_settings_file_with_optional_steps_switched_of
     assert model_extras["model"] == "logistic" and model_extras["controls"]["control_pitcher"] == "effect"                # the file's values are what ran
     assert world.store.load_result(by_id["policy"]["run_id"])["extras"]["model_run_id"] == by_id["model"]["run_id"]       # and the run numbers were passed on
     assert job["summary"]["model"]["controls"] == {"control_pitcher": "effect"}
+
+
+def test_logistic_is_trained_once_without_folds_and_the_search_is_skipped_when_the_data_choose_the_shrinkage():
+    base = {"tier": "fast", "groups": ["RvR"], "model": "logistic", "controls": {"control_pitcher": "within"}}
+    auto = pl.normalize_settings(base)
+    model = pl.step_config("model", auto, {}); policy = pl.step_config("policy", auto, {"model_run_id": 1})
+    assert model["bagging_reps"] == 1 and model["cold_by"] == [] and model["split"] == "cold_only"                      # one fit, no unseen-player folds
+    assert policy["cross_members"] == 1 and policy["replication_members"] == 1                                         # the model of every season is trained once
+    assert pl.search_skip_reason(auto) and "自動收縮" in pl.search_skip_reason(auto)
+    assert pl.normalize_settings({**base, "interval_reps": 7})["interval_reps"] == 7 and pl.step_config("model", pl.normalize_settings({**base, "interval_reps": 7}), {})["bagging_reps"] == 7
+    manual = pl.normalize_settings({**base, "overrides": {"model": {"effect_penalty_mode": "manual"}}})
+    assert pl.search_skip_reason(manual) is None                                                                           # hand-set penalties may be worth searching
+    trees = pl.normalize_settings({**base, "model": "gbm"})
+    assert pl.search_skip_reason(trees) is None and pl.step_config("model", trees, {})["bagging_reps"] == pl.TIERS["fast"]["members"] and pl.step_config("model", trees, {})["cold_by"] == ["pitcher", "batter"]
+    doc = pl.full_config(base)
+    assert doc["enabled"]["search"] is False and doc["steps"]["train"]["cold_by"] == [] and doc["steps"]["train"]["bagging_reps"] == 1

@@ -39,6 +39,31 @@ def count_cell(cols: Mapping[str, np.ndarray]) -> np.ndarray:
 
 
 # ------------------------------------------------------------------------------------------------ situation block
+SIT_BLOCKS = (("count", 12), ("outs", 3), ("bases", 8), ("prev", N_TYPES + 1), ("streak", 3), ("type", N_TYPES), ("repeat", 2), ("count*type", 12 * N_TYPES),
+              ("prev*type", (N_TYPES + 1) * N_TYPES), ("repeat*type", 2 * N_TYPES), ("streak*repeat", 6), ("bases*outs", 24))
+SIT_OFFSETS = dict(zip((b[0] for b in SIT_BLOCKS), np.concatenate([[0], np.cumsum([b[1] for b in SIT_BLOCKS])[:-1]]).astype(int).tolist()))
+SIT_WIDTH = int(sum(b[1] for b in SIT_BLOCKS))                    # 293 columns, exactly one non-zero per block in every row
+
+
+def situation_key(cols: Mapping[str, np.ndarray]) -> np.ndarray:
+    """One integer per distinct situation (count, outs, runners, previous type, streak, pitch type): rows with the same key have the same situation design row."""
+
+    cell = count_cell(cols)
+    outs = np.clip(np.nan_to_num(np.asarray(cols["outs_when_up"], dtype=float)), 0, 2).astype(np.int64)
+    bases = np.asarray(cols["bases"]).astype(np.int64) & 7
+    typ = np.maximum(type_index(cols["pitch_type"]), 0)
+    prev = prev_index(cols["prev1_pitch_type"])
+    streak = np.clip(np.nan_to_num(np.asarray(cols["streak_pos"], dtype=float), nan=1.0), 1, 3).astype(np.int64) - 1
+    return ((((cell * 3 + outs) * 8 + bases) * (N_TYPES + 1) + prev) * 3 + streak) * N_TYPES + typ
+
+
+def situation_indices(cols: Mapping[str, np.ndarray]) -> np.ndarray:
+    """[n, 12] column of each block that is non-zero in each row of ``situation_design`` (the same matrix, as indices)."""
+
+    mat, _ = situation_design(cols)
+    return mat.indices.reshape(len(cols["game_pk"]), len(SIT_BLOCKS)).astype(np.int64)
+
+
 def situation_design(cols: Mapping[str, np.ndarray]) -> tuple[sparse.csr_matrix, list[str]]:
     """One-hot blocks and their interactions: count, outs, runners, previous type, streak, pitch type, count x type, previous x type, repeat x type, streak x repeat, runners x outs."""
 

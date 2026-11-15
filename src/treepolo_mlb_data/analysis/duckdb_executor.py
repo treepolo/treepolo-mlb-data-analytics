@@ -37,6 +37,13 @@ class DuckDBExecutor:
         from .engine import AnalysisResult
 
         conn = duckdb.connect(str(self.path), read_only=True)
+        try:                                                                 # DuckDB takes most of the memory and all the cores by default: use what the computer can spare right now
+            from ..research.resource_guard import guard
+
+            conn.execute(f"SET memory_limit='{max(int(guard.ram_budget() * 0.5) // 2 ** 20, 512)}MB'")
+            conn.execute(f"SET threads={max(guard.pick_threads(), 1)}")
+        except Exception:
+            pass
         sql = _duckdb_sql(query.sql)
         holder: dict[str, object] = {}
         done = threading.Event()
