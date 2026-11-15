@@ -98,6 +98,38 @@ def test_full_settings_mode_switches_edits_exports_and_imports(url, tmp_path):
         browser.close()
 
 
+def test_without_intervals_the_page_says_so_and_does_not_count(url):
+    """One member and no resampling: no interval exists. The interval columns say so and the 'how many compared / expected by luck / found' lines say nothing can be counted."""
+
+    titles = (("search", "param_search", "模型參數搜尋"), ("model", "outcome_model_train", "訓練模型"), ("anchor", "action_effects", "固定效應對照答案"),
+              ("policy", "pitch_policy", "決策引擎與情境表"), ("query", "pitch_query", "查詢工具與驗收"))
+    steps = [{"id": i, "kind": k, "title": t, "status": "done", "run_id": n + 1, "seconds": 5.0, "reused": False, "message": "", "fraction": 1.0} for n, (i, k, t) in enumerate(titles)]
+    none = {"n": 0, "confidence": 0.95, "expected_by_chance": 0.0, "found": 0, "what": "interval_excludes_zero"}
+    group = {"r1": {"median_abs_diff": 0.001, "max_abs_diff": 0.002, "start_diff": 0.0}, "support": None,
+             "policies": [{"policy": "dp_trust", "kind": "dp", "saving_pa": 0.01, "lo": None, "hi": None, "saving_per_team_season": 5.0}],
+             "effect_gains": [{"mode": "cold_pitcher", "comparison": "baseline→model", "value": 0.001, "lo": None, "hi": None, "n": 100}],
+             "actions": [{"action": "FF", "advantage": 0.0, "adv_lo": None, "adv_hi": None, "marginal": 0.01, "supported_share": 1.0}],
+             "comparisons": {"marginal": none, "direction": none}}
+    job = {"state": "done", "steps": steps, "settings": None, "summary": {"groups": {"LvL": group}}}
+    info = {"tiers": [{"id": "fast", "label": "快速", "trials": 4, "folds": 3, "members": 5}], "environment": {"xgboost": True, "cuda": False, "default_backend": "xgboost", "default_device": "cpu"},
+            "groups": ["RvR", "RvL", "LvR", "LvL"], "steps": [t for _, _, t in titles]}
+
+    def handle(route):
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(info if route.request.url.split("/api/research/pipeline/")[1].startswith("info") else job))
+
+    with playwright.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_page(viewport={"width": 1300, "height": 1500})
+        page.route("**/api/research/pipeline/**", handle)
+        page.goto(url + "?page=research-pipeline")
+        page.wait_for_selector(".rp-card[data-group=LvL]", timeout=15000)
+        text = page.locator(".rp-card[data-group=LvL]").inner_text()
+        assert text.count("—（沒有算區間）") == 3                                            # the decision-engine table, the gain table and the pitch-effect table
+        assert text.count("沒有算區間，無法計數") == 2
+        assert "共比較了" not in text and "純靠運氣" not in text and "[—" not in text         # no made-up counts, no empty brackets
+        browser.close()
+
+
 def test_running_and_failed_states_are_shown(url):
     steps = [{"id": i, "kind": k, "title": t, "status": "pending", "run_id": None, "seconds": None, "reused": None, "message": "", "fraction": None}
              for i, k, t in (("search", "param_search", "模型參數搜尋"), ("model", "league_model", "訓練全聯盟模型"), ("anchor", "action_effects", "固定效應對照答案"),

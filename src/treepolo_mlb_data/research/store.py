@@ -79,11 +79,33 @@ CREATE TABLE IF NOT EXISTS blobs (
     bytes INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS run_parts (
+    run_key TEXT NOT NULL,
+    part TEXT NOT NULL,
+    code_version TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_key, part)
+);
 """
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class RunParts:
+    """The saved pieces of one run (what ``ResearchContext.parts`` is): bound to the run's key and to the code that produces them."""
+
+    def __init__(self, store: "ResearchStore", run_key: str, code_version: str):
+        self.store, self.run_key, self.code_version = store, run_key, code_version
+
+    def get(self, name: str) -> Any | None:
+        return self.store.get_part(self.run_key, name, self.code_version)
+
+    def put(self, name: str, payload: Any) -> None:
+        self.store.put_part(self.run_key, name, self.code_version, payload)
 
 
 class ResearchStore:
@@ -441,6 +463,30 @@ class ResearchStore:
                 (str(error), duration_seconds, _now(), int(run_id)),
             )
             self.conn.commit()
+
+    # ------------------------------------------------------------------ saved pieces of a run that is not finished
+    def put_part(self, run_key: str, part: str, code_version: str, payload: Any) -> None:
+        """Save one finished piece of a run (JSON-able) so that a run that is stopped starts again after it, not from the beginning."""
+
+        data = gzip.compress(canonical_json(payload).encode("utf-8"), compresslevel=3)
+        with self._lock:
+            self.conn.execute("INSERT OR REPLACE INTO run_parts(run_key,part,code_version,payload,created_at) VALUES(?,?,?,?,?)", (run_key, part, code_version, data, _now()))
+            self.conn.commit()
+
+    def get_part(self, run_key: str, part: str, code_version: str) -> Any | None:
+        """A piece saved by ``put_part`` for the same run and the same code, else None (a piece from other code is not used)."""
+
+        with self._lock:
+            row = self.conn.execute("SELECT code_version,payload FROM run_parts WHERE run_key=? AND part=?", (run_key, part)).fetchone()
+        if row is None or row["code_version"] != code_version:
+            return None
+        return json.loads(gzip.decompress(row["payload"]).decode("utf-8"))
+
+    def drop_parts(self, run_key: str) -> int:
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM run_parts WHERE run_key=?", (run_key,))
+            self.conn.commit()
+            return cur.rowcount
 
     def link_run(self, study_id: int, run_id: int) -> None:
         with self._lock:

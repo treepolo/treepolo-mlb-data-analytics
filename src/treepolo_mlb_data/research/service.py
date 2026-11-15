@@ -27,7 +27,7 @@ from .config_schema import ConfigError, normalize_config
 from .methods import ResearchContext, get_method, list_methods
 from .scope import compute_scope_fingerprint, normalize_scope
 from .resource_guard import guard
-from .store import ResearchStore
+from .store import ResearchStore, RunParts
 
 RUN_KEY_FORMAT = "research-run-v1"
 RESULT_FORMAT = "research-result-v1"
@@ -170,6 +170,8 @@ class ResearchService:
                 return {"run": self.store.get_run(existing["id"]), "reused": True, "reproduced": None}
             self._inflight.add(run_key)
         try:
+            if force:
+                self.store.drop_parts(run_key)                                      # a run that is asked for again starts from nothing: no saved pieces of an earlier try
             return self._execute(method, kind, resolved, scope, fingerprint, run_key, existing, study, parent_run_id, progress)
         finally:
             with self._lock:
@@ -198,7 +200,7 @@ class ResearchService:
             if progress is not None:
                 progress(stage, percentage, detail)
 
-        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report, store=self.store)
+        ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report, store=self.store, parts=RunParts(self.store, run_key, version))
         started = time.monotonic()
         try:
             with guard.job(f"research:{kind}", log_path=Path(self.config.research_state_database_path).with_name("research_resource_monitor.log")):         # the protection of the user's computer: priority, threads, monitor, safe stop
@@ -225,6 +227,7 @@ class ResearchService:
             run = self.store.finish_run(
                 run_id, result=result, artifacts=artifacts, summary=summary, duration_seconds=time.monotonic() - started
             )
+            self.store.drop_parts(run_key)                                          # the run is whole: its saved pieces are not needed any more
         except BaseException as exc:
             self.store.fail_run(run_id, f"{type(exc).__name__}: {exc}", time.monotonic() - started)
             finish_analysis_job(job_id, error=str(exc))

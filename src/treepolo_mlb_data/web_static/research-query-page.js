@@ -29,6 +29,9 @@
 
   const num = (v, digits = 4) => (v === null || v === undefined ? "—" : Number(v).toFixed(digits));
   const pct = v => (v === null || v === undefined ? "—" : `${(Number(v) * 100).toFixed(2)}%`);
+  const isNum = v => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+  const NO_INTERVAL = "—（沒有算區間）";                                                   // one member and no resampling: there is no interval, and no number is made up for it
+  const interval = (lo, hi, fmt = num) => (isNum(lo) && isNum(hi) ? `[${fmt(lo)}, ${fmt(hi)}]` : NO_INTERVAL);
   const status = text => { const box = document.getElementById("rq-status"); if (box) box.textContent = text || ""; };
   async function guarded(fn) {
     try { status("處理中 Working…"); await fn(); status(""); } catch (error) { status(`錯誤 Error: ${error.message}`); }
@@ -145,12 +148,13 @@
     if (r.sampling) parts.push(el("div", { class: "hint", text: `抽樣 ${r.sampling.pairs} 對、成員 ${r.sampling.members}；${r.sampling.note}` }));
     parts.push(table(r));
     parts.push(el("div", { class: "hint", id: "rq-overlap-note", text: "區間重疊群組：同一個字母代表它們的 Q 區間互相重疊，資料分不出這幾種球的高低（這是描述，不是判定）。" }));
-    if (r.comparisons) parts.push(el("div", { class: "hint", id: "rq-chance", text: `這個答案比較了 ${r.comparisons.n} 種球；在 ${(r.comparisons.confidence * 100).toFixed(0)}% 區間下，就算全部其實沒差，純靠運氣也預期約 ${r.comparisons.expected_by_chance.toFixed(2)} 個「相對一般配球」的區間不含 0；實際有 ${r.comparisons.found} 個。` }));
+    if (r.comparisons && !r.comparisons.n) parts.push(el("div", { class: "hint", id: "rq-chance", text: "這個答案沒有算區間，無法計數。" }));
+    else if (r.comparisons) parts.push(el("div", { class: "hint", id: "rq-chance", text: `這個答案比較了 ${r.comparisons.n} 種球；在 ${(r.comparisons.confidence * 100).toFixed(0)}% 區間下，就算全部其實沒差，純靠運氣也預期約 ${r.comparisons.expected_by_chance.toFixed(2)} 個「相對一般配球」的區間不含 0；實際有 ${r.comparisons.found} 個。` }));
     if ((r.effect_gains || []).length) {
       parts.push(el("div", { class: "hint", id: "rq-gains-note", text: "球員描述或效應的預測增益（建模時，對「全部控制都關掉」的同一個模型；沒見過的球員、沒訓練過的年份；正值＝加了控制比較準；只列數字，不會因此關掉個別化）：" }));
       parts.push(el("table", { class: "rq-gains", id: "rq-gains" }, el("thead", {}, el("tr", {}, ...["評估對象", "比較", "數值（對數損失改善）", "區間", "樣本數"].map(h => el("th", { text: h })))),
         el("tbody", {}, ...r.effect_gains.map(x => el("tr", {}, el("td", { text: MODE_LABEL[x.mode] || x.mode || "—" }), el("td", { text: x.comparison || "—" }),
-          el("td", { text: num(x.value, 5) }), el("td", { text: x.lo == null ? "—" : `[${num(x.lo, 5)}, ${x.hi == null ? "—" : num(x.hi, 5)}]` }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
+          el("td", { text: num(x.value, 5) }), el("td", { text: interval(x.lo, x.hi, v => num(v, 5)) }), el("td", { text: x.n == null ? "—" : String(x.n) }))))));
     }
     const charts = window.TreepoloResearchCharts;
     if (charts) {
@@ -168,10 +172,10 @@
     const head = ["球種", "旗標", "Q 期望失分 [99%]", "相對一般配球", "多投 10pp 的變化", "全壘打/球 [99%]", "n", "區間重疊群組"];
     const body = r.rows.map(x => el("tr", { class: `rq-row-${x.flag}`, "data-action": x.action },
       el("td", { text: x.action }), el("td", { class: "rq-flag", text: FLAG_LABEL[x.flag] || x.flag }),
-      el("td", { text: x.supported ? `${num(x.q)} [${num(x.q_lo)}, ${num(x.q_hi)}]` : "—" }),
-      el("td", { text: x.supported ? `${num(x.advantage)} [${num(x.adv_lo)}, ${num(x.adv_hi)}]` : "—" }),
-      el("td", { text: x.supported ? `${num(x.marginal)} [${num(x.m_lo)}, ${num(x.m_hi)}]` : "—" }),
-      el("td", { text: `${pct(x.hr_probability)} [${pct(x.hr_lo)}, ${pct(x.hr_hi)}]` }),
+      el("td", { text: x.supported ? `${num(x.q)} ${interval(x.q_lo, x.q_hi)}` : "—" }),
+      el("td", { text: x.supported ? `${num(x.advantage)} ${interval(x.adv_lo, x.adv_hi)}` : "—" }),
+      el("td", { text: x.supported ? `${num(x.marginal)} ${interval(x.m_lo, x.m_hi)}` : "—" }),
+      el("td", { text: `${pct(x.hr_probability)} ${interval(x.hr_lo, x.hr_hi, pct)}` }),
       el("td", { text: x.n }), el("td", { text: x.supported ? (x.overlap_group || "—") : "不支持，不得建議" })));
     return el("table", { class: "rq-table", id: "rq-table" }, el("thead", {}, el("tr", {}, ...head.map(h => el("th", { text: h })))), el("tbody", {}, ...body));
   }

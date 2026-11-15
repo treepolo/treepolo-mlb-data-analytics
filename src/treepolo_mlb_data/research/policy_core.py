@@ -357,12 +357,17 @@ def t_critical(members: int, confidence: float) -> float:
 
 
 def member_interval(values: np.ndarray, confidence: float = 0.99) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Mean and mean +- t * SD over the bagged members (axis 0), the interval convention of the whole study."""
+    """Mean and mean +- t * SD over the bagged members (axis 0), the interval convention of the whole study.
+
+    One member has no spread, so there is no interval: ``lo`` and ``hi`` are NaN (never the mean itself as a zero-width 'interval', which would look like a result and be counted as one)."""
 
     m = values.shape[0]
     with np.errstate(all="ignore"), __import__("warnings").catch_warnings():
         __import__("warnings").simplefilter("ignore", RuntimeWarning)
-        mean = np.nanmean(values, axis=0); sd = np.nanstd(values, axis=0, ddof=1) if m > 1 else np.zeros_like(mean)
+        mean = np.nanmean(values, axis=0)
+        if m < 2:
+            return mean, np.full_like(mean, np.nan), np.full_like(mean, np.nan)
+        sd = np.nanstd(values, axis=0, ddof=1)
     t = t_critical(m, confidence)
     return mean, mean - t * sd, mean + t * sd
 

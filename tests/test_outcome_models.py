@@ -367,6 +367,66 @@ def test_a_fit_that_stops_at_the_cap_is_listed_in_the_result(players):
     assert any(r["hit_cap"] == 1 for r in fit)
 
 
+def test_every_group_is_saved_when_it_is_done_so_a_stopped_run_does_not_lose_it(tmp_path, monkeypatch):
+    """The groups are trained one after another. A run that is stopped in the third group keeps the first two: the next try uses their saved results, trains only the third, and the
+    result is the same as an uninterrupted run. The saved pieces are removed when the run is whole."""
+
+    from treepolo_mlb_data.research import outcome_model_methods as omm
+    from treepolo_mlb_data.research.resource_guard import ResourceExhausted
+    from treepolo_mlb_data.research.store import ResearchStore, RunParts
+
+    store = ResearchStore(tmp_path / "r.sqlite3", tmp_path / "blobs")
+    method = omm.OutcomeModelTrainMethod()
+    fetched, trained, stop_in = [], [], ["LvR"]
+
+    def fake_fetch(ctx, config, groups, years, **kw):
+        fetched.append(list(groups))
+        return {"group": np.array([groups[0]] * 3)}                                                   # one group's rows at a time
+
+    def fake_group(ctx, config, group, cols, out, artifacts, comparisons):
+        if group in stop_in:
+            raise ResourceExhausted("stopped safely at test")
+        trained.append(group)
+        out["fit"].append({"group": group, "role": "model", "mode": "train", "logloss": 1.0 + len(trained)})
+        out["crosscheck_info"] = {"available": True, "groups": [group]}
+        comparisons["pitch_effects"][group] = {"n": len(trained)}
+        artifacts.append(omm.ArtifactData(f"outcome_model_{group}", "x", ("part", "payload"), ({"part": 0, "payload": group},)))
+        return ["ball", "whiff"]
+
+    monkeypatch.setattr(omm, "fetch_columns", fake_fetch)
+    monkeypatch.setattr(method, "_group", fake_group)
+    monkeypatch.setattr(omm, "scope_years", lambda scope: [2023, 2024])
+
+    class Ctx:
+        scope, progress = {}, None
+        parts = RunParts(store, "key-1", "code-1")
+
+    config = {"groups": ["RvR", "RvL", "LvR", "LvL"], "model": "logistic", "split": "cold_only", "confidence": 0.95, "train_years": [], "test_years": [],
+              "cross_check": True, "effect_penalty_mode": "auto", **{k: "none" for k in ctl.CONTROL_NAMES}}
+    with pytest.raises(ResourceExhausted):
+        method.run(Ctx, config)
+    assert trained == ["RvR", "RvL"] and Ctx.parts.get("outcome_model_train:RvL") is not None and Ctx.parts.get("outcome_model_train:LvR") is None
+    stop_in.clear(); fetched.clear(); trained.clear()
+    result = method.run(Ctx, config)                                                                       # the next try
+    assert trained == ["LvR", "LvL"] and fetched == [["LvR"], ["LvL"]]                                    # the saved groups are neither loaded nor trained again
+    assert [r["group"] for r in result.sections[0]["rows"]] == ["RvR", "RvL", "LvR", "LvL"]
+    assert [a.name for a in result.artifacts] == [f"outcome_model_{g}" for g in ("RvR", "RvL", "LvR", "LvL")] and set(result.extras["comparisons"]["pitch_effects"]) == {"RvR", "RvL", "LvR", "LvL"}
+    assert result.extras["classes"] == ["ball", "whiff"] and result.extras["cross_check"] == {"available": True, "groups": ["LvL"]}                    # the cross-check info of the groups is merged in order
+    assert RunParts(store, "key-1", "other-code").get("outcome_model_train:RvR") is None                    # a piece made by other code is not used
+    assert store.drop_parts("key-1") == 4
+
+
+def test_a_forced_run_starts_from_nothing_and_a_whole_run_leaves_no_saved_pieces(players):
+    cfg = {**RUN, "split": "cold_only", "cold_by": [], "bagging_reps": 1, "compare_baseline": False, "cross_check": False, "max_iter": 200, "min_class_count": 20}
+    out = players.run("outcome_model_train", cfg)
+    assert out["run"]["status"] == "success"
+    count = lambda: players.store.conn.execute("SELECT COUNT(*) FROM run_parts").fetchone()[0]
+    assert count() == 0
+    players.store.put_part(out["run"]["run_key"], "outcome_model_train:RvR", "x", {"stale": True})
+    players.run("outcome_model_train", cfg, force=True)
+    assert count() == 0                                                                                   # the forced run dropped the stale piece and finished whole
+
+
 def test_trained_once_with_no_folds_the_method_still_reports_the_fit_itself(players):
     """cold_only with an empty cold_by trains once on every year in scope (the default of the one-click flow for the logistic model): one 'train' row per role with the time, the
     sweeps and whether it converged, no unseen-player folds and no effect-gain section."""

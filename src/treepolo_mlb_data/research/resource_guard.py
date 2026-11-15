@@ -5,9 +5,10 @@ fixed cap: every number is read from the machine when it is needed and the run a
 
 * ``Guard.job(label)`` wraps every research run (the shared entry is ``ResearchService``): the process gets a lower priority, the number of threads is set from the CPU load at that
   moment (at least two cores stay free), a monitor thread writes one line per second to a log (the process tree's memory, the memory still free, the pagefile / commit, CPU, the graphics
-  card) and judges the situation: ``ok``, ``pressure`` (little is free: chunks get smaller, the run waits) or ``critical`` (the run is stopped safely with a message).
-* ``Guard.checkpoint()`` is called by loops (data loading, training sweeps, bootstrap members, folds); it waits while there is pressure and raises ``ResourceExhausted`` when it stays or when
-  it is critical, so the run fails with a clear message instead of freezing the computer.
+  card) and judges the situation: ``ok``, ``pressure`` (little is free: the run gives back what it can and goes on in smaller pieces) or ``critical`` (the run is stopped safely with a message).
+* ``Guard.checkpoint()`` is called by loops (data loading, training sweeps, bootstrap members, folds). Under pressure it first gives back what the process holds (``shrink``); if the shortage
+  is not the run's own doing it goes on in smaller pieces (waiting would free nothing), and if the run's own memory keeps growing it waits and then raises ``ResourceExhausted``. It raises
+  at once when it is critical, so the run fails with a clear message instead of freezing the computer.
 * ``Guard.chunk_rows()`` and ``Guard.gpu_chunks()`` size the pieces of work from what is free now; ``gpu_chunks`` also keeps every graphics-card call short (the target is a tenth of a
   second; Windows resets a card that does not answer for two seconds, which freezes the screen). There are no routine pauses between pieces: the work only rests when the card is hot.
 * ``Guard.device()`` says whether the graphics card may be used now and limits the share of its memory this process may take, leaving the part the display needs.
@@ -16,8 +17,10 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import gc
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -169,6 +172,11 @@ class Guard:
         self._busy_acc = 0.0
         self.interval = 1.0                  # seconds between two looks at the machine
         self.critical_grace = 8.0            # seconds in the critical state before a run that does not reach a checkpoint is interrupted
+        self.grow_allowance = int(0.25 * GB)  # how much this process may grow while the memory is short before the shortage counts as its own doing
+        self.shrink_every = 10.0             # seconds between two clean-ups while the memory is short
+        self.require_margin = int(0.5 * GB)  # what a step must leave free above the 'stop' line (the 'slow down' line does not forbid starting something)
+        self._pressure_rss: int | None = None
+        self._last_shrink = -1e9
 
     # ------------------------------------------------------------------------------------------------ the machine
     @property
@@ -269,6 +277,7 @@ class Guard:
                 self.peaks = {"rss_ours_gb": 0.0, "ram_available_min_gb": 1e9, "cpu_system_max": 0.0, "cpu_ours_max": 0.0, "gpu_util_max": 0.0, "gpu_used_max_gb": 0.0, "commit_free_min_gb": 1e9}
                 self.history = []
                 self._state, self._reason, self._critical_since = "ok", "", None
+                self._pressure_rss = None
         if first:
             self._start(label, log_path)
         try:
@@ -383,30 +392,67 @@ class Guard:
         if state == "critical":
             raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
         if state == "pressure":
-            waited = 0.0
-            while waited < wait:
-                self._sleep(1.0); waited += 1.0
-                state, why = (self._state, self._reason) if self._depth else self.judge(self.snapshot(max_age=0))
-                if state == "ok":
-                    return "ok"
-                if state == "critical":
-                    raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
-            raise ResourceExhausted(f"stopped safely at {label or self._label}: resources stayed scarce for {wait:.0f} s ({why})")
+            return self._under_pressure(label, wait, why)
+        self._pressure_rss = None
         return state
 
+    def shrink(self) -> None:
+        """Give back what this process holds without needing: garbage, and the graphics-memory cache of torch. Cheap, and it never changes a result."""
+
+        gc.collect()
+        torch = sys.modules.get("torch")
+        try:
+            if torch is not None and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        with self._lock:
+            self._snap = None                                                            # the next look at the machine sees what was given back
+        self._last_shrink = self._clock()
+
+    def _under_pressure(self, label: str, wait: float, why: str) -> str:
+        """The memory is short but not nearly gone. First give back what this process can. If that does not end the shortage: when it is not this process's doing (its own memory has not grown
+        since the shortage began) go on in smaller pieces, because waiting would free nothing; when this process is the one that grows, wait for the shortage to end and stop safely if it does not."""
+
+        if self._clock() - self._last_shrink >= self.shrink_every:
+            self.shrink()
+            state, why = self.judge(self.snapshot(max_age=0))
+            if state == "ok":
+                self._pressure_rss = None
+                return "ok"
+            if state == "critical":
+                raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
+        snap = self.snapshot()
+        if self._pressure_rss is None:
+            self._pressure_rss = snap.rss_ours
+        if snap.rss_ours - self._pressure_rss <= self.grow_allowance:
+            return "pressure"
+        waited = 0.0
+        while waited < wait:
+            self._sleep(1.0); waited += 1.0
+            state, why = (self._state, self._reason) if self._depth else self.judge(self.snapshot(max_age=0))
+            if state == "ok":
+                self._pressure_rss = None
+                return "ok"
+            if state == "critical":
+                raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
+        raise ResourceExhausted(f"stopped safely at {label or self._label}: resources stayed scarce for {wait:.0f} s ({why})")
+
     def require(self, nbytes: int, what: str = "") -> None:
-        """Refuse (safely) to start something that needs ``nbytes`` of memory when that would leave less than the reserve for the user."""
+        """Refuse (safely) to start something that needs ``nbytes`` of memory when that would leave less free than the 'stop' line plus a margin. Below the 'slow down' line a step may still start:
+        it runs in smaller pieces and gives back what it can; only what would leave the computer nearly out of memory is refused."""
 
         snap = self.snapshot(max_age=0.5)
-        lim = self.limits(snap)
-        if snap.ram_available - nbytes < lim.ram_soft:
+        floor = self.limits(snap).ram_hard + self.require_margin
+        if snap.ram_available - nbytes < floor:
+            self.shrink()
             waited = 0.0
-            while waited < 60 and self.snapshot(max_age=0).ram_available - nbytes < lim.ram_soft:
+            while waited < 60 and self.snapshot(max_age=0).ram_available - nbytes < floor:
                 self._sleep(1.0); waited += 1.0
             snap = self.snapshot(max_age=0)
-            if snap.ram_available - nbytes < lim.ram_soft:
-                raise ResourceExhausted(f"{what or 'this step'} needs about {nbytes / GB:.1f} GB but only {snap.ram_available / GB:.1f} GB is free and {lim.ram_soft / GB:.1f} GB must stay free for you / "
-                                        f"{what or '這一步'}需要約 {nbytes / GB:.1f} GB，目前可用只有 {snap.ram_available / GB:.1f} GB，要留 {lim.ram_soft / GB:.1f} GB 給你")
+            if snap.ram_available - nbytes < floor:
+                raise ResourceExhausted(f"{what or 'this step'} needs about {nbytes / GB:.1f} GB but only {snap.ram_available / GB:.1f} GB is free and {floor / GB:.1f} GB must stay free for you / "
+                                        f"{what or '這一步'}需要約 {nbytes / GB:.1f} GB，目前可用只有 {snap.ram_available / GB:.1f} GB，要留 {floor / GB:.1f} GB 給你")
 
     # ------------------------------------------------------------------------------------------------ pieces sized from what is free now
     def thread_count(self) -> int:

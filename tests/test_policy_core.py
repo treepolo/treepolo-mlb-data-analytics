@@ -249,3 +249,14 @@ def test_policy_values_are_ordered_in_every_state(seed, holes):
             assert np.allclose(pi[eng.no_support], eng.obs_eff[eng.no_support])      # no choice there
     for pi in (pi_o, pi_t, pi_u):
         assert np.allclose(pi.sum(axis=1), 1.0)
+
+
+def test_one_member_has_no_interval_and_several_members_have_one():
+    one = np.array([[0.5, -0.2]])
+    mean, lo, hi = pc.member_interval(one, 0.99)
+    assert np.allclose(mean, [0.5, -0.2]) and np.isnan(lo).all() and np.isnan(hi).all()                        # no spread, no interval: never [mean, mean]
+    many = np.array([[0.4, -0.3], [0.6, -0.1], [0.5, -0.2]])
+    mean, lo, hi = pc.member_interval(many, 0.99)
+    assert np.all(lo < mean) and np.all(mean < hi)
+    summary = pc.chance_summary(lo=np.full(2, np.nan), hi=np.full(2, np.nan), confidence=0.99)
+    assert summary["n"] == 0 and summary["found"] == 0                                                         # nothing was computed, so nothing is counted

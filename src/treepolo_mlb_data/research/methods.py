@@ -36,6 +36,7 @@ class ResearchContext:
     scope: dict[str, Any]
     progress: ProgressCallback | None = None
     store: Any = None             # the research store, so that a method can read another run (an anchor) it was told to use
+    parts: Any = None             # saved pieces of this run (``get(name)`` / ``put(name, payload)``): a method that works in pieces saves each one, so a stopped run starts again where it was
 
     def source_node(self):
         """The pitch table restricted to the research scope (unrestricted when no scope)."""

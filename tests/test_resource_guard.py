@@ -60,23 +60,57 @@ def test_a_checkpoint_stops_safely_when_the_computer_is_nearly_out_of_memory():
         g.checkpoint("training")
 
 
-def test_a_checkpoint_waits_while_resources_are_scarce_and_goes_on_when_they_come_back():
+def grow(machine, guard, to):
+    """The run's own memory grows while the memory is short (and the guard looks at the machine again)."""
+
+    machine.values["rss_ours"] = int(to)
+    guard._snap = None
+
+
+def test_under_pressure_a_checkpoint_gives_memory_back_first_and_goes_on_when_the_shortage_is_not_the_runs_own():
+    m = Machine(3.0 * GB)                                                              # 3.0 GB free: below the 3.2 GB 'slow down' line, far above the 1.6 GB 'stop' line
+    g = make(m)
+    given_back = []
+    real = g.shrink
+    g.shrink = lambda: (given_back.append(1), real())[1]
+    assert g.checkpoint("training") == "pressure"                                      # it does not wait: waiting would free nothing, the others keep their memory
+    assert given_back == [1] and g._sleeps == []
+    for _ in range(5):
+        assert g.checkpoint("training") == "pressure"
+    assert given_back == [1] and g._sleeps == []                                       # one clean-up per shrink_every seconds, not one per checkpoint
+
+
+def test_a_shortage_that_ends_after_the_clean_up_lets_the_run_go_on_at_once():
     m = Machine(3.0 * GB)
     g = make(m)
-    g._sleep = lambda s: m.values.update(ram_available=int(10 * GB))               # the user closes a program while the run waits
+    g.shrink = lambda: m.values.update(ram_available=int(8 * GB))                      # giving memory back is enough
+    assert g.checkpoint("training") == "ok" and g._pressure_rss is None
+
+
+def test_a_checkpoint_waits_while_the_run_itself_grows_in_a_shortage_and_goes_on_when_the_memory_comes_back():
+    m = Machine(3.0 * GB)
+    g = make(m)
+    assert g.checkpoint("training") == "pressure"                                      # the shortage begins at 1 GB of the run's own memory
+    grow(m, g, 2 * GB)                                                                 # the run grew by a GB since then: now it is the run's doing
+    g._sleep = lambda s: m.values.update(ram_available=int(10 * GB))                   # the user closes a program while the run waits
     assert g.checkpoint("training") == "ok"
     m2 = Machine(3.0 * GB)
     g2 = make(m2)
+    g2.checkpoint("training")
+    grow(m2, g2, 2 * GB)
     with pytest.raises(ResourceExhausted, match="stayed scarce"):
-        g2.checkpoint("training", wait=5)                                            # nothing changes: stop instead of squeezing the machine
+        g2.checkpoint("training", wait=5)                                              # nothing changes: stop instead of squeezing the machine
     assert sum(g2._sleeps) >= 5
 
 
 def test_a_step_that_needs_more_than_the_machine_can_spare_is_refused():
     g = make(Machine(6 * GB))
-    g.require(int(2.0 * GB), "a small step")                                          # 6 - 2 = 4 GB stays free, above the 3.2 GB kept for the user
+    g.require(int(2.0 * GB), "a small step")                                          # 4 GB stay free
+    g.require(int(1.0 * GB), "a step below the slow-down line")
+    g2 = make(Machine(3.0 * GB))
+    g2.require(int(0.7 * GB), "loading a group while the others hold memory")        # 2.3 GB stay free: above the 1.6 GB 'stop' line plus the margin; the step may start (it runs in smaller pieces)
     with pytest.raises(ResourceExhausted, match="needs about"):
-        g.require(int(4.0 * GB), "loading")
+        g.require(int(4.5 * GB), "loading")                                           # would leave 1.5 GB: nearly out of memory
 
 
 def test_pieces_of_work_are_sized_from_the_memory_free_now_and_shrink_under_pressure():

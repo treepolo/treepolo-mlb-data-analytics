@@ -92,6 +92,25 @@ def test_m0_rows_follow_the_table_and_the_closed_forms(built):
     assert table.lookup(0, 0, 2, 7, "none", 1)["rows"][0]["action"] == "FF"
 
 
+def test_a_table_from_one_member_has_no_intervals_and_the_answer_does_not_count(built, p7):
+    """One member and no resampling: there is no spread, so there are no intervals (not the estimate as a zero-width interval), no overlap letters, and the comparison count says nothing can be counted."""
+
+    _, model, env = built
+    shape = pc.Shape()
+    tensor = pb.model_tensor(model, shape, "RvR", effects="population")[:1]
+    obs, support, n = pb.usage_from_counts(p7, shape, min_count=100)
+    an = pb.analyze(pb.members_dynamics(tensor, obs, support, n), env, shape, kinds=("observed", "dp_trust"))
+    table = qc.SituationTable.from_rows(pm.pack_arrays(pm.situation_arrays("RvR", an, tensor, env, CONFIG)))
+    res = table.lookup(1, 2, 1, "100", "SL", 2)
+    sup = [r for r in res["rows"] if r["supported"]]
+    assert len(sup) >= 2 and all(r["q"] is not None and r["advantage"] is not None for r in sup)                          # the estimates are there
+    assert all(r[k] is None for r in sup for k in ("q_lo", "q_hi", "adv_lo", "adv_hi", "m_lo", "m_hi", "hr_lo", "hr_hi"))     # the intervals are not
+    assert all(r["overlap_group"] is None for r in res["rows"])
+    assert res["comparisons"]["n"] == 0 and res["comparisons"]["found"] == 0 and res["comparisons"]["expected_by_chance"] == 0.0
+    text = qc.format_table(res)
+    assert "no interval" in text and "nothing can be counted" in text and "luck" not in text
+
+
 def test_player_queries_use_the_effects_of_the_named_pitcher(built, p7):
     table, model, env = built
     pq = qc.PlayerQuery(table, model, env)

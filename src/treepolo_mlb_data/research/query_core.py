@@ -305,7 +305,9 @@ class PlayerQuery:
         def interval(arr):
             with np.errstate(all="ignore"):
                 m = np.nanmean(arr, axis=0)
-                sd = np.nanstd(arr, axis=0, ddof=1) if K > 1 else np.zeros_like(m)
+                if K < 2:                                                        # one member: no spread, so no interval (not the mean as a zero-width interval)
+                    return m, np.full_like(m, np.nan), np.full_like(m, np.nan)
+                sd = np.nanstd(arr, axis=0, ddof=1)
             return m, m - t * sd, m + t * sd
 
         q, qlo, qhi = interval(stack["q"]); adv, alo, ahi = interval(stack["adv"]); mg, mlo, mhi = interval(stack["marg"])
@@ -401,6 +403,9 @@ def format_table(result: Mapping[str, Any]) -> str:
     def num(v, digits=4):
         return "   -  " if v is None else f"{v:.{digits}f}"
 
+    def span(lo, hi):
+        return "[" + num(lo) + ", " + num(hi) + "]" if lo is not None and hi is not None else "[no interval]"
+
     lines = [f"mode {result['mode']}  group {result['group']}" + (f"  level {result['level']}" if result.get("level") else "")]
     for side, info in (result.get("players") or {}).items():
         lines.append(f"{side}: {info.get('name') or info['id']}  pitches {info['pitches']}  shrinkage {num(info['shrinkage'], 2)}")
@@ -408,10 +413,12 @@ def format_table(result: Mapping[str, Any]) -> str:
         lines.append(f"! {note}")
     lines.append("action flag         Q [99% interval]            advantage [interval]               marginal(+10pp)  HR/pitch  n      overlap")
     for r in result["rows"]:
-        lines.append(f"{r['action']:<6} {r['flag']:<12} {num(r['q'])} [{num(r['q_lo'])}, {num(r['q_hi'])}]  {num(r['advantage'])} [{num(r['adv_lo'])}, {num(r['adv_hi'])}]   "
+        lines.append(f"{r['action']:<6} {r['flag']:<12} {num(r['q'])} {span(r['q_lo'], r['q_hi'])}  {num(r['advantage'])} {span(r['adv_lo'], r['adv_hi'])}   "
                      f"{num(r['marginal'])}        {num(r['hr_probability'])}   {r['n']:<6} {r['overlap_group'] or '-'}")
     cmp_ = result.get("comparisons")
-    if cmp_:
+    if cmp_ and not cmp_["n"]:
+        lines.append("no intervals were computed, so nothing can be counted / 沒有算區間，無法計數")
+    elif cmp_:
         lines.append(f"compared {cmp_['n']} pitch types; at {cmp_['confidence']:.0%} about {cmp_['expected_by_chance']:.2f} intervals would exclude 0 by luck alone; found {cmp_['found']}")
     lines.append("not covered: " + "; ".join(result.get("not_covered") or []))
     return "\n".join(lines)

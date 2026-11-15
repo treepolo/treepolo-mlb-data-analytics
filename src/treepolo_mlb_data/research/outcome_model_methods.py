@@ -16,6 +16,7 @@ from .lazy import Lazy
 from .league_methods import DIGITS, GROUPS, LeagueModelMethod, fetch_columns
 from .methods import ArtifactData, ResearchContext, ResearchMethod, ResearchResult, register_method
 from .outcome_models import controls as ctl
+from .resource_guard import guard
 from .sections import make_section
 from .sequencing_methods import BUNT_POLICY, FILTERS, _check_filters
 
@@ -133,21 +134,46 @@ class OutcomeModelTrainMethod(ResearchMethod):
         # cold_only with an empty cold_by is allowed: the model is trained once on every year in scope and no unseen-player folds are run (they belong to the comparison mode and the setting search)
 
     # ------------------------------------------------------------------------------------------------ run
+    LISTS = ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls", "crosscheck")
+
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         years = scope_years(ctx.scope)
-        cols_all = fetch_columns(ctx, config, config["groups"], years)
         progress = ctx.progress
-        out: dict[str, list] = {k: [] for k in ("fit", "curve", "calibration", "common", "effects", "replication", "gain", "controls", "crosscheck")}
+        out: dict[str, list] = {k: [] for k in self.LISTS}
         out["crosscheck_info"] = {}
         artifacts, comparisons, classes = [], {"pitch_effects": {}}, None
         for gi, group in enumerate(config["groups"]):
-            sel = np.nonzero(cols_all["group"] == group)[0]
-            if len(sel) == 0:
-                raise ConfigError(f"Group {group} has no rows / 分組 {group} 沒有資料")
-            cols = lc.take(cols_all, sel)
             if progress:
                 progress("outcome_model_train", gi / len(config["groups"]), f"group {group}")
-            classes = self._group(ctx, config, group, cols, out, artifacts, comparisons)
+            piece = ctx.parts.get(f"outcome_model_train:{group}") if ctx.parts is not None else None
+            if piece is not None:                                                   # an earlier try that was stopped had finished this group: use it
+                if progress:
+                    progress("outcome_model_train", gi / len(config["groups"]), f"group {group}: the result saved by the earlier try is used")
+            else:
+                guard.shrink()                                                       # one group's rows at a time, and what the group before held is given back first
+                cols = fetch_columns(ctx, config, [group], years)
+                if len(cols["group"]) == 0:
+                    raise ConfigError(f"Group {group} has no rows / 分組 {group} 沒有資料")
+                g_out: dict[str, Any] = {k: [] for k in self.LISTS}
+                g_out["crosscheck_info"] = {}
+                g_artifacts: list[ArtifactData] = []
+                g_comparisons: dict[str, Any] = {"pitch_effects": {}}
+                g_classes = self._group(ctx, config, group, cols, g_out, g_artifacts, g_comparisons)
+                del cols
+                piece = {"out": g_out, "artifacts": [{"name": a.name, "description": a.description, "columns": list(a.columns), "rows": [dict(r) for r in a.rows]} for a in g_artifacts],
+                         "comparisons": g_comparisons, "classes": list(g_classes) if g_classes is not None else None}
+                if ctx.parts is not None:
+                    ctx.parts.put(f"outcome_model_train:{group}", piece)             # saved at once: a run that is stopped later does not lose this group
+            for k in self.LISTS:
+                out[k] += piece["out"][k]
+            info = piece["out"]["crosscheck_info"]
+            if info:
+                out["crosscheck_info"] = {**out["crosscheck_info"], **info} if info.get("available") or not out["crosscheck_info"] else out["crosscheck_info"]
+            artifacts += [ArtifactData(a["name"], a["description"], tuple(a["columns"]), tuple(a["rows"])) for a in piece["artifacts"]]
+            comparisons["pitch_effects"].update(piece["comparisons"]["pitch_effects"])
+            classes = piece["classes"]
+            del piece
+            guard.shrink()
         loss_cols = tuple(f"loss_{c}" for c in (classes or []))
         sections = (
             make_section("Fit summary 擬合摘要", ("group", "role", "mode", "n_train", "n_eval", "logloss", "brier", "prior_logloss", "fit_seconds", "n_iter", "hit_cap") + loss_cols, out["fit"],

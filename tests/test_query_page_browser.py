@@ -33,6 +33,42 @@ def launch(p):
     return p.chromium.launch(executable_path=str(candidates[0]) if candidates else None, args=["--no-sandbox"])
 
 
+def test_a_query_without_intervals_says_so_and_does_not_count(server):
+    """One member and no resampling: the answer has no intervals. Every interval cell says so and the comparison-count line says nothing can be counted."""
+
+    import json
+    import re
+
+    url, query, service = server
+
+    def strip(route):
+        response = route.fetch()
+        body = response.json()
+        for row in body["rows"]:
+            for key in ("q_lo", "q_hi", "adv_lo", "adv_hi", "m_lo", "m_hi", "hr_lo", "hr_hi"):
+                row[key] = None
+        body["comparisons"] = {"n": 0, "confidence": 0.99, "expected_by_chance": 0.0, "found": 0, "what": "interval_excludes_zero"}
+        route.fulfill(response=response, body=json.dumps(body))
+
+    with playwright.sync_playwright() as p:
+        try:
+            browser = launch(p)
+        except Exception as exc:  # pragma: no cover - no browser in this environment
+            pytest.skip(f"no Chromium available: {exc}")
+        page = browser.new_page(viewport={"width": 1300, "height": 1500})
+        page.route(re.compile(r"/api/research/pitch-query\?"), strip)
+        page.goto(url + "?page=research-query")
+        page.wait_for_selector("#rq-go", timeout=15000)
+        page.click("#rq-go")
+        page.wait_for_selector("#rq-table tbody tr", timeout=30000)
+        table = page.locator("#rq-table").inner_text()
+        assert "—（沒有算區間）" in table and "[—" not in table and "[nan" not in table.lower()
+        supported = page.locator("#rq-table tbody tr:not(.rq-row-unsupported)").first.inner_text()
+        assert supported.count("—（沒有算區間）") == 4                                           # Q, versus the usual mix, marginal change and the home-run probability
+        assert "沒有算區間，無法計數" in page.locator("#rq-chance").inner_text() and "純靠運氣" not in page.locator("#rq-chance").inner_text()
+        browser.close()
+
+
 def test_query_page_shows_the_table_flags_and_chart(server, tmp_path):
     url, query, service = server
     pid = service.pitch_query_players(query["id"], "RvR", "pitcher", "")["players"][0]
