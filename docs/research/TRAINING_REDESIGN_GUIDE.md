@@ -18,12 +18,12 @@
 - 跑測試要加 `PYTHONPATH=src`（PowerShell：`$env:PYTHONPATH='src'`），例如 `D:\soft\Python313\python.exe -m pytest -q -p no:cacheprovider tests\test_xxx.py`。完整測試約 20–25 分鐘：`D:\soft\Python313\python.exe -m pytest -q -p no:cacheprovider -m "not integration"`。
 - 不要用 `pkill -f` 或任何會比對到自己指令列的方式結束程序；要停自己開的程序，用它的 PID。
 - 不要在真實資料上跑研究，除非工作包明確要求（只有「冒煙」等級的確認可以，跑之前先告訴使用者）。工作包 C、E、F 完成時，各在真實資料上跑一次冒煙（RvR、少量資料），確認不會在真實資料上出錯，結果附在回報裡。
-- **保護使用者的電腦（這台已經被弄當機兩次，最優先）**：硬體是 15.9 GB 記憶體、i5-9400F 6 核、GTX 1650 4 GB（同時負責顯示畫面）。所有在真實資料上的執行，以及任何預計超過 1 分鐘的執行，一律：
-  - 程序優先順序設為「低於正常」；運算執行緒最多 4 個（`OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`NUMBA_NUM_THREADS`、PyTorch `set_num_threads` 都設）。
-  - 記憶體上限以「主程序＋所有子程序」總和計算，不超過實體記憶體的 40%（約 6 GB），超過就自己停。
-  - 預設用 CPU，不用 GPU；只有使用者明確同意才用 GPU。
-  - 先用 10% 資料實測時間、記憶體、CPU，並確認跑的時候電腦還能正常操作，推算全量安全才跑全量。
-  - 這些保護要做進程式（研究執行的共用入口），不是每次靠人記得。
+- **保護使用者的電腦（這台已經被弄當機兩次，最優先）**：硬體是 15.9 GB 記憶體、i5-9400F 6 核、GTX 1650 4 GB（同時負責顯示畫面）。原則是**永遠不能用光當下可用的資源**，依執行當下的狀況動態調整，不是事前定一個固定上限：
+  - 記憶體：開始前與執行中持續讀取系統「目前可用記憶體」，只用其中一部分，並隨時保留餘裕給使用者正在用的程式；可用記憶體下降時，自動改用較小的分批（分批載入、分批計算），還是不夠就暫停或安全停止並回報，絕不硬跑。計算時算主程序加所有子程序。
+  - CPU：程序優先順序設為「低於正常」；執行緒數依當下 CPU 負載決定，至少留一部分核心給系統（`OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`NUMBA_NUM_THREADS`、PyTorch `set_num_threads`）。
+  - GPU：要用 GPU。依當下「剩餘顯示記憶體」決定分批大小並限制本程序可用比例（`torch.cuda.set_per_process_memory_fraction` 等），保留畫面顯示需要的部分；把運算切成短小的批次，避免單次計算長時間霸佔顯示卡讓畫面卡住。
+  - 先用 10% 資料實測，確認跑的時候電腦還能正常操作，再跑全量。
+  - 這些保護做進程式（所有研究執行共用的入口與資料載入、訓練迴圈），不是每次靠人記得。
 - 介面程式不用 `innerHTML`、`localStorage`、`sessionStorage`（`tests/test_research_ui_wiring.py` 會檢查）。新的前端 JS 要加進 `src/treepolo_mlb_data/web_static/index.html` 與 `.github/workflows/ci.yml` 的 `node --check` 清單。
 - 改了某個研究方法的輸出或意義，就把該方法的 `version` 加 1（這會讓舊紀錄不再被誤用）。舊的研究方法（連投、前一球那些，`sequencing_methods.py`、`regression_methods.py`、`modeling_methods.py`）**不要改**，它們的結果要能重現。
 - 用詞：介面與文件用正體中文，給使用者看的說明要白話，不用「P5／P6」這類階段代號。
