@@ -15,9 +15,10 @@ normal prior, or the tiny 'within' value that leaves the effects practically uns
   columns going through a general-purpose optimiser. The multi-class form is the baseline-free softmax with exact K x K blocks (not one binary model per class).
 * The shrinkage of the effects that are not 'within' is estimated from the data while the sweeps run (empirical Bayes: the variance of the effects of a group and class is the mean of
   effect^2 + posterior variance, the posterior variance from the unit's own Hessian), then the sweeps go on with the penalties fixed until the logits stop moving.
-* At the end every effect group is centred (count-weighted mean 0 inside its parent: the pitcher effects around the intercept, the pitcher-and-pitch effects around the pitcher and
-  the pitch type, ...) and the means are moved to the parent. The logits of every pitch do not change, so predictions for named players are the same; but the league-average player
-  (all effects 0) is then really the average one. (A group of nearly unpenalised effects otherwise keeps the level of a pitch type for itself.)
+* At the end every effect group is centred (information-weighted mean 0 inside its parent: the pitcher effects around the intercept, the pitcher-and-pitch effects around the pitcher
+  and the pitch type, ...) and then calibrated: the means moved into the parents are chosen so that the league-average player (all effects 0) reproduces the observed share of every
+  outcome overall, by pitch type and by count (``calibrate``). The logits of every pitch do not change, so predictions for named players are the same. (A group of nearly unpenalised
+  effects otherwise keeps the level of a pitch type for itself, and the mean of its logits is far from the logit of the mean for the rare outcomes.)
 """
 from __future__ import annotations
 
@@ -30,6 +31,14 @@ from ..resource_guard import guard
 
 VAR_MIN, VAR_MAX = 1e-4, 100.0
 START_PENALTY = 1.0
+
+
+def dz_offsets() -> tuple[int, int]:
+    """First column of the pitch-type block and of the count block of the situation design."""
+
+    from . import design as dz
+
+    return dz.SIT_OFFSETS["type"], dz.SIT_OFFSETS["count"]
 
 
 def torch_cat(parts):
@@ -498,6 +507,54 @@ class GroupedSoftmax:
                 if moved < 1e-12:
                     break
             self.th[g.name] = th
+        self.calibrate()
+
+    def calibrate(self, rounds: int = 12, eps: float = 0.5) -> None:
+        """Make the league-average player (every effect 0) reproduce what happened, as probabilities.
+
+        Centring the effects on the logit scale does not do it: when the effects are nearly unpenalised, a unit that never saw an outcome has an effect far below 0 for it (-9 to -17 logits
+        for the rare outcomes), and the mean of such logits is not the logit of the mean probability. So the means that are moved from the effects into their parents are chosen so that the
+        average predicted probability of every class equals the observed share overall, by pitch type (the parent of the pitcher-and-pitch effects) and by count (the parent of the
+        batter-and-count effects): iterative proportional fitting on the logits, ``eps`` pitches of smoothing. A shift is added to the parent (the intercept, a pitch-type column, a count
+        column) and taken off the units of the group nested in it, so the logits of every pitch, and with them every prediction for a named player, stay the same."""
+
+        if not self.groups:
+            return
+        torch = self.torch
+        K, S, D = self.K, self.S, self.D
+        Wc = self._scatter(self.cell, self.W[:, None], S)[:, 0]
+        Oc = self._scatter(self.cell, self.Y, S)
+        type_off, count_off = dz_offsets()
+        type_of_cell = self.sit[:, 5] - type_off                              # block 5 is the pitch type, block 0 the count (see design.SIT_BLOCKS)
+        count_of_cell = self.sit[:, 0] - count_off
+        families = []
+        for name, lo, n, cell_stratum in (("intercept", D, 1, None), ("type", type_off, 9, type_of_cell), ("count", count_off, 12, count_of_cell)):
+            for g in self.groups:
+                found = None
+                for pname, mapping in self._parent_maps[g.name]:
+                    if pname != "dense" or not bool((mapping >= 0).all()):
+                        continue
+                    if (name == "intercept" and bool((mapping == D).all())) or (name != "intercept" and bool(((mapping >= lo) & (mapping < lo + n)).all())):
+                        found = mapping - lo if name != "intercept" else torch.zeros_like(mapping)
+                        break
+                if found is not None:
+                    cols = torch.tensor([D] if name == "intercept" else list(range(lo, lo + n)), device=self.dev)
+                    families.append((cell_stratum if name != "intercept" else torch.zeros(S, dtype=torch.int64, device=self.dev), n, cols, g.name, found))
+                    break
+        for _ in range(rounds):
+            biggest = 0.0
+            for cell_stratum, n, cols, gname, unit_stratum in families:
+                pc = torch.softmax(self._zc(self.Bt), dim=1)
+                pred = pc.new_zeros((n, K)).index_add_(0, cell_stratum, Wc[:, None] * pc)
+                obs = pc.new_zeros((n, K)).index_add_(0, cell_stratum, Oc)
+                delta = torch.log(obs + eps) - torch.log(pred + eps)
+                delta = delta - delta.mean(dim=1, keepdim=True)                # the same shift for every class changes nothing
+                self.Bt[cols] = self.Bt[cols] + delta
+                self.th[gname] = self.th[gname] - delta[unit_stratum]
+                biggest = max(biggest, float(delta.abs().max()))
+            guard.checkpoint("calibration")
+            if biggest < 1e-4:
+                break
 
     def export(self) -> dict[str, Any]:
         return {"dense": self.Bt[: self.D].cpu().numpy(), "intercept": self.Bt[self.D].cpu().numpy(), "effects": {k: v.cpu().numpy() for k, v in self.th.items()},

@@ -87,6 +87,45 @@ def test_the_league_average_player_is_the_average_one_when_effects_are_nearly_un
             assert abs(float(pop[m][:, ci].mean()) - observed) < 0.03
 
 
+def _population_gaps(model, cols):
+    """(largest overall gap, largest gap by count) between the mean population prediction and what happened, in probability."""
+
+    from treepolo_mlb_data.research.outcome_models import design as dz
+
+    sub, y = model._encode(cols, model.settings, fixed_classes=True)
+    pop = model.predict_proba(sub, effects="population")
+    K = len(model.classes)
+    share = np.bincount(y, minlength=K) / len(y)
+    overall = float(np.abs(pop.mean(axis=0) - share).max())
+    cnt = dz.count_cell(sub)
+    by_count = max(float(np.abs(pop[cnt == c].mean(axis=0) - np.bincount(y[cnt == c], minlength=K) / (cnt == c).sum()).max()) for c in range(12) if (cnt == c).sum() > 300)
+    return overall, by_count
+
+
+@pytest.mark.parametrize("extra", [
+    dict(),
+    dict(control_pitcher="within", control_pitcher_pitch="within", control_day="within", control_batter="effect", control_survival="batter_and_count"),
+    dict(control_pitcher_pitch="within", control_batter="effect", control_survival="batter_and_count"),
+])
+def test_the_league_average_player_reproduces_what_happened_overall_and_by_count(extra, monkeypatch):
+    """With nearly unpenalised effects the units that never saw a rare outcome get effects far below 0 for it; the average of such logits is not the logit of the average probability.
+    The calibration makes the population prediction match the observed share of every class, overall and by count (before it: up to 17 points off by count, 5 points overall), and
+    it only moves means between the effects and their parents, so named players keep exactly the predictions they had."""
+
+    from treepolo_mlb_data.research.outcome_models import fastglm
+
+    cols = _world("W4", 6000, 3)
+    model = _fit(cols, "grouped", **extra)
+    overall, by_count = _population_gaps(model, cols)
+    assert overall < 0.003 and by_count < 0.02
+    monkeypatch.setattr(fastglm.GroupedSoftmax, "calibrate", lambda self, *a, **k: None)
+    plain = _fit(cols, "grouped", **extra)
+    rows = _rows(cols)
+    assert np.abs(model.predict_proba(rows, effects="specific") - plain.predict_proba(rows, effects="specific")).max() < 1e-5
+    if extra:
+        assert _population_gaps(plain, cols)[0] > overall                                  # the information-weighted centring alone leaves the population off
+
+
 def test_a_fit_that_follows_another_starts_from_it_and_keeps_its_shrinkage(w4):
     main = _fit(w4, "grouped", control_pitcher="effect", control_batter="effect")
     keep = np.nonzero(np.asarray(w4["pitcher"]) % 5 != 0)[0]
