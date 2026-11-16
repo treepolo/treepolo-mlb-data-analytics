@@ -163,7 +163,7 @@ def test_the_per_pitcher_engine_is_in_the_result_with_its_coverage(service, w1, 
     res = service.store.load_result(run["id"])
     assert res["extras"]["pitcher_engine"]["groups"]["RvR"]["enabled"] and "pitcher_engine" in {n["control"] for n in res["extras"]["notes"]}
     check = section(service, run, "Pitcher engine check")                                                                              # every pitcher against what he really did, and the weighted row
-    assert len(check) == 6 and check[-1]["pitcher"].startswith("ALL") and all(r["actual_excess_runs"] is not None and r["hr_actual"] is not None for r in check)
+    assert len(check) == 6 and check[-1]["pitcher"].startswith("ALL") and all(r["start_value_actual"] is not None and r["hr_actual"] is not None for r in check)
     # the direct check and the score read what the run stored (the score uses the same model as a stand-in for a model of another season)
     from treepolo_mlb_data.research import policy_check_methods as pcm, policy_score_methods as psm
 

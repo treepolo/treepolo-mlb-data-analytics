@@ -110,7 +110,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 13     # 13: predict_model_run_id: the per-pitcher engine can use a prediction model. 12: the day and batter effects are shrunk by empirical Bayes before they are averaged. 11: the per-pitcher engine averages the day and the batter effects over his plate appearances on the probability scale (pitcher_context). 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 14     # 14: the per-pitcher check is in absolute values. 13: predict_model_run_id: the per-pitcher engine can use a prediction model. 12: the day and batter effects are shrunk by empirical Bayes before they are averaged. 11: the per-pitcher engine averages the day and the batter effects over his plate appearances on the probability scale (pitcher_context). 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -213,6 +213,7 @@ class PitchPolicyMethod(ResearchMethod):
         r1_rows, value_rows, risk_rows, marg_rows, support_rows, artifacts = [], [], [], [], [], []
         direction_rows, anchor_rows, anchor_cell_rows, replication_rows, coverage_rows = [], [], [], [], []
         pitcher_summary, pitcher_detail, pitcher_cov, pitcher_info = [], [], [], {}
+        start_re_by_group: dict[str, float] = {}
         progress = ctx.progress
         comparisons: dict[str, dict[str, Any]] = {"marginal": {}, "direction": {}, "anchor": {}}
         for group in config["groups"]:
@@ -221,6 +222,7 @@ class PitchPolicyMethod(ResearchMethod):
                 raise ConfigError(f"Group {group} has no rows / 分組 {group} 沒有資料")
             cols = lc.take(cols_all, sel)
             env = build_environment(cols, re.re_by_state, shape)
+            start_re_by_group[group] = float((env.start * env.re_cnt[0, 0]).sum() / env.start.sum())            # the run expectancy table's value at the start of a plate appearance
             if progress:
                 progress("pitch_policy", None, f"group {group}")
             year_models = {"need": max(int(config["cross_members"]) if config["cross_eval"] else 1, int(config["replication_members"]), 1)}      # the model of each season alone, trained once for both uses
@@ -316,12 +318,12 @@ class PitchPolicyMethod(ResearchMethod):
                 make_section("Pitcher engine coverage 逐投手引擎涵蓋（打席數門檻、涵蓋的投手與打席比例；tau＝各結果類別的真實效應標準差估計）",
                              ("group", "min_pa", "pitchers_total", "pitchers_used", "pa_total", "pa_used", "pa_share", "pitch_share", "units", "units_pulled_over_half", "tau_by_class"),
                              pitcher_cov, ("group",), "duckdb", DIGITS),
-                make_section("Pitcher engine check 逐投手引擎檢查（照實際配球打：引擎算的每位投手每打席失分（起點期望失分減聯盟的）和全壘打率，對他自己在這些資料裡的實際值（每打席各球得分期望值變化加總）；最後一列是按打席加權平均）",
-                             ("group", "pitcher", "pa", "predicted_excess_runs", "actual_excess_runs", "hr_predicted", "hr_actual", "shrink_mean"),
-                             [{"group": d["group"], "pitcher": str(d["pitcher"]), "pa": d["pa"], "predicted_excess_runs": d.get("predicted_excess_runs"), "actual_excess_runs": d.get("actual_excess_runs"),
+                make_section("Pitcher engine check 逐投手引擎檢查（絕對值：引擎照實際配球算的每位投手起點期望失分，對他自己在這些資料裡實際的每打席得分期望值＝得分期望值表的打席起點平均加他每打席各球得分期望值變化加總；最後一列是按打席加權平均；兩邊的聯盟平均不同：引擎 vs 得分期望值表，見 R1 對照的打席起點差）",
+                             ("group", "pitcher", "pa", "start_value_engine", "start_value_actual", "hr_predicted", "hr_actual", "shrink_mean"),
+                             [{"group": d["group"], "pitcher": str(d["pitcher"]), "pa": d["pa"], "start_value_engine": d["start_observed"], "start_value_actual": (None if d.get("actual_excess_runs") is None else start_re_by_group[d["group"]] + d["actual_excess_runs"]),
                                "hr_predicted": d["hr_observed"], "hr_actual": d.get("actual_hr"), "shrink_mean": d["shrink_mean"]} for d in pitcher_detail]
-                             + [{"group": c["group"], "pitcher": "ALL (weighted by plate appearances)", "pa": c["pa_used"], "predicted_excess_runs": c.get("predicted_excess_runs"),
-                                 "actual_excess_runs": c.get("actual_excess_runs"), "hr_predicted": c.get("hr_predicted"), "hr_actual": c.get("hr_actual"), "shrink_mean": None}
+                             + [{"group": c["group"], "pitcher": "ALL (weighted by plate appearances)", "pa": c["pa_used"], "start_value_engine": c.get("start_observed_pitchers"),
+                                 "start_value_actual": start_re_by_group[c["group"]] + c["actual_excess_runs"] if "actual_excess_runs" in c else None, "hr_predicted": c.get("hr_predicted"), "hr_actual": c.get("hr_actual"), "shrink_mean": None}
                                 for c in pitcher_cov if "predicted_excess_runs" in c], ("group", "pitcher"), "duckdb", DIGITS),
                 make_section("Pitcher engine detail 逐投手引擎明細（每位投手一列；saving＝比實際配球每打席少失分）",
                              ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed", "hr_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
