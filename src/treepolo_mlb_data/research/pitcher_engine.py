@@ -83,19 +83,34 @@ def effects_by_member(model) -> np.ndarray:
     return np.stack([_merged(model, m["coef"]) for m in model.members])
 
 
-def unit_information(model, sub: Mapping[str, np.ndarray], chunk: int = 100_000) -> tuple[np.ndarray, np.ndarray]:
-    """([units, K, K] information of every (pitcher, type) unit about its own effect vector, [units] number of its pitches), from the training rows ``sub``."""
+def predicted(model, sub: Mapping[str, np.ndarray], chunk: int = 100_000) -> np.ndarray:
+    """[rows, K] the model's own probabilities of the training rows (all its effects)."""
 
-    index = model.indexes[TARGET]
-    unit = index.lookup(dz.effect_keys(sub, TARGET))
+    n = len(np.asarray(sub["game_pk"]))
+    out = []
+    for a in range(0, n, chunk):
+        guard.checkpoint("pitcher engine: probabilities")
+        rows_sl = {k: np.asarray(v)[a:a + chunk] for k, v in sub.items() if isinstance(v, np.ndarray) and len(v) == n}
+        out.append(model.predict_proba(rows_sl, effects="specific"))
+    return np.concatenate(out)
+
+
+def unit_information(model, sub: Mapping[str, np.ndarray], group: str = TARGET, proba: np.ndarray | None = None, chunk: int = 100_000) -> tuple[np.ndarray, np.ndarray]:
+    """([units, K, K] information of every unit of ``group`` about its own effect vector, [units] number of its pitches), from the training rows ``sub`` (``proba``: their probabilities)."""
+
+    index = model.indexes[group]
+    unit = index.lookup(dz.effect_keys(sub, group))
     U, K = len(index), len(model.classes)
     H = np.zeros((U, K, K)); rows = np.zeros(U)
     n = len(unit)
     for a in range(0, n, chunk):
         guard.checkpoint("pitcher engine: information")
         sl = slice(a, min(n, a + chunk))
-        rows_sl = {k: np.asarray(v)[sl] for k, v in sub.items() if isinstance(v, np.ndarray) and len(v) == n}
-        p = model.predict_proba(rows_sl, effects="specific")
+        if proba is None:
+            rows_sl = {k: np.asarray(v)[sl] for k, v in sub.items() if isinstance(v, np.ndarray) and len(v) == n}
+            p = model.predict_proba(rows_sl, effects="specific")
+        else:
+            p = proba[sl]
         u = unit[sl]; ok = u >= 0
         p, u = p[ok], u[ok]
         rows += np.bincount(u, minlength=U)
@@ -148,7 +163,29 @@ def shrink_factors(beta: np.ndarray, H: np.ndarray) -> tuple[np.ndarray, np.ndar
     return np.repeat(scalar[:, None], K, axis=1), tau2, se2
 
 
-def shrunk_copy(model, factor: np.ndarray):
+CONTEXT_GROUPS = ("pitcher_game", "batter", "batter_count")
+
+
+def shrink_all(model, sub: Mapping[str, np.ndarray]):
+    """(factor of the (pitcher, type) units, tau2, se2, {group: factor} of the day, batter and batter x count effects). The day and batter effects are fixed effects as unshrunk as the pitcher's: averaging
+    them on the probability scale while the pitcher's level is shrunk makes the average too low (the centred day effects have the pitcher's level as their parent), so they are shrunk by the same
+    empirical Bayes, each group on its own."""
+
+    proba = predicted(model, sub)
+    beta = effects_by_member(model).mean(axis=0)
+    H, _ = unit_information(model, sub, TARGET, proba)
+    factor, tau2, se2 = shrink_factors(beta, H)
+    others = {}
+    for name in CONTEXT_GROUPS:
+        if name in model.groups:
+            E = _effect_rows(model, name)
+            E = E - E.mean(axis=1, keepdims=True)
+            Hn, _ = unit_information(model, sub, name, proba)
+            others[name] = shrink_factors(E, Hn)[0]
+    return factor, tau2, se2, others
+
+
+def shrunk_copy(model, factor: np.ndarray, others: Mapping[str, np.ndarray] | None = None):
     """The model with the merged (pitcher, type) effects shrunk by ``factor`` (every bagged member, the same factor) and the pitcher's overall effect removed: nothing else changes. A type a pitcher
     has no unit for gets the league average."""
 
@@ -162,6 +199,15 @@ def shrunk_copy(model, factor: np.ndarray):
         coef[a:a + size] = (factor * merged).astype(coef.dtype)
         if pb_ is not None:
             coef[pb_[0]:pb_[0] + pb_[1]] = 0.0
+        for name, f in (others or {}).items():
+            start = int(model.members[0]["n_dense"])
+            for g in model.groups:
+                if g == name:
+                    break
+                start += len(model.indexes[g])
+            size = len(model.indexes[name])
+            blk = np.asarray(coef[start:start + size], dtype=np.float64)
+            coef[start:start + size] = (f * (blk - blk.mean(axis=1, keepdims=True))).astype(coef.dtype)
         members.append({**m, "coef": coef})
     other.members = members
     return other
@@ -314,10 +360,9 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
     """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
     of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
 
-    beta = effects_by_member(model).mean(axis=0)
-    H, unit_rows = unit_information(model, sub)
-    factor, tau2, se2 = shrink_factors(beta, H)
-    shrunk = shrunk_copy(model, factor)
+    factor, tau2, se2, others = shrink_all(model, sub)
+    _, unit_rows = unit_information(model, sub, TARGET, predicted(model, sub))
+    shrunk = shrunk_copy(model, factor, others)
     ids, pa, pitches = plate_appearances(sub)
     use = np.nonzero(pa >= min_pa)[0]
     keys = model.indexes[TARGET].keys
@@ -330,7 +375,7 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
     for i, j in enumerate(order):
         guard.checkpoint("pitcher engine")
         pid = int(ids[j])
-        dyn = averaged_dynamics(shrunk, model, sub, pid, shape, group, obs, support, n, context)
+        dyn = averaged_dynamics(shrunk, shrunk, sub, pid, shape, group, obs, support, n, context)
         res = solve_pitcher(dyn, env, shape, use_kinds, trust)
         results.append(res)
         mine = unit_pitcher == pid

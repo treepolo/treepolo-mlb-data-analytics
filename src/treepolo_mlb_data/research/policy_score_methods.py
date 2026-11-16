@@ -111,10 +111,8 @@ class PolicyScoreMethod(ResearchMethod):
             sub, _ = model._encode(cols, model.settings, fixed_classes=True)
             if pe.unavailable(model) is not None:
                 continue
-            beta = pe.effects_by_member(model).mean(axis=0)
-            H, _ = pe.unit_information(model, sub)
-            factor, _, _ = pe.shrink_factors(beta, H)
-            shrunk = pe.shrunk_copy(model, factor)
+            factor, _, _, others = pe.shrink_all(model, sub)
+            shrunk = pe.shrunk_copy(model, factor, others)
             ids, pa_new, _ = pe.plate_appearances(sub)
             pa_in = dict(zip(ids.tolist(), pa_new.tolist()))
             kinds_p = [k for k in POLICIES if f"{k}_share" in per]
@@ -123,7 +121,7 @@ class PolicyScoreMethod(ResearchMethod):
             sav = {k: [] for k in kinds_p}; w_all = []
             for i, pid in enumerate(per["pitchers"].tolist()):
                 guard.checkpoint("policy score")
-                dyn = pe.averaged_dynamics(shrunk, model, sub, int(pid), shape, group, obs, support, n, context)
+                dyn = pe.averaged_dynamics(shrunk, shrunk, sub, int(pid), shape, group, obs, support, n, context)
                 e = pc.Engine(shape, dyn, env)
                 b = e.start_value(e.evaluate(e.policy_observed()))
                 w = float(per["pa"][i]); w_all.append(w)
