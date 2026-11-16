@@ -137,8 +137,15 @@ def shrink_factors(beta: np.ndarray, H: np.ndarray) -> tuple[np.ndarray, np.ndar
                 break
         tau2[k] = t
     with np.errstate(all="ignore"):
-        factor = np.where(np.isfinite(se2), tau2[None, :] / (tau2[None, :] + se2), 0.0)
-    return factor, tau2, se2
+        per_class = np.where(np.isfinite(se2), tau2[None, :] / (tau2[None, :] + se2), 0.0)
+    # One factor per unit for all classes: the effects of a unit offset each other (more balls, fewer called strikes), so pulling every class by its own factor breaks the offsets and moves the
+    # outcome mix (the run value) of every pitcher the same way. The classes are weighted by their information (1 / the mean variance of the class).
+    fin = np.where(np.isfinite(se2), se2, np.nan)
+    with np.errstate(all="ignore"):
+        wk = 1.0 / np.nanmean(fin, axis=0)
+    wk = np.where(np.isfinite(wk), wk, 0.0)
+    scalar = (per_class * wk[None, :]).sum(axis=1) / max(float(wk.sum()), 1e-300)
+    return np.repeat(scalar[:, None], K, axis=1), tau2, se2
 
 
 def shrunk_copy(model, factor: np.ndarray):
