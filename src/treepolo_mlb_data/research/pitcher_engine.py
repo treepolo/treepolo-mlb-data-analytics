@@ -355,14 +355,17 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
 
 # ------------------------------------------------------------------------------------------------ the whole thing for a group
 def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, shape: pc.Shape, obs, support, n, *, kinds: Sequence[str], trust: float, min_pa: int,
-        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", progress=None
+        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", shrink: bool = True, progress=None
         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
     """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
     of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
 
-    factor, tau2, se2, others = shrink_all(model, sub)
+    if shrink:                                                                  # a model whose effects are for removing a bias: shrunk here after the fit
+        factor, tau2, se2, others = shrink_all(model, sub)
+        shrunk = shrunk_copy(model, factor, others)
+    else:                                                                       # a prediction model: its effects are already shrunk by the fit itself
+        factor, tau2, shrunk = np.ones((len(model.indexes[TARGET]), len(model.classes))), np.zeros(len(model.classes)), model
     _, unit_rows = unit_information(model, sub, TARGET, predicted(model, sub))
-    shrunk = shrunk_copy(model, factor, others)
     ids, pa, pitches = plate_appearances(sub)
     use = np.nonzero(pa >= min_pa)[0]
     keys = model.indexes[TARGET].keys

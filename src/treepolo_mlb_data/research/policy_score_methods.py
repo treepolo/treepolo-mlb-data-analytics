@@ -47,6 +47,7 @@ class PolicyScoreMethod(ResearchMethod):
         BUNT_POLICY, FILTERS, RE_SCOPE,
         ConfigField("policy_run_id", "int", default=0, minimum=0, label_zh="pitch_policy 紀錄編號（選出配球的紀錄）", label_en="pitch_policy run id (the run that chose the policies)"),
         ConfigField("model_run_id", "int", default=0, minimum=0, label_zh="評分用的 outcome_model_train 紀錄編號（只用評分季訓練）", label_en="outcome_model_train run id of the scoring model (scoring season only)"),
+        ConfigField("predict_model_run_id", "int", default=0, minimum=0, label_zh="評分逐投手建議用的預測模型（評分季單獨訓練；0＝用上面的模型事後收縮）", label_en="Prediction model of the scoring season for the per-pitcher policies (0 = the model above, shrunk after the fit)"),
         ConfigField("groups", "str_list", default=list(GROUPS), label_zh="分組", label_en="Groups"),
         ConfigField("pitcher_min_pa", "int", default=1, minimum=1, label_zh="評分逐投手建議：評分季最少打席數（沒有資料的投手用聯盟平均動態）", label_en="Minimum plate appearances in the scoring season (a pitcher with none gets the league-average dynamics)"),
         ConfigField("trust_region", "float", default=0.10, minimum=0.0, maximum=1.0, label_zh="信賴區域", label_en="Trust region"),
@@ -72,7 +73,10 @@ class PolicyScoreMethod(ResearchMethod):
 
     def method_inputs(self, ctx: ResearchContext, config: dict[str, Any]) -> dict[str, Any]:
         policy, model = self._runs(ctx, config)
-        return {**re_method_inputs(ctx, config), "policy_run_key": policy["run_key"], "model_run_key": model["run_key"]}
+        out = {**re_method_inputs(ctx, config), "policy_run_key": policy["run_key"], "model_run_key": model["run_key"]}
+        if config["predict_model_run_id"]:
+            out["predict_model_run_key"] = ctx.store.get_run(int(config["predict_model_run_id"]))["run_key"]
+        return out
 
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         from .outcome_model_methods import load_model
@@ -108,20 +112,26 @@ class PolicyScoreMethod(ResearchMethod):
             if per is None or not any(f"{k}_share" in per for k in POLICIES):
                 continue
             # per-pitcher engine: every pitcher's own dynamics from the scoring model (merged pitcher effects, shrunk on the scoring season's rows)
-            sub, _ = model._encode(cols, model.settings, fixed_classes=True)
-            if pe.unavailable(model) is not None:
+            pmodel = model
+            if config["predict_model_run_id"]:
+                pmodel = load_model(ctx.store.load_artifact(int(config["predict_model_run_id"]), f"outcome_model_{group}")["rows"]); pmodel.group = group
+            sub, _ = pmodel._encode(cols, pmodel.settings, fixed_classes=True)
+            if pe.unavailable(pmodel) is not None:
                 continue
-            factor, _, _, others = pe.shrink_all(model, sub)
-            shrunk = pe.shrunk_copy(model, factor, others)
+            if config["predict_model_run_id"]:
+                shrunk = pmodel
+            else:
+                factor, _, _, others = pe.shrink_all(pmodel, sub)
+                shrunk = pe.shrunk_copy(pmodel, factor, others)
             ids, pa_new, _ = pe.plate_appearances(sub)
             pa_in = dict(zip(ids.tolist(), pa_new.tolist()))
             kinds_p = [k for k in POLICIES if f"{k}_share" in per]
-            context = str(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_context", "none"))       # the way the policies were made: the same for the scoring season
+            context = "batter" if config["predict_model_run_id"] else str(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_context", "none"))       # the way the policies were made: the same for the scoring season
             seen = 0
             sav = {k: [] for k in kinds_p}; w_all = []
             for i, pid in enumerate(per["pitchers"].tolist()):
                 guard.checkpoint("policy score")
-                dyn = pe.averaged_dynamics(shrunk, shrunk, sub, int(pid), shape, group, obs, support, n, context)
+                dyn = pe.averaged_dynamics(shrunk, pmodel if config["predict_model_run_id"] else shrunk, sub, int(pid), shape, group, obs, support, n, context)
                 e = pc.Engine(shape, dyn, env)
                 b = e.start_value(e.evaluate(e.policy_observed()))
                 w = float(per["pa"][i]); w_all.append(w)
