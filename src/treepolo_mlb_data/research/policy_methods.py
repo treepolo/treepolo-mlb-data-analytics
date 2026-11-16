@@ -110,7 +110,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 10     # 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 11     # 11: the per-pitcher engine averages the day and the batter effects over his plate appearances on the probability scale (pitcher_context). 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -139,6 +139,9 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("pitcher_engine", "bool", default=True, label_zh="逐投手引擎（每位投手用自己的投手×球種效應）", label_en="Per-pitcher engine (every pitcher with his own pitcher x pitch-type effects)",
                     help_zh="模型要有投手×球種效應（control_pitcher_pitch 開）。效應先做事後經驗貝氏收縮（資料少的往平均拉），當天狀態設為平常、打者是聯盟平均打者；每位投手各解一次引擎，按出場打席數加權加總。",
                     help_en="The model needs pitcher x pitch-type effects. The effects are shrunk after the fit by empirical Bayes, the day is the usual one and the batter the league average; the engine is solved once per pitcher and added up weighted by plate appearances."),
+        ConfigField("pitcher_context", "choice", default="both", choices=("none", "day", "batter", "both"), label_zh="逐投手引擎：當天與打者怎麼處理", label_en="Per-pitcher engine: the day and the batter",
+                    help_zh="none＝平常的一天、聯盟平均打者；day＝用他每一場的效應；batter＝用他面對過的打者；both＝兩者都用。都是對他的打席在機率尺度上平均。",
+                    help_en="none = the usual day and the league-average batter; day = his effect of every game; batter = the batters he faced; both = both. Averaged over his plate appearances on the probability scale."),
         ConfigField("pitcher_min_pa", "int", default=200, minimum=1, label_zh="逐投手引擎：投手最少出場打席數（資料量門檻）", label_en="Per-pitcher engine: minimum plate appearances of a pitcher",
                     help_zh="只算打席數達到門檻的投手；結果會報告這些投手涵蓋了多少比例的打席。", help_en="Only pitchers with at least this many plate appearances; the result says what share of all plate appearances they cover."),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
@@ -251,7 +254,7 @@ class PitchPolicyMethod(ResearchMethod):
                 else:
                     sub_g, _ = model._encode(cols, model.settings, fixed_classes=True)
                     league = {k: float(np.mean(an.saving_pa[k])) for k in kinds}
-                    s_rows, d_rows, cov, pol = pe.run(group, sub_g, model, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]),
+                    s_rows, d_rows, cov, pol = pe.run(group, sub_g, model, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]), context=config["pitcher_context"],
                                                  pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league, league_start=float(np.mean(an.start["observed"])), league_hr=float(np.mean(an.hr_pa["observed"])),
                                                  progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: pitcher engine {i}/{total}")) if progress else None)
                     pitcher_summary += s_rows; pitcher_detail += d_rows

@@ -222,6 +222,79 @@ def actual_by_pitcher(sub: Mapping[str, np.ndarray]) -> dict[int, tuple[float, f
     return out
 
 
+CONTEXTS = ("none", "day", "batter", "both")
+
+
+def _effect_rows(model, name: str) -> np.ndarray | None:
+    """[units, classes] mean over the members of the effects of group ``name``, or None when the model has no such group."""
+
+    if name not in model.groups:
+        return None
+    start = int(model.members[0]["n_dense"])
+    for g in model.groups:
+        if g == name:
+            break
+        start += len(model.indexes[g])
+    size = len(model.indexes[name])
+    return np.mean([np.asarray(m["coef"][start:start + size], dtype=np.float64) for m in model.members], axis=0)
+
+
+def pitcher_context(model, sub: Mapping[str, np.ndarray], pitcher: int, mode: str):
+    """The games and the batters this pitcher really had: ``[(weight, day effect [K], batter effect [K], batter x count effects [12, K])]`` over his plate appearances, grouped by what is the
+    same (day, batter or both, by ``mode``); the weights are plate appearances and add up to 1. The model's own effects, not shrunk."""
+
+    mine = np.asarray(sub["pitcher"]).astype(np.int64) == pitcher
+    game = np.asarray(sub["game_pk"]).astype(np.int64)[mine]; batter = np.asarray(sub["batter"]).astype(np.int64)[mine]
+    ab = np.asarray(sub["at_bat_number"]).astype(np.int64)[mine] if "at_bat_number" in sub else np.cumsum(np.asarray(sub["prev1_pitch_type"]).astype(str)[mine] == "none")
+    _, first = np.unique(np.stack([game, ab], axis=1), axis=0, return_index=True)
+    game, batter = game[first], batter[first]                                              # one row per plate appearance
+    K = len(model.classes)
+    E_game, E_bat, E_bc = (_effect_rows(model, n) for n in ("pitcher_game", "batter", "batter_count"))
+    use_day, use_bat = mode in ("day", "both"), mode in ("batter", "both")
+    key = np.stack([game if use_day else np.zeros_like(game), batter if use_bat else np.zeros_like(batter)], axis=1)
+    pairs, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.reshape(-1)
+    count = np.bincount(inv, minlength=len(pairs)).astype(float)
+    out = []
+    for j, (g, b) in enumerate(pairs):
+        day = np.zeros(K)
+        if use_day and E_game is not None:
+            pos = model.indexes["pitcher_game"].lookup(np.array([int(g) * dz.KEY_BASE + pitcher]))[0]
+            day = E_game[pos] if pos >= 0 else day
+        bat = np.zeros(K); bc = np.zeros((12, K))
+        if use_bat:
+            if E_bat is not None:
+                pos = model.indexes["batter"].lookup(np.array([int(b)]))[0]
+                bat = E_bat[pos] if pos >= 0 else bat
+            if E_bc is not None:
+                pos = model.indexes["batter_count"].lookup(int(b) * 16 + np.arange(12))
+                ok = pos >= 0
+                bc[ok] = E_bc[pos[ok]]
+        out.append((count[j] / count.sum(), day, bat, bc))
+    return out
+
+
+def averaged_dynamics(shrunk, model, sub, pitcher: int, shape: pc.Shape, group: str, obs, support, n, mode: str) -> pc.Dynamics:
+    """The pitcher's dynamics with the day and the batter as they really were: for every (day, batter) he had, the probabilities from his own effects, averaged over his plate appearances on the
+    probability scale (not the effects first and then the probability). ``mode``: ``none`` = the usual day and the league-average batter, ``day``, ``batter`` or ``both``."""
+
+    base = pitcher_dynamics(shrunk, pitcher, shape, group, obs, support, n)
+    if mode == "none":
+        return base
+    logp = np.log(np.clip(base.P, 1e-12, None))                                         # [S, A, C] in the engine's class order
+    cls = list(model.classes)
+    order = [cls.index(c) for c in pc.OUTCOMES if c in cls]                                 # the engine's classes in the model's order (the engine has the same eight)
+    cells = dz.count_cell(pb.cell_columns(shape, group)).reshape(shape.size, shape.n_actions)[:, 0]
+    acc = np.zeros_like(base.P)
+    for weight, day, bat, bc in pitcher_context(model, sub, pitcher, mode):
+        delta = (day + bat)[None, :] + bc[cells]                                            # [S, K] in the model's class order
+        z = logp + delta[:, None, :][:, :, order] if len(order) == delta.shape[1] else logp + delta[:, None, :]
+        z -= z.max(axis=2, keepdims=True)
+        p = np.exp(z); p /= p.sum(axis=2, keepdims=True)
+        acc += weight * p
+    return pc.Dynamics(P=acc, obs=obs, support=support, n=n)
+
+
 def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds: Sequence[str], trust: float) -> dict[str, dict[str, float]]:
     """Per policy kind: the value at the start of a plate appearance (and the home-run probability for ``HR_KINDS``)."""
 
@@ -236,7 +309,7 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
 
 # ------------------------------------------------------------------------------------------------ the whole thing for a group
 def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, shape: pc.Shape, obs, support, n, *, kinds: Sequence[str], trust: float, min_pa: int,
-        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), progress=None
+        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", progress=None
         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
     """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
     of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
@@ -257,7 +330,7 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
     for i, j in enumerate(order):
         guard.checkpoint("pitcher engine")
         pid = int(ids[j])
-        dyn = pitcher_dynamics(shrunk, pid, shape, group, obs, support, n)
+        dyn = averaged_dynamics(shrunk, model, sub, pid, shape, group, obs, support, n, context)
         res = solve_pitcher(dyn, env, shape, use_kinds, trust)
         results.append(res)
         mine = unit_pitcher == pid

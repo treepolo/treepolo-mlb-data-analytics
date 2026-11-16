@@ -118,11 +118,12 @@ class PolicyScoreMethod(ResearchMethod):
             ids, pa_new, _ = pe.plate_appearances(sub)
             pa_in = dict(zip(ids.tolist(), pa_new.tolist()))
             kinds_p = [k for k in POLICIES if f"{k}_share" in per]
+            context = str(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_context", "none"))       # the way the policies were made: the same for the scoring season
             seen = 0
             sav = {k: [] for k in kinds_p}; w_all = []
             for i, pid in enumerate(per["pitchers"].tolist()):
                 guard.checkpoint("policy score")
-                dyn = pe.pitcher_dynamics(shrunk, int(pid), shape, group, obs, support, n)
+                dyn = pe.averaged_dynamics(shrunk, model, sub, int(pid), shape, group, obs, support, n, context)
                 e = pc.Engine(shape, dyn, env)
                 b = e.start_value(e.evaluate(e.policy_observed()))
                 w = float(per["pa"][i]); w_all.append(w)

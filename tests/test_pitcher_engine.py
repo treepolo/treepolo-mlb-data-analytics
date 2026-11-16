@@ -113,3 +113,21 @@ def test_the_engine_over_a_group_adds_up_the_savings_by_plate_appearances_and_re
     assert obs_row["saving_pa"] == 0.0 and np.isfinite(obs_row["hr_probability"]) and np.isfinite(trust["hr_probability"])      # the policy that is played and the one proposed carry the home-run probability
     none = pe.run("RvR", sub, model, w.env, shape, obs, support, n, kinds=kinds, trust=0.10, min_pa=10 ** 9, pa_per_team_season=6200.0, league_saving={})
     assert none[0] == [] and none[1] == [] and none[2]["pitchers_used"] == 0 and none[2]["pa_share"] == 0.0                       # a threshold nobody reaches: nothing is solved and the coverage says so
+
+
+def test_the_day_and_the_batter_are_averaged_on_the_probability_scale_over_the_pitchers_plate_appearances(world, model):
+    w, cols = world
+    shape = pc.Shape()
+    obs, support, n = pb.usage_from_counts(cols, shape, min_count=50)
+    sub, _ = model._encode(cols, model.settings, fixed_classes=True)
+    U, K = len(model.indexes[pe.TARGET]), len(model.classes)
+    shrunk = pe.shrunk_copy(model, np.ones((U, K)))
+    pid = int(model.indexes[pe.TARGET].keys[0] // 16)
+    base = pe.pitcher_dynamics(shrunk, pid, shape, "RvR", obs, support, n).P
+    assert np.allclose(pe.averaged_dynamics(shrunk, model, sub, pid, shape, "RvR", obs, support, n, "none").P, base)
+    ctx = pe.pitcher_context(model, sub, pid, "both")
+    assert abs(sum(c[0] for c in ctx) - 1.0) < 1e-9 and len(ctx) > 1
+    for mode in ("day", "batter", "both"):
+        P = pe.averaged_dynamics(shrunk, model, sub, pid, shape, "RvR", obs, support, n, mode).P
+        assert P.shape == base.shape and np.allclose(P.sum(axis=2), 1.0) and np.isfinite(P).all()
+    assert np.abs(pe.averaged_dynamics(shrunk, model, sub, pid, shape, "RvR", obs, support, n, "both").P - base).max() > 1e-4        # his real days and batters move the probabilities
