@@ -54,10 +54,18 @@ def test_the_virtual_memory_and_the_graphics_memory_count_too():
     assert g.judge(g.snapshot(max_age=0))[0] == "pressure"                            # less than the 1 GB kept for the display
 
 
-def test_a_checkpoint_stops_safely_when_the_computer_is_nearly_out_of_memory():
-    g = make(Machine(1.0 * GB))
-    with pytest.raises(ResourceExhausted, match="memory"):
-        g.checkpoint("training")
+def test_a_checkpoint_pauses_when_the_computer_is_nearly_out_of_memory_and_goes_on_when_it_is_back():
+    m = Machine(1.0 * GB)
+    g = make(m)
+    calls = []
+
+    def sleep(s):
+        calls.append(s)
+        if len(calls) == 40:                                                          # forty seconds later a program is closed
+            m.values.update(ram_available=int(10 * GB))
+
+    g._sleep = sleep
+    assert g.checkpoint("training") == "ok" and len(calls) == 40 and not g._waiting     # it did not stop: it waited and went on
 
 
 def grow(machine, guard, to):
@@ -98,9 +106,9 @@ def test_a_checkpoint_waits_while_the_run_itself_grows_in_a_shortage_and_goes_on
     g2 = make(m2)
     g2.checkpoint("training")
     grow(m2, g2, 2 * GB)
-    with pytest.raises(ResourceExhausted, match="stayed scarce"):
-        g2.checkpoint("training", wait=5)                                              # nothing changes: stop instead of squeezing the machine
-    assert sum(g2._sleeps) >= 5
+    seen = []
+    g2._sleep = lambda s: (seen.append(s), m2.values.update(ram_available=int(10 * GB)) if len(seen) >= 300 else None)
+    assert g2.checkpoint("training", wait=5) == "ok" and len(seen) == 300               # nothing changes for 300 s: it keeps waiting, it does not stop
 
 
 def test_a_step_that_needs_more_than_the_machine_can_spare_is_refused():
@@ -110,7 +118,11 @@ def test_a_step_that_needs_more_than_the_machine_can_spare_is_refused():
     g2 = make(Machine(3.0 * GB))
     g2.require(int(0.7 * GB), "loading a group while the others hold memory")        # 2.3 GB stay free: above the 1.6 GB 'stop' line plus the margin; the step may start (it runs in smaller pieces)
     with pytest.raises(ResourceExhausted, match="needs about"):
-        g.require(int(4.5 * GB), "loading")                                           # would leave 1.5 GB: nearly out of memory
+        g.require(int(15.5 * GB), "loading")                                          # could never fit in this computer: an error
+    m = Machine(3.0 * GB)
+    g3 = make(m)
+    g3._sleep = lambda s: m.values.update(ram_available=int(10 * GB))
+    g3.require(int(2.0 * GB), "loading")                                              # would leave 1 GB: it waits until the memory is there instead of stopping
 
 
 def test_pieces_of_work_are_sized_from_the_memory_free_now_and_shrink_under_pressure():

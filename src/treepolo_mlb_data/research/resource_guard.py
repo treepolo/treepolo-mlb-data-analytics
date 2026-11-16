@@ -176,6 +176,7 @@ class Guard:
         self.shrink_every = 10.0             # seconds between two clean-ups while the memory is short
         self.require_margin = int(0.5 * GB)  # what a step must leave free above the 'stop' line (the 'slow down' line does not forbid starting something)
         self._pressure_rss: int | None = None
+        self._waiting = False                # True while a checkpoint waits for memory: the monitor must not interrupt a run that is only waiting
         self._last_shrink = -1e9
 
     # ------------------------------------------------------------------------------------------------ the machine
@@ -359,7 +360,7 @@ class Guard:
                     if want != self.threads:
                         self._apply_threads(want)
                 # last resort: the run does not reach a checkpoint (it is inside one long call) while the machine is in trouble
-                if self._critical_since is not None and now - self._critical_since > self.critical_grace and self._owner is not None:
+                if self._critical_since is not None and now - self._critical_since > self.critical_grace and self._owner is not None and not self._waiting:
                     self._interrupt_owner()
                     self._critical_since = now
             except Exception:
@@ -389,12 +390,33 @@ class Guard:
                 state, why = self.judge(self.snapshot())
         if self.cpu_rest > 0:
             self._sleep(self.cpu_rest)
-        if state == "critical":
-            raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
+        if state == "critical":                                             # nearly out of memory: wait (pause) until it is not, never give up
+            state, why = self._pause(label, why, until="not_critical")
         if state == "pressure":
             return self._under_pressure(label, wait, why)
         self._pressure_rss = None
         return state
+
+    def _pause(self, label: str, why: str, *, until: str) -> tuple[str, str]:
+        """Wait, doing nothing, until the memory is back (``until='ok'``) or at least not nearly gone (``'not_critical'``). A run that has to wait is paused, not stopped: it goes on from
+        where it was as soon as the computer has the memory again. The monitor does not interrupt it while it waits."""
+
+        self._waiting = True
+        last = self._clock()
+        try:
+            while True:
+                self._sleep(1.0)
+                state, why = (self._state, self._reason) if self._depth else self.judge(self.snapshot(max_age=0))
+                if state == "ok" or (until == "not_critical" and state != "critical"):
+                    return state, why
+                if self._log is not None and self._clock() - last >= 60.0:
+                    last = self._clock()
+                    try:
+                        self._log.write(f"# {time.strftime('%H:%M:%S')} paused at {label or self._label}: {why}\n")
+                    except Exception:
+                        pass
+        finally:
+            self._waiting = False
 
     def shrink(self) -> None:
         """Give back what this process holds without needing: garbage, and the graphics-memory cache of torch. Cheap, and it never changes a result."""
@@ -427,16 +449,9 @@ class Guard:
             self._pressure_rss = snap.rss_ours
         if snap.rss_ours - self._pressure_rss <= self.grow_allowance:
             return "pressure"
-        waited = 0.0
-        while waited < wait:
-            self._sleep(1.0); waited += 1.0
-            state, why = (self._state, self._reason) if self._depth else self.judge(self.snapshot(max_age=0))
-            if state == "ok":
-                self._pressure_rss = None
-                return "ok"
-            if state == "critical":
-                raise ResourceExhausted(f"stopped safely at {label or self._label}: {why}")
-        raise ResourceExhausted(f"stopped safely at {label or self._label}: resources stayed scarce for {wait:.0f} s ({why})")
+        self._pause(label, why, until="ok")                                   # this run is the one that grows: pause until the shortage is over
+        self._pressure_rss = None
+        return "ok"
 
     def require(self, nbytes: int, what: str = "") -> None:
         """Refuse (safely) to start something that needs ``nbytes`` of memory when that would leave less free than the 'stop' line plus a margin. Below the 'slow down' line a step may still start:
@@ -446,11 +461,16 @@ class Guard:
         floor = self.limits(snap).ram_hard + self.require_margin
         if snap.ram_available - nbytes < floor:
             self.shrink()
-            waited = 0.0
-            while waited < 60 and self.snapshot(max_age=0).ram_available - nbytes < floor:
-                self._sleep(1.0); waited += 1.0
+            if nbytes + floor > snap.ram_total:                                # it could never fit, however much the others give back: that is an error, not something to wait for
+                raise ResourceExhausted(f"{what or 'this step'} needs about {nbytes / GB:.1f} GB, more than the computer can spare ({snap.ram_total / GB:.1f} GB in all) / {what or '這一步'}需要約 {nbytes / GB:.1f} GB，超過這台電腦能給的")
+            self._waiting = True
+            try:
+                while self.snapshot(max_age=0).ram_available - nbytes < floor:        # pause until the memory is there
+                    self._sleep(1.0)
+            finally:
+                self._waiting = False
             snap = self.snapshot(max_age=0)
-            if snap.ram_available - nbytes < floor:
+            if False:
                 raise ResourceExhausted(f"{what or 'this step'} needs about {nbytes / GB:.1f} GB but only {snap.ram_available / GB:.1f} GB is free and {floor / GB:.1f} GB must stay free for you / "
                                         f"{what or '這一步'}需要約 {nbytes / GB:.1f} GB，目前可用只有 {snap.ram_available / GB:.1f} GB，要留 {floor / GB:.1f} GB 給你")
 
