@@ -20,6 +20,7 @@ from . import league_methods  # noqa: F401  (registers player_profiles and leagu
 from . import policy_methods  # noqa: F401  (registers pitch_policy)
 from . import anchor_methods  # noqa: F401  (registers action_effects)
 from . import query_methods  # noqa: F401  (registers pitch_query)
+from . import policy_check_methods  # noqa: F401  (registers policy_check)
 from . import tune_methods  # noqa: F401  (registers param_search)
 from . import outcome_model_methods  # noqa: F401  (registers outcome_model_train)
 from . import model_compare_methods  # noqa: F401  (registers model_compare)

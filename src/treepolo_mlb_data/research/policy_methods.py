@@ -251,10 +251,13 @@ class PitchPolicyMethod(ResearchMethod):
                 else:
                     sub_g, _ = model._encode(cols, model.settings, fixed_classes=True)
                     league = {k: float(np.mean(an.saving_pa[k])) for k in kinds}
-                    s_rows, d_rows, cov = pe.run(group, sub_g, model, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]),
-                                                 pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league,
+                    s_rows, d_rows, cov, pol = pe.run(group, sub_g, model, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]),
+                                                 pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league, league_start=float(np.mean(an.start["observed"])), league_hr=float(np.mean(an.hr_pa["observed"])),
                                                  progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: pitcher engine {i}/{total}")) if progress else None)
                     pitcher_summary += s_rows; pitcher_detail += d_rows
+                    if pol["pitchers"].size:
+                        artifacts.append(ArtifactData(f"pitcher_policies_{group}", f"The recommended pitch type of every pitcher with enough plate appearances, per state, for dp_trust and dp_unrestricted (group {group}; npz)",
+                                                      ("part", "payload"), tuple(pack_arrays(pol))))
                     pitcher_cov.append({**cov, "tau_by_class": json.dumps(cov["tau_by_class"], ensure_ascii=False)})
                     pitcher_info[group] = {"enabled": True, "pitchers_used": cov["pitchers_used"], "pitchers_total": cov["pitchers_total"], "pa_share": cov["pa_share"]}
                     del sub_g
@@ -300,8 +303,11 @@ class PitchPolicyMethod(ResearchMethod):
                 make_section("Pitcher engine coverage 逐投手引擎涵蓋（打席數門檻、涵蓋的投手與打席比例；tau＝各結果類別的真實效應標準差估計）",
                              ("group", "min_pa", "pitchers_total", "pitchers_used", "pa_total", "pa_used", "pa_share", "pitch_share", "units", "units_pulled_over_half", "tau_by_class"),
                              pitcher_cov, ("group",), "duckdb", DIGITS),
+                make_section("Pitcher engine check 逐投手引擎檢查（照實際配球打：每位投手的起點期望失分與全壘打率，按出場打席加權平均，和聯盟平均並排；應該很接近）",
+                             ("group", "pitchers_used", "pa_share", "start_observed_pitchers", "start_observed_league", "hr_observed_pitchers", "hr_observed_league"),
+                             [c for c in pitcher_cov if "start_observed_pitchers" in c], ("group",), "duckdb", DIGITS),
                 make_section("Pitcher engine detail 逐投手引擎明細（每位投手一列；saving＝比實際配球每打席少失分）",
-                             ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
+                             ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed", "hr_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
                              pitcher_detail, ("group", "pitcher"), "duckdb", DIGITS))
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 

@@ -84,6 +84,8 @@ def test_a_pitchers_dynamics_use_his_effects_and_a_pitcher_the_model_has_not_see
     seen = int(model.indexes[pe.TARGET].keys[0] // 16)
     mine = pe.pitcher_dynamics(full, seen, shape, "RvR", obs, support, n)
     assert mine.P.shape == league.shape and np.allclose(mine.P.sum(axis=2), 1.0) and np.abs(mine.P - league).max() > 1e-4        # his own probabilities differ from the league's
+    gone = pe.shrunk_copy(model, np.zeros((U, K)))
+    assert np.abs(pe.pitcher_dynamics(gone, seen, shape, "RvR", obs, support, n).P - league).max() < 1e-6                         # no effect left (the overall pitcher effect included): the league average
     stranger = pe.pitcher_dynamics(full, -12345, shape, "RvR", obs, support, n)
     assert np.abs(stranger.P - league).max() < 1e-6                                                                                # no effects: the league-average dynamics
     assert mine.obs is obs and mine.support is support                                                                             # the observed mix and the support rule stay the league's
@@ -97,7 +99,9 @@ def test_the_engine_over_a_group_adds_up_the_savings_by_plate_appearances_and_re
     ids, pa, _ = pe.plate_appearances(sub)
     min_pa = int(np.sort(pa)[::-1][2])                                                                                             # only the three pitchers with the most plate appearances
     kinds = ("observed", "dp_trust")
-    summary, detail, coverage = pe.run("RvR", sub, model, w.env, shape, obs, support, n, kinds=kinds, trust=0.10, min_pa=min_pa, pa_per_team_season=6200.0, league_saving={"dp_trust": 0.01})
+    summary, detail, coverage, policies = pe.run("RvR", sub, model, w.env, shape, obs, support, n, kinds=kinds, trust=0.10, min_pa=min_pa, pa_per_team_season=6200.0, league_saving={"dp_trust": 0.01})
+    assert policies["pitchers"].tolist() == [d["pitcher"] for d in detail] and policies["dp_trust"].shape == (len(detail), shape.size) and policies["dp_trust"].max() < shape.n_actions
+    assert np.isfinite(coverage["start_observed_pitchers"]) and np.isfinite(coverage["hr_observed_pitchers"])
     assert 3 <= coverage["pitchers_used"] <= int((pa >= min_pa).sum()) and coverage["pitchers_used"] < len(ids) and coverage["pitchers_total"] == len(ids) and coverage["min_pa"] == min_pa
     assert coverage["pa_used"] == sum(r["pa"] for r in detail) and 0 < coverage["pa_share"] < 1 and coverage["pa_share"] == pytest.approx(coverage["pa_used"] / coverage["pa_total"])
     assert all(r["pa"] >= min_pa and 0 <= r["shrink_mean"] <= 1 and np.isfinite(r["saving_dp_trust"]) for r in detail)

@@ -1,7 +1,9 @@
 """Per-pitcher decision engine: the same engine as the league-average one, but every pitcher gets the outcome probabilities of his own pitcher x pitch-type effects.
 
 How a pitcher's own dynamics are made
-* The model's pitcher x pitch-type effects (``pitcher_pitch``; with ``control_pitcher_pitch = within`` they are not shrunk by the fit) are first shrunk after the fit, by empirical Bayes:
+* A pitcher's own effect of a pitch type is the sum of his overall effect (``pitcher``, which the model carries as the parent of the pitcher x pitch-type effects) and his pitcher x pitch-type
+  effect (``pitcher_pitch``). Neither is shrunk by the fit under ``control_pitcher_pitch = within``. The two are merged into one effect per (pitcher, type) and that effect is shrunk after the
+  fit, by empirical Bayes (the overall effect is then dropped: leaving it in unshrunk made every pitcher far worse than the league average):
   the effect of a (pitcher, type) unit has a standard error from the information in its own pitches (sum of ``diag(p) - p p'`` over them), the spread of true effects among units
   (``tau^2`` per outcome class) is estimated from the effects themselves, and every effect is pulled towards 0 (the league average of the pitch type) by ``tau^2 / (tau^2 + se^2)``.
   A unit with few pitches is pulled a lot, a unit with many hardly at all.
@@ -51,12 +53,34 @@ def _block(model) -> tuple[int, int]:
     raise KeyError(TARGET)
 
 
-def effects_by_member(model) -> np.ndarray:
-    """[members, units, classes] effects of the (pitcher, type) units, each class-centred (adding the same number to every class changes no probability)."""
+def _pitcher_block(model) -> tuple[int, int] | None:
+    """(first row, rows) of the pitcher's overall effects, or None when the model has none."""
+
+    start = int(model.members[0]["n_dense"])
+    for g in model.groups:
+        if g == "pitcher":
+            return start, len(model.indexes["pitcher"])
+        start += len(model.indexes[g])
+    return None
+
+
+def _merged(model, coef: np.ndarray) -> np.ndarray:
+    """[units, classes]: for every (pitcher, type) unit the pitcher x pitch-type effect plus the pitcher's overall effect, class-centred (adding the same number to every class changes no probability)."""
 
     a, size = _block(model)
-    out = np.stack([np.asarray(m["coef"][a:a + size], dtype=np.float64) for m in model.members])
-    return out - out.mean(axis=2, keepdims=True)
+    out = np.asarray(coef[a:a + size], dtype=np.float64).copy()
+    pb_ = _pitcher_block(model)
+    if pb_ is not None:
+        pos = model.indexes["pitcher"].lookup(model.indexes[TARGET].keys // 16)
+        ok = pos >= 0
+        out[ok] += np.asarray(coef[pb_[0]:pb_[0] + pb_[1]], dtype=np.float64)[pos[ok]]
+    return out - out.mean(axis=1, keepdims=True)
+
+
+def effects_by_member(model) -> np.ndarray:
+    """[members, units, classes] merged, class-centred effects of the (pitcher, type) units."""
+
+    return np.stack([_merged(model, m["coef"]) for m in model.members])
 
 
 def unit_information(model, sub: Mapping[str, np.ndarray], chunk: int = 100_000) -> tuple[np.ndarray, np.ndarray]:
@@ -118,16 +142,19 @@ def shrink_factors(beta: np.ndarray, H: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def shrunk_copy(model, factor: np.ndarray):
-    """The model with its pitcher x pitch-type effects replaced by ``factor`` times the class-centred effects (every bagged member, the same factor): nothing else changes."""
+    """The model with the merged (pitcher, type) effects shrunk by ``factor`` (every bagged member, the same factor) and the pitcher's overall effect removed: nothing else changes. A type a pitcher
+    has no unit for gets the league average."""
 
     a, size = _block(model)
+    pb_ = _pitcher_block(model)
     other = copy.copy(model)
     members = []
     for m in model.members:
         coef = np.array(m["coef"], copy=True)
-        block = np.asarray(coef[a:a + size], dtype=np.float64)
-        block = block - block.mean(axis=1, keepdims=True)
-        coef[a:a + size] = (factor * block).astype(coef.dtype)
+        merged = _merged(model, m["coef"])
+        coef[a:a + size] = (factor * merged).astype(coef.dtype)
+        if pb_ is not None:
+            coef[pb_[0]:pb_[0] + pb_[1]] = 0.0
         members.append({**m, "coef": coef})
     other.members = members
     return other
@@ -168,14 +195,16 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
     out: dict[str, dict[str, float]] = {}
     for kind in dict.fromkeys(("observed", *kinds)):
         V, pi = eng.solve(kind, trust)
-        out[kind] = {"start": eng.start_value(V), "hr": eng.hr_probability(pi) if kind in HR_KINDS else float("nan")}
+        out[kind] = {"start": eng.start_value(V), "hr": eng.hr_probability(pi) if kind in HR_KINDS else float("nan"), "action": np.argmax(pi, axis=1).astype(np.uint8)}
     return out
 
 
 # ------------------------------------------------------------------------------------------------ the whole thing for a group
 def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, shape: pc.Shape, obs, support, n, *, kinds: Sequence[str], trust: float, min_pa: int,
-        pa_per_team_season: float, league_saving: Mapping[str, float], progress=None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """(summary rows per policy, one detail row per pitcher, the coverage row) of the per-pitcher engine for one group; ``sub`` are the training rows of the group."""
+        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), progress=None
+        ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
+    """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
+    of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
 
     beta = effects_by_member(model).mean(axis=0)
     H, unit_rows = unit_information(model, sub)
@@ -199,7 +228,8 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
         mine = unit_pitcher == pid
         w = unit_rows[mine]
         row = {"group": group, "pitcher": pid, "pa": int(pa[j]), "pitches": int(pitches[j]), "units": int(mine.sum()),
-               "shrink_mean": float((unit_factor[mine] * w).sum() / w.sum()) if w.sum() > 0 else float("nan"), "start_observed": res["observed"]["start"]}
+               "shrink_mean": float((unit_factor[mine] * w).sum() / w.sum()) if w.sum() > 0 else float("nan"), "start_observed": res["observed"]["start"],
+               "hr_observed": res["observed"]["hr"]}
         for k in use_kinds:
             if k != "observed":
                 row[f"saving_{k}"] = res["observed"]["start"] - res[k]["start"]
@@ -211,6 +241,10 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
                 "pa_share": used_pa / total_pa if total_pa else float("nan"), "pitch_share": float(pitches[use].sum() / pitches.sum()) if len(use) else 0.0,
                 "units": int(len(keys)), "units_pulled_over_half": float((unit_factor < 0.5).mean()) if len(keys) else float("nan"),
                 "tau_by_class": {c: float(np.sqrt(t)) for c, t in zip(model.classes, tau2)}}
+    if detail:                                                                  # the check: playing the observed mix, the pitchers (weighted by plate appearances) against the league-average player
+        w = np.array([d["pa"] for d in detail], dtype=float)
+        coverage.update({"start_observed_pitchers": float(np.average([d["start_observed"] for d in detail], weights=w)), "start_observed_league": float(league_start),
+                         "hr_observed_pitchers": float(np.average([d["hr_observed"] for d in detail], weights=w)), "hr_observed_league": float(league_hr)})
     summary: list[dict[str, Any]] = []
     if results:
         w = np.array([d["pa"] for d in detail], dtype=float)
@@ -222,4 +256,8 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
                             "saving_median": float(np.median(sav)), "saving_p90": float(np.percentile(sav, 90)), "saving_per_team_season": mean * pa_per_team_season,
                             "start_value": float((w * start).sum() / w.sum()), "hr_probability": float((w * hr).sum() / w.sum()) if np.isfinite(hr).all() else float("nan"),
                             "league_saving_pa": float(league_saving.get(k, float("nan")))})
-    return summary, detail, coverage
+    policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64)}
+    for k in use_kinds:
+        if k in ("dp_trust", "dp_unrestricted") and results:
+            policies[k] = np.stack([r[k]["action"] for r in results])
+    return summary, detail, coverage, policies

@@ -164,6 +164,37 @@ def test_the_per_pitcher_engine_is_in_the_result_with_its_coverage(service, w1, 
     assert res["extras"]["pitcher_engine"]["groups"]["RvR"]["enabled"] and "pitcher_engine" in {n["control"] for n in res["extras"]["notes"]}
 
 
+def test_the_direct_check_compares_followed_and_not_followed_pitches_with_game_clustered_intervals():
+    from treepolo_mlb_data.research.policy_check_methods import compare
+
+    rng = np.random.default_rng(1)
+    n = 6000
+    game = rng.integers(0, 300, n)
+    followed = rng.random(n) < 0.4
+    value = rng.normal(0.0, 5.0, n) + game % 7 * 0.2 - 1.5 * followed                                   # followed pitches are worth 1.5 runs per 100 pitches less
+    out = compare(value, followed, game, 1.96)
+    assert out["n_followed"] == int(followed.sum()) and out["n_not_followed"] == int((~followed).sum()) and out["share_followed"] == pytest.approx(followed.mean())
+    assert out["diff"] == pytest.approx(value[followed].mean() - value[~followed].mean()) and abs(out["diff"] + 1.5) < 0.5 and out["lo"] < out["diff"] < out["hi"] and 0.1 < out["hi"] - out["lo"] < 1.5
+    assert compare(value[:1], followed[:1], game[:1], 1.96)["diff"] is None                              # too few pitches: the means, no interval
+
+
+def test_the_direct_check_run_lists_every_count_for_the_league_engine(service, result, w1, monkeypatch):
+    from treepolo_mlb_data.research import policy_check_methods as pcm
+
+    world, cols = w1
+    monkeypatch.setattr(pcm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+    monkeypatch.setattr(pcm, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
+    run = service.run("policy_check", {"scope": SCOPE, "re_scope": SCOPE, "policy_run_id": result["id"], "groups": ["RvR"]})["run"]
+    rows = section(service, run, "Direct check")
+    assert {r["engine"] for r in rows} == {"league"} and {r["policy"] for r in rows} == {"dp_trust", "dp_unrestricted"}
+    cells = [r for r in rows if r["policy"] == "dp_trust"]
+    assert [r["count"] for r in cells][0] == "all" and len(cells) == 13
+    total = cells[0]
+    assert total["n_followed"] + total["n_not_followed"] == section(service, run, "Coverage")[0]["pitches"] and 0 < total["share_followed"] < 1
+    assert sum(r["n_followed"] + r["n_not_followed"] for r in cells[1:]) == total["n_followed"] + total["n_not_followed"]       # the 12 counts add up to all
+    assert "upper_bound" in {n["control"] for n in service.store.load_result(run["id"])["extras"]["notes"]}
+
+
 def test_comparison_counts_and_per_year_replication_are_listed(service, result):
     res = service.store.load_result(result["id"])
     direction = section(service, result, "Direction map")
