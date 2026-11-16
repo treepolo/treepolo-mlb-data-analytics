@@ -110,7 +110,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 8     # 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 9     # 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -303,9 +303,13 @@ class PitchPolicyMethod(ResearchMethod):
                 make_section("Pitcher engine coverage 逐投手引擎涵蓋（打席數門檻、涵蓋的投手與打席比例；tau＝各結果類別的真實效應標準差估計）",
                              ("group", "min_pa", "pitchers_total", "pitchers_used", "pa_total", "pa_used", "pa_share", "pitch_share", "units", "units_pulled_over_half", "tau_by_class"),
                              pitcher_cov, ("group",), "duckdb", DIGITS),
-                make_section("Pitcher engine check 逐投手引擎檢查（照實際配球打：每位投手的起點期望失分與全壘打率，按出場打席加權平均，和聯盟平均並排；應該很接近）",
-                             ("group", "pitchers_used", "pa_share", "start_observed_pitchers", "start_observed_league", "hr_observed_pitchers", "hr_observed_league"),
-                             [c for c in pitcher_cov if "start_observed_pitchers" in c], ("group",), "duckdb", DIGITS),
+                make_section("Pitcher engine check 逐投手引擎檢查（照實際配球打：引擎算的每位投手每打席失分（起點期望失分減聯盟的）和全壘打率，對他自己在這些資料裡的實際值（每打席各球得分期望值變化加總）；最後一列是按打席加權平均）",
+                             ("group", "pitcher", "pa", "predicted_excess_runs", "actual_excess_runs", "hr_predicted", "hr_actual", "shrink_mean"),
+                             [{"group": d["group"], "pitcher": str(d["pitcher"]), "pa": d["pa"], "predicted_excess_runs": d.get("predicted_excess_runs"), "actual_excess_runs": d.get("actual_excess_runs"),
+                               "hr_predicted": d["hr_observed"], "hr_actual": d.get("actual_hr"), "shrink_mean": d["shrink_mean"]} for d in pitcher_detail]
+                             + [{"group": c["group"], "pitcher": "ALL (weighted by plate appearances)", "pa": c["pa_used"], "predicted_excess_runs": c.get("predicted_excess_runs"),
+                                 "actual_excess_runs": c.get("actual_excess_runs"), "hr_predicted": c.get("hr_predicted"), "hr_actual": c.get("hr_actual"), "shrink_mean": None}
+                                for c in pitcher_cov if "predicted_excess_runs" in c], ("group", "pitcher"), "duckdb", DIGITS),
                 make_section("Pitcher engine detail 逐投手引擎明細（每位投手一列；saving＝比實際配球每打席少失分）",
                              ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed", "hr_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
                              pitcher_detail, ("group", "pitcher"), "duckdb", DIGITS))

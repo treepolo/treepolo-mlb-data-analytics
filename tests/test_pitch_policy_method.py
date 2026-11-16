@@ -162,6 +162,26 @@ def test_the_per_pitcher_engine_is_in_the_result_with_its_coverage(service, w1, 
     assert trust["saving_pa"] == pytest.approx(sum(r["pa"] * r["saving_dp_trust"] for r in detail) / sum(r["pa"] for r in detail), rel=1e-6, abs=1e-8)
     res = service.store.load_result(run["id"])
     assert res["extras"]["pitcher_engine"]["groups"]["RvR"]["enabled"] and "pitcher_engine" in {n["control"] for n in res["extras"]["notes"]}
+    check = section(service, run, "Pitcher engine check")                                                                              # every pitcher against what he really did, and the weighted row
+    assert len(check) == 6 and check[-1]["pitcher"].startswith("ALL") and all(r["actual_excess_runs"] is not None and r["hr_actual"] is not None for r in check)
+    # the direct check and the score read what the run stored (the score uses the same model as a stand-in for a model of another season)
+    from treepolo_mlb_data.research import policy_check_methods as pcm, policy_score_methods as psm
+
+    mp2 = pytest.MonkeyPatch()
+    for module in (pcm, psm):
+        mp2.setattr(module, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
+        mp2.setattr(module, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
+    mp2.setattr(psm.pm, "build_environment", pm.build_environment)
+    try:
+        checked = service.run("policy_check", {"scope": SCOPE, "re_scope": SCOPE, "policy_run_id": run["id"], "groups": ["RvR"]})["run"]
+        scored = service.run("policy_score", {"scope": SCOPE, "re_scope": SCOPE, "policy_run_id": run["id"], "model_run_id": logistic_run["id"], "groups": ["RvR"]})["run"]
+    finally:
+        mp2.undo()
+    assert {r["engine"] for r in section(service, checked, "Direct check")} == {"league", "pitcher"}
+    score = section(service, scored, "Score")
+    league = {r["policy"]: r for r in score if r["engine"] == "league"}; pit = {r["policy"]: r for r in score if r["engine"] == "pitcher"}
+    assert set(pit) == {"dp_trust"} and {"dp_trust"} <= set(league) and all(np.isfinite(r["saving_pa"]) and r["pitchers"] == 5 for r in pit.values())
+    assert league["dp_trust"]["saving_per_team_season"] == pytest.approx(league["dp_trust"]["saving_pa"] * 6200)
 
 
 def test_the_direct_check_compares_followed_and_not_followed_pitches_with_game_clustered_intervals():

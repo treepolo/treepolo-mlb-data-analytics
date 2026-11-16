@@ -188,6 +188,33 @@ def pitcher_dynamics(shrunk, pitcher: int, shape: pc.Shape, group: str, obs, sup
     return pc.Dynamics(P=tensor.mean(axis=0), obs=obs, support=support, n=n)
 
 
+def actual_by_pitcher(sub: Mapping[str, np.ndarray]) -> dict[int, tuple[float, float, int]]:
+    """pitcher -> (mean run value of a plate appearance, share of plate appearances that were home runs, plate appearances) in the rows ``sub``: what really happened, with the run value
+    of every pitch of the plate appearance (the change of the run expectancy) added up. Plate appearances with a missing run value are left out."""
+
+    pitcher = np.asarray(sub["pitcher"]).astype(np.int64)
+    if "at_bat_number" in sub:
+        key = np.asarray(sub["game_pk"]).astype(np.int64) * 1000 + np.asarray(sub["at_bat_number"]).astype(np.int64)
+    else:
+        key = np.cumsum(np.asarray(sub["prev1_pitch_type"]).astype(str) == "none").astype(np.int64)
+    value = np.asarray(sub["pitch_value"], dtype=float)
+    hr = (np.asarray(sub["outcome"]).astype(str) == "in_play_home_run").astype(float)
+    pair = np.stack([pitcher, key], axis=1)
+    _, inv = np.unique(pair, axis=0, return_inverse=True)
+    inv = inv.reshape(-1)
+    n_pa = int(inv.max()) + 1 if len(inv) else 0
+    total = np.bincount(inv, weights=np.nan_to_num(value), minlength=n_pa)
+    bad = np.bincount(inv, weights=np.isnan(value).astype(float), minlength=n_pa) > 0
+    is_hr = np.bincount(inv, weights=hr, minlength=n_pa) > 0
+    owner = np.zeros(n_pa, dtype=np.int64); owner[inv] = pitcher
+    out: dict[int, tuple[float, float, int]] = {}
+    for p in np.unique(owner):
+        m = (owner == p) & ~bad
+        if m.any():
+            out[int(p)] = (float(total[m].mean()), float(is_hr[m].mean()), int(m.sum()))
+    return out
+
+
 def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds: Sequence[str], trust: float) -> dict[str, dict[str, float]]:
     """Per policy kind: the value at the start of a plate appearance (and the home-run probability for ``HR_KINDS``)."""
 
@@ -195,7 +222,8 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
     out: dict[str, dict[str, float]] = {}
     for kind in dict.fromkeys(("observed", *kinds)):
         V, pi = eng.solve(kind, trust)
-        out[kind] = {"start": eng.start_value(V), "hr": eng.hr_probability(pi) if kind in HR_KINDS else float("nan"), "action": np.argmax(pi, axis=1).astype(np.uint8)}
+        out[kind] = {"start": eng.start_value(V), "hr": eng.hr_probability(pi) if kind in HR_KINDS else float("nan"), "action": np.argmax(pi, axis=1).astype(np.uint8),
+                     "share": pi.astype(np.float16) if kind in ("dp_trust", "dp_unrestricted") else None}
     return out
 
 
@@ -241,10 +269,18 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
                 "pa_share": used_pa / total_pa if total_pa else float("nan"), "pitch_share": float(pitches[use].sum() / pitches.sum()) if len(use) else 0.0,
                 "units": int(len(keys)), "units_pulled_over_half": float((unit_factor < 0.5).mean()) if len(keys) else float("nan"),
                 "tau_by_class": {c: float(np.sqrt(t)) for c, t in zip(model.classes, tau2)}}
-    if detail:                                                                  # the check: playing the observed mix, the pitchers (weighted by plate appearances) against the league-average player
+    if detail:                                                                  # the check: playing the observed mix, every pitcher against what he really did in these rows
+        actual = actual_by_pitcher(sub)
+        for d in detail:
+            a = actual.get(d["pitcher"], (float("nan"), float("nan"), 0))
+            d["predicted_excess_runs"] = d["start_observed"] - league_start          # the engine's start value above the league-average one, in runs per plate appearance
+            d["actual_excess_runs"], d["actual_hr"], d["actual_pa"] = a
         w = np.array([d["pa"] for d in detail], dtype=float)
+        ok = np.array([np.isfinite(d["actual_excess_runs"]) for d in detail])
+        wavg = lambda key, m=ok: float(np.average([d[key] for d, f in zip(detail, m) if f], weights=w[m])) if m.any() else float("nan")
         coverage.update({"start_observed_pitchers": float(np.average([d["start_observed"] for d in detail], weights=w)), "start_observed_league": float(league_start),
-                         "hr_observed_pitchers": float(np.average([d["hr_observed"] for d in detail], weights=w)), "hr_observed_league": float(league_hr)})
+                         "hr_observed_pitchers": float(np.average([d["hr_observed"] for d in detail], weights=w)), "hr_observed_league": float(league_hr),
+                         "predicted_excess_runs": wavg("predicted_excess_runs"), "actual_excess_runs": wavg("actual_excess_runs"), "hr_predicted": wavg("hr_observed"), "hr_actual": wavg("actual_hr")})
     summary: list[dict[str, Any]] = []
     if results:
         w = np.array([d["pa"] for d in detail], dtype=float)
@@ -256,8 +292,9 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
                             "saving_median": float(np.median(sav)), "saving_p90": float(np.percentile(sav, 90)), "saving_per_team_season": mean * pa_per_team_season,
                             "start_value": float((w * start).sum() / w.sum()), "hr_probability": float((w * hr).sum() / w.sum()) if np.isfinite(hr).all() else float("nan"),
                             "league_saving_pa": float(league_saving.get(k, float("nan")))})
-    policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64)}
+    policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64), "pa": np.array([d["pa"] for d in detail], dtype=np.float64)}
     for k in use_kinds:
         if k in ("dp_trust", "dp_unrestricted") and results:
             policies[k] = np.stack([r[k]["action"] for r in results])
+            policies[k + "_share"] = np.stack([r[k]["share"] for r in results])
     return summary, detail, coverage, policies
