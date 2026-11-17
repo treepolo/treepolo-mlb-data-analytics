@@ -177,7 +177,8 @@ def test_the_per_pitcher_engine_is_in_the_result_with_its_coverage(service, w1, 
         scored = service.run("policy_score", {"scope": SCOPE, "re_scope": SCOPE, "policy_run_id": run["id"], "model_run_id": logistic_run["id"], "groups": ["RvR"]})["run"]
     finally:
         mp2.undo()
-    assert {r["engine"] for r in section(service, checked, "Direct check")} == {"league", "pitcher"}
+    engines = {r["engine"] for r in section(service, checked, "Direct check")}
+    assert {"league", "pitcher"} <= engines and any(e.startswith("league_by_pitcher") for e in engines) and "league (same pitches)" in engines
     score = section(service, scored, "Score")
     league = {r["policy"]: r for r in score if r["engine"] == "league"}; pit = {r["policy"]: r for r in score if r["engine"] == "pitcher"}
     assert set(pit) == {"dp_trust"} and {"dp_trust"} <= set(league) and all(np.isfinite(r["saving_pa"]) and r["pitchers"] == 5 for r in pit.values())
