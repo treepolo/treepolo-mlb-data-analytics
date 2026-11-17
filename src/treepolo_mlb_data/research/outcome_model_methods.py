@@ -85,6 +85,9 @@ class OutcomeModelTrainMethod(ResearchMethod):
         ConfigField("cold_by", "str_list", default=["pitcher", "batter"], label_zh="沒見過的球員的評估", label_en="Unseen-player evaluation",
                     help_zh="pitcher、batter：依球員分折，被留出的球員完全沒進訓練。空＝不做。", help_en="Folds over players; empty = skip."),
         ConfigField("cold_folds", "int", default=3, minimum=2, maximum=20, label_zh="依球員分折數", label_en="Folds over players"),
+        ConfigField("class_scheme", "choice", default="eight", choices=("eight", "batted_ball"), label_zh="結果類別的分法", label_en="Outcome class scheme",
+                    help_zh="eight（預設）：八類，打進場內（非全壘打）一類；batted_ball：十一類，打進場內（非全壘打）依擊球類型拆成滾地球、平飛球、高飛球、內野高飛球（用 Statcast 的 bb_type），全壘打維持獨立一類。",
+                    help_en="eight (default): eight classes, one class for a ball in play that is not a home run; batted_ball: eleven classes, a ball in play that is not a home run is split into ground ball, line drive, fly ball and popup by Statcast's bb_type, home runs stay a class of their own."),
         ConfigField("class_merge", "json", default=None, label_zh="結果類別對照（預設同前）", label_en="Outcome class map (default as before)"),
         ConfigField("min_class_count", "int", default=50, minimum=1, label_zh="類別最小訓練樣本", label_en="Minimum training rows per class"),
         ConfigField("compare_baseline", "bool", default=True, label_zh="另訓練一份「全部控制都關掉」的對照", label_en="Also train a no-controls baseline",
@@ -113,7 +116,7 @@ class OutcomeModelTrainMethod(ResearchMethod):
         if config["class_merge"] is None:
             from . import modeling
 
-            config["class_merge"] = dict(modeling.DEFAULT_CLASS_MERGE)
+            config["class_merge"] = dict(modeling.BATTED_BALL_CLASS_MERGE if config["class_scheme"] == "batted_ball" else modeling.DEFAULT_CLASS_MERGE)
         mapping = config["class_merge"]
         if not isinstance(mapping, dict) or not mapping or not all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
             raise ConfigError("class_merge must be a non-empty object of strings / class_merge 必須是非空的字串對照")
@@ -377,7 +380,7 @@ class OutcomeModelTrainMethod(ResearchMethod):
             m = typ == t
             if not m.any():
                 continue
-            w_p, w_o = rate(proba[m], y[m], ("whiff",)); h_p, h_o = rate(proba[m], y[m], ("in_play_home_run",)); i_p, i_o = rate(proba[m], y[m], ("in_play_home_run", "in_play_non_hr"))
+            w_p, w_o = rate(proba[m], y[m], ("whiff",)); h_p, h_o = rate(proba[m], y[m], ("in_play_home_run",)); i_p, i_o = rate(proba[m], y[m], ("in_play_home_run", "in_play_non_hr") + lc.BATTED_BALL_CLASSES)
             res.append({"group": group, "pitch_type": t, "n": int(m.sum()), "whiff_pred": w_p, "whiff_obs": w_o, "hr_pred": h_p, "hr_obs": h_o, "in_play_pred": i_p, "in_play_obs": i_o})
         return res
 

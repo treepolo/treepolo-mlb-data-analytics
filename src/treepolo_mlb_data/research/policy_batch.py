@@ -35,7 +35,8 @@ class BatchEngine:
         self.shape, self.env, self.tol, self.max_iter = shape, env, tol, max_iter
         nxt, term = pc.terminal_arrays(shape, env, lam)
         live = nxt >= 0
-        self._np = {"live": live, "safe": np.where(live, nxt, 0), "term": term, "hr_term": pc.hr_terminal(shape, nxt)}
+        self.outcomes = tuple(getattr(env, "outcomes", pc.OUTCOMES)); self.C = len(self.outcomes)
+        self._np = {"live": live, "safe": np.where(live, nxt, 0), "term": term, "hr_term": pc.hr_terminal(shape, nxt, self.outcomes)}
         self._np["cont"] = self._one_step_continuation(live, term)
         self._start_idx = np.array([[shape.start_index(o, B) for B in range(8)] for o in range(3)]).reshape(-1)
         self._start_w = np.asarray(env.start, dtype=np.float64).reshape(-1)
@@ -48,8 +49,8 @@ class BatchEngine:
 
         sh = self.shape; b, k, o, base, _, _ = sh.coords(); S = sh.size
         re_cnt = self.env.re_cnt
-        cont = np.zeros((S, sh.n_actions, C))
-        for name, c in pc.OC.items():
+        cont = np.zeros((S, sh.n_actions, self.C))
+        for c, name in enumerate(self.outcomes):
             if name == "ball":
                 val = re_cnt[np.minimum(b + 1, sh.n_balls - 1), k, o, base]
             elif name in pc.STRIKE_LIKE:
@@ -76,7 +77,7 @@ class BatchEngine:
         """Memory one pitcher of a batch needs at its peak: a few arrays of states x actions x outcomes (the gathered values, the probabilities, their product)."""
 
         S, A = self.shape.size, self.shape.n_actions
-        return copies * S * A * C * 8.0
+        return copies * S * A * self.C * 8.0
 
     def tensor(self, array, dtype=None):
         torch = _torch()

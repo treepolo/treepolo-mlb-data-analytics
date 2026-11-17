@@ -16,6 +16,15 @@ import numpy as np
 OUTCOMES = ("ball", "called_strike", "foul", "foul_tip", "hit_by_pitch", "in_play_home_run", "in_play_non_hr", "whiff")   # = sorted classes of the default class_merge
 C = len(OUTCOMES)
 OC = {name: i for i, name in enumerate(OUTCOMES)}
+# The 11-class scheme: a ball in play that is not a home run is split by the batted-ball type (sorted as the classes of the model are).
+BATTED_BALL_OUTCOMES = ("in_play_ground_ball", "in_play_line_drive", "in_play_fly_ball", "in_play_popup")
+OUTCOMES_BB = ("ball", "called_strike", "foul", "foul_tip", "hit_by_pitch", "in_play_fly_ball", "in_play_ground_ball", "in_play_home_run", "in_play_line_drive", "in_play_popup", "whiff")
+
+
+def outcomes_for(classes) -> tuple[str, ...]:
+    """The classes the engine works with for a model: the eight of the default scheme, or the eleven when the model splits balls in play by the batted-ball type."""
+
+    return OUTCOMES_BB if any(c in BATTED_BALL_OUTCOMES for c in classes) else OUTCOMES
 STRIKE_LIKE = ("called_strike", "foul_tip", "whiff")
 STREAKS = 3
 POLICIES = ("observed", "const_FF", "greedy1", "dp_unrestricted", "dp_trust")
@@ -67,6 +76,8 @@ class Environment:
     re_cnt: np.ndarray             # [n_balls, n_strikes, 3, 8] run expectancy by count (one-step values and R1)
     jbip: np.ndarray               # [A, 3, 8] value after a ball in play that is not a home run (runs + RE afterwards), by the pitch type
     start: np.ndarray              # [3, 8] how often a plate appearance starts in each (outs, bases)
+    outcomes: tuple = OUTCOMES     # the outcome classes of the probabilities (the last axis of ``Dynamics.P``)
+    bip: dict | None = None        # {class: [3, 8]} value after a ball in play of that batted-ball class (the 11-class scheme); a class without an entry uses ``jbip``
 
 
 # ------------------------------------------------------------------------------------------------ terminal values
@@ -88,12 +99,13 @@ def terminal_arrays(shape: Shape, env: Environment, lam: float = 0.0):
 
     S, A = shape.size, shape.n_actions
     b, k, o, base, p, r = shape.coords()
-    nxt = np.full((S, A, C), -1, dtype=np.int64); term = np.zeros((S, A, C))
+    outcomes = tuple(getattr(env, "outcomes", OUTCOMES)); C_ = len(outcomes)
+    nxt = np.full((S, A, C_), -1, dtype=np.int64); term = np.zeros((S, A, C_))
     re_pa = np.vstack([env.re_pa, np.zeros((1, 8))])          # row 3: after the third out the half inning is over
     walk_base, walk_runs = _walk_bases(base)
     for a in range(A):
         r2 = np.where(p == a, np.minimum(r + 1, STREAKS - 1), 0)
-        for name, c in OC.items():
+        for c, name in enumerate(outcomes):
             if name == "ball":
                 ended = b + 1 >= shape.n_balls
                 next_index = shape.index(np.minimum(b + 1, shape.n_balls - 1), k, o, base, a, r2)
@@ -112,19 +124,20 @@ def terminal_arrays(shape: Shape, env: Environment, lam: float = 0.0):
             elif name == "in_play_home_run":
                 ended = np.ones(S, dtype=bool); next_index = np.zeros(S, dtype=np.int64)
                 value = 1 + _popcount3(base) + re_pa[o, 0] + lam
-            else:   # in_play_non_hr
+            else:   # a ball in play that is not a home run: in_play_non_hr, or one class per batted-ball type
                 ended = np.ones(S, dtype=bool); next_index = np.zeros(S, dtype=np.int64)
-                value = env.jbip[a, o, base]
+                bip = getattr(env, "bip", None)
+                value = np.asarray(bip[name])[o, base] if bip and name in bip else env.jbip[a, o, base]
             nxt[:, a, c] = np.where(ended, -1, next_index)
             term[:, a, c] = np.where(ended, value, 0.0)
     return nxt, term
 
 
-def hr_terminal(shape: Shape, nxt: np.ndarray) -> np.ndarray:
+def hr_terminal(shape: Shape, nxt: np.ndarray, outcomes: tuple = OUTCOMES) -> np.ndarray:
     """Terminal reward that counts home runs only (so the evaluated value is the probability the plate appearance ends in one)."""
 
     term = np.zeros(nxt.shape)
-    term[:, :, OC["in_play_home_run"]] = 1.0
+    term[:, :, list(outcomes).index("in_play_home_run")] = 1.0
     return term
 
 
@@ -132,6 +145,7 @@ def hr_terminal(shape: Shape, nxt: np.ndarray) -> np.ndarray:
 class Engine:
     def __init__(self, shape: Shape, dyn: Dynamics, env: Environment, lam: float = 0.0, tol: float = 1e-13, max_iter: int = 3000):
         self.shape, self.dyn, self.env, self.lam, self.tol, self.max_iter = shape, dyn, env, float(lam), tol, max_iter
+        self.outcomes = tuple(getattr(env, "outcomes", OUTCOMES))
         self.nxt, self.term = terminal_arrays(shape, env, lam)
         self._live = self.nxt >= 0
         self._safe = np.where(self._live, self.nxt, 0)
@@ -185,8 +199,8 @@ class Engine:
 
         sh = self.shape; b, k, o, base, _, _ = sh.coords(); S = sh.size
         re_cnt = self.env.re_cnt
-        cont = np.zeros((S, sh.n_actions, C))
-        for name, c in OC.items():
+        cont = np.zeros((S, sh.n_actions, len(self.outcomes)))
+        for c, name in enumerate(self.outcomes):
             if name == "ball":
                 nb = np.minimum(b + 1, sh.n_balls - 1); val = re_cnt[nb, k, o, base]
             elif name in STRIKE_LIKE:
@@ -280,7 +294,7 @@ class Engine:
         return float(self.occupancy(pi).sum())
 
     def hr_probability(self, pi: np.ndarray) -> float:
-        V = self.evaluate(pi, hr_terminal(self.shape, self.nxt))
+        V = self.evaluate(pi, hr_terminal(self.shape, self.nxt, self.outcomes))
         return self.start_value(V)
 
 

@@ -41,11 +41,11 @@ LEVELS = ("L0", "L1", "L2", "L3")
 
 GROUPS = ("RvR", "RvL", "LvR", "LvL")
 DIGITS = 8
-EXTRA_RAW = ("pfx_x", "pfx_z", "release_spin_rate", "release_extension", "release_pos_x", "release_pos_z", "arm_angle", "game_date")
+EXTRA_RAW = ("pfx_x", "pfx_z", "release_spin_rate", "release_extension", "release_pos_x", "release_pos_z", "arm_angle", "game_date", "bb_type")
 FETCH = ("pitch_uid", "at_bat_number", "pitch_number", "game_pk", "game_year", "game_date", "pitcher", "batter", "hand_group", "pitch_type", "outcome", "zone", "pitch_index_in_pa", "events",
          "release_speed", "release_spin_rate", "spin_axis", "pfx_x", "pfx_z", "release_pos_x", "release_pos_z", "release_extension", "arm_angle", "plate_x",
-         "plate_z", "balls", "strikes", "outs_when_up", "bases", "prev1_pitch_type", "streak_pos")
-STRING_COLUMNS = ("hand_group", "pitch_type", "outcome", "prev1_pitch_type")
+         "plate_z", "balls", "strikes", "outs_when_up", "bases", "prev1_pitch_type", "streak_pos", "bb_type")
+STRING_COLUMNS = ("hand_group", "pitch_type", "outcome", "prev1_pitch_type", "bb_type")
 
 
 def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, re_by_state=None, row_limit: int | None = None) -> dict[str, np.ndarray]:
@@ -57,7 +57,7 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
 
     table = build_pitch_table(ctx.source_node(), bunt_policy=config["bunt_policy"], memory=1, re_by_state=re_by_state, mirror=False, extra_columns=EXTRA_RAW,
                               filters=config["filters"])
-    fetch = FETCH + (("pitch_value", "state_code") if re_by_state is not None else ())        # run values need the run-expectancy table
+    fetch = FETCH + (("pitch_value", "state_code", "next_state_code", "runs_on_pitch") if re_by_state is not None else ())        # run values need the run-expectancy table; what happens after a ball in play needs the next state and the runs
     chunks: dict[str, list[np.ndarray]] = {c: [] for c in fetch}
     try:                                                                         # a (group, season) takes about 2.6 KB per row while it is converted; a hand group is at most 40% of a season
         from .scope import compute_scope_fingerprint
@@ -101,6 +101,8 @@ def fetch_columns(ctx: ResearchContext, config: dict[str, Any], groups, years, r
 
     cols["prior_streak"] = derive_prior_streak(cols["game_pk"], cols["at_bat_number"], cols["pitch_number"], cols["pitch_index_in_pa"], cols["streak_pos"])
     cols["prev1_pitch_type"] = np.where(cols["prev1_pitch_type"] == "", "none", cols["prev1_pitch_type"])
+    if config.get("class_scheme", "eight") == "batted_ball":                       # the 11-class scheme: a ball in play that is not a home run is a ground ball, line drive, fly ball or popup
+        cols["outcome"] = lc.split_in_play(cols["outcome"], cols["bb_type"])
     return cols
 
 

@@ -188,7 +188,8 @@ class PlayerQuery:
         if model.group is not None and model.group != table.group:
             raise QueryError("the table and the model belong to different groups / 情境表與模型的分組不同")
         if not set(model.classes) <= set(pc.OUTCOMES):
-            raise QueryError("the model has outcome classes the decision engine does not know / 模型的結果類別決策引擎不認得")
+            raise QueryError("the query tool works with the eight-class models only so far; a model that splits balls in play by the batted-ball type is not supported yet / "
+                             "情境查詢目前只支援八類模型；依擊球類型拆開打進場內的模型還不支援")
         self.table, self.model, self.shape = table, model, table.shape
         a = table.arrays
         self.env = env or pc.Environment(re_pa=a["re_pa"], re_cnt=a["re_cnt"], jbip=a["jbip"], start=a["start"])

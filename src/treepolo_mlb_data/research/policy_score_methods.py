@@ -32,6 +32,7 @@ class _Lazy:
 
 np = _Lazy("numpy")
 pc = _Lazy(".policy_core")
+lc = _Lazy(".league_core")
 pb = _Lazy(".policy_build")
 pm = _Lazy(".policy_methods")
 pe = _Lazy(".pitcher_engine")
@@ -104,6 +105,13 @@ class PolicyScoreMethod(ResearchMethod):
             model = load_model(model_art["rows"]); model.group = group
             cols = fetch_columns(ctx, config, [group], years, re_by_state=re.re_by_state)
             env = pm.build_environment(cols, re.re_by_state, shape)
+            env.outcomes = pc.outcomes_for(model.classes)                                   # eight classes, or eleven when the scoring model splits balls in play by the batted-ball type
+            if env.outcomes != pc.OUTCOMES:                                                 # the end value of a ball in play comes from the training seasons' table that the policies were made with
+                bip_run = int(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("bip_table_run_id", 0))
+                if not bip_run:
+                    raise ConfigError("the policy run has no bip_table_run_id but the scoring model has eleven classes / 配球紀錄沒有 bip_table_run_id，但評分模型是十一類")
+                env.bip = pm.load_bip_values(ctx.store, bip_run, group)
+                cols["outcome"] = lc.split_in_play(cols["outcome"], cols["bb_type"])
             obs, support, n = table["obs"], table["support"].astype(bool), table["n"]
             # league-average engine: the scoring model's league-average dynamics, the observed mix and support of the run that chose the policies
             tensor = pb.model_tensor(model, shape, group, effects="population")

@@ -91,6 +91,16 @@ def ball_in_play_value(cols, re_cnt, shape):
     return np.asarray(cols["pitch_value"], dtype=float) + re_cnt[np.minimum(b, shape.n_balls - 1), np.minimum(k, shape.n_strikes - 1), np.minimum(o, 2), B]
 
 
+def load_bip_values(store, run_id: int, group: str) -> dict[str, np.ndarray]:
+    """{class: [3, 8]} the value after a ball in play of each batted-ball class, from a ``bip_table`` run (its table of the group)."""
+
+    art = store.load_artifact(int(run_id), f"bip_table_{group}")
+    if art is None:
+        raise ConfigError(f"the bip_table run {run_id} has no table for group {group} / bip_table 紀錄 {run_id} 沒有分組 {group} 的表")
+    arr = unpack_arrays(art["rows"])
+    return {lc.BB_TYPE_TO_CLASS[str(t)]: np.asarray(arr["value"][i], dtype=float) for i, t in enumerate(arr["types"])}
+
+
 def pc_types():
     from .profiles import PITCH_TYPES
 
@@ -154,6 +164,8 @@ class PitchPolicyMethod(ResearchMethod):
                     help_en="Pitch types are as strong as the league average; a type may be given to a pitcher only if the league support rule allows it and it is at least the minimum share of his pitches; his own mix by count is the observed behaviour. Pitchers with no training pitches keep the league behaviour. The direction map is unchanged."),
         ConfigField("pitcher_min_pa", "int", default=200, minimum=1, label_zh="逐投手引擎：投手最少出場打席數（資料量門檻）", label_en="Per-pitcher engine: minimum plate appearances of a pitcher",
                     help_zh="只算打席數達到門檻的投手；結果會報告這些投手涵蓋了多少比例的打席。", help_en="Only pitchers with at least this many plate appearances; the result says what share of all plate appearances they cover."),
+        ConfigField("bip_table_run_id", "int", default=0, minimum=0, label_zh="打進場內之後的統計表（bip_table）紀錄編號，0＝不用", label_en="After-a-ball-in-play table (bip_table) run id, 0 = none",
+                    help_zh="模型把打進場內依擊球類型拆開（十一類）時必填：引擎用這張表當打進場內的終端值。", help_en="Needed when the model splits balls in play by the batted-ball type (eleven classes): the engine takes the end value of a ball in play from this table."),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
                     help_zh="用該紀錄的 J_BIP 取代描述性估計，並做錨點一致性檢查（計畫 3.6）。", help_en="Uses its J_BIP instead of the descriptive estimate and runs the anchor consistency check."),
         ConfigField("seed", "int", default=20240601, label_zh="隨機種子", label_en="Random seed"),
@@ -205,6 +217,8 @@ class PitchPolicyMethod(ResearchMethod):
         out = {**re_method_inputs(ctx, config), "model_run_key": self._model_run(ctx, config)["run_key"]}
         if config["anchor_run_id"]:
             out = {**out, "anchor_run_key": self._anchor_run(ctx, config)["run_key"]}
+        if config["bip_table_run_id"]:
+            out = {**out, "bip_table_run_key": ctx.store.get_run(int(config["bip_table_run_id"]))["run_key"]}
         if config["predict_model_run_id"]:
             out = {**out, "predict_model_run_key": ctx.store.get_run(int(config["predict_model_run_id"]))["run_key"]}
         return out
@@ -241,6 +255,12 @@ class PitchPolicyMethod(ResearchMethod):
                 env.jbip = np.where(np.isfinite(anchor["jbip"]) & (anchor["jbip"] != 0), anchor["jbip"], env.jbip)
             model = load_model(ctx.store.load_artifact(int(config["model_run_id"]), f"outcome_model_{group}")["rows"])           # the model the user trained, with its controls
             model.group = group
+            env.outcomes = pc.outcomes_for(model.classes)                                  # eight classes, or eleven when balls in play are split by the batted-ball type
+            if env.outcomes != pc.OUTCOMES:
+                if not config["bip_table_run_id"]:
+                    raise ConfigError("a model with eleven outcome classes needs bip_table_run_id (the table of what follows a ball in play) / 十一類模型需要 bip_table_run_id（打進場內之後的統計表）")
+                env.bip = load_bip_values(ctx.store, int(config["bip_table_run_id"]), group)
+                cols["outcome"] = lc.split_in_play(cols["outcome"], cols["bb_type"])         # the models and the engine below work with the split classes
             tensor = pb.model_tensor(model, shape, group, effects="population")
             obs, support, n = pb.usage_from_counts(cols, shape, min_share=config["min_share"], min_count=config["min_count"])
             dyns = pb.members_dynamics(tensor, obs, support, n)
@@ -299,7 +319,7 @@ class PitchPolicyMethod(ResearchMethod):
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config, env))
         model_extras = ctx.store.load_result(int(config["model_run_id"]))["extras"]
-        extras = {"scope": ctx.scope, "re_scope": config["re_scope"], "classes": list(pc.OUTCOMES), "model_run_id": config["model_run_id"], "model": model_extras.get("model"),
+        extras = {"scope": ctx.scope, "re_scope": config["re_scope"], "classes": list(env.outcomes), "model_run_id": config["model_run_id"], "model": model_extras.get("model"),
                   "model_controls": model_extras.get("controls"), "state_layout": "balls,strikes,outs,bases,prev(9 types + none),streak(1,2,3+)",
                   "mode": f"M0 league average player of the {model_extras.get('model')} model", "comparisons": {k: v for k, v in comparisons.items() if v},
                   "notes": policy_notes(config, bool(pitcher_summary)), "pitcher_engine": {"enabled": bool(config["pitcher_engine"]), "min_pa": int(config["pitcher_min_pa"]), "groups": pitcher_info}}
@@ -617,10 +637,10 @@ def situation_arrays(group, an, tensor, env, config) -> dict:
     q, qlo, qhi = an.interval(an.q_obs, conf)
     adv, alo, ahi = an.interval(an.advantage, conf)
     mg, mlo, mhi = an.interval(an.marginal, conf)
-    hr_mean, hr_lo, hr_hi = an.interval(tensor[:, :, :, pc.OC["in_play_home_run"]], conf)
+    hr_mean, hr_lo, hr_hi = an.interval(tensor[:, :, :, list(env.outcomes).index("in_play_home_run")], conf)
     n = an.extras.get("n_cell")
     meta = {"group": group, "delta": config["marginal_shift"], "confidence": conf, "min_count": config["min_count"], "min_share": config["min_share"],
-            "trust": config["trust_region"], "classes": list(pc.OUTCOMES), "members": int(an.extras["members"]), "mode": "M0 league average (level L0)"}
+            "trust": config["trust_region"], "classes": list(env.outcomes), "members": int(an.extras["members"]), "mode": "M0 league average (level L0)"}
     return dict(q=q, q_lo=qlo, q_hi=qhi, advantage=adv, adv_lo=alo, adv_hi=ahi, marginal=mg, m_lo=mlo, m_hi=mhi, p_outcome=tensor.mean(axis=0), hr_lo=hr_lo, hr_hi=hr_hi,
                 support=an.support, obs=an.obs, occupancy=an.occupancy, n=(np.zeros(an.obs.shape) if n is None else n),
                 dp_trust=an.policies.get("dp_trust", an.obs), dp_unrestricted=an.policies.get("dp_unrestricted", an.obs),

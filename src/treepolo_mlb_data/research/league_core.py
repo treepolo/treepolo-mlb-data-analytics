@@ -13,7 +13,7 @@ from .profiles import PITCH_TYPES, ProfileModel
 
 LEVELS = ("L0", "L1", "L2", "L3")
 SITUATION_NUMERIC = ("balls", "strikes", "outs_when_up", "streak_cap")
-SWING_CLASSES = ("whiff", "foul_tip", "foul", "in_play_home_run", "in_play_non_hr")
+SWING_CLASSES = ("whiff", "foul_tip", "foul", "in_play_home_run", "in_play_non_hr", "in_play_ground_ball", "in_play_line_drive", "in_play_fly_ball", "in_play_popup")
 
 
 def situation_features(cols: Mapping[str, np.ndarray], *, with_action: bool) -> tuple[np.ndarray, list[str]]:
@@ -63,6 +63,22 @@ def encode_outcome(outcome: np.ndarray, merge: Mapping[str, str]):
     y = np.full(len(outcome), -1, dtype=np.int64)
     y[keep] = [lookup[merge[o]] for o in outcome[keep]]
     return y, classes, keep
+
+
+BATTED_BALL_CLASSES = ("in_play_ground_ball", "in_play_line_drive", "in_play_fly_ball", "in_play_popup")
+BB_TYPE_TO_CLASS = {"ground_ball": "in_play_ground_ball", "line_drive": "in_play_line_drive", "fly_ball": "in_play_fly_ball", "popup": "in_play_popup"}
+IN_PLAY_NOT_HR = ("in_play_out", "in_play_single", "in_play_double", "in_play_triple", "in_play_error_other")
+
+
+def split_in_play(outcome: np.ndarray, bb_type: np.ndarray) -> np.ndarray:
+    """The outcome category with a ball in play that is not a home run split by the type of the batted ball (``bb_type``: ground_ball, line_drive, fly_ball, popup). A ball in play with no
+    batted-ball type (catcher interference) gets ``in_play_unknown``, which no class map lists, so such a row is dropped like any other unmapped category."""
+
+    outcome = np.asarray(outcome).astype(str).copy(); bb = np.asarray(bb_type).astype(str)
+    inplay = np.isin(outcome, IN_PLAY_NOT_HR)
+    mapped = np.array([BB_TYPE_TO_CLASS.get(x, "in_play_unknown") for x in bb[inplay]], dtype=object) if inplay.any() else np.array([], dtype=object)
+    outcome = outcome.astype(object); outcome[inplay] = mapped
+    return outcome.astype(str)
 
 
 def encode_usage(ptype: np.ndarray):

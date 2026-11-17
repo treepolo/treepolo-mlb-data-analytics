@@ -16,6 +16,11 @@ DEFAULT_CLASS_MERGE: dict[str, str] = {
     "in_play_double": "in_play_non_hr", "in_play_single": "in_play_non_hr", "in_play_out": "in_play_non_hr",
     "in_play_error_other": "in_play_non_hr",
 }
+# The 11-class scheme (class_scheme = "batted_ball"): a ball in play that is not a home run is split by the type of the batted ball.
+BATTED_BALL_CLASS_MERGE: dict[str, str] = {
+    "ball": "ball", "called_strike": "called_strike", "whiff": "whiff", "foul_tip": "foul_tip", "foul": "foul", "hit_by_pitch": "hit_by_pitch", "in_play_home_run": "in_play_home_run",
+    "in_play_ground_ball": "in_play_ground_ball", "in_play_line_drive": "in_play_line_drive", "in_play_fly_ball": "in_play_fly_ball", "in_play_popup": "in_play_popup",
+}
 NUMERIC_FEATURES = (
     "plate_x", "plate_z", "release_speed", "pfx_x", "pfx_z", "release_spin_rate", "release_extension", "outs_when_up", "balls", "strikes",
     "pitch_index_in_pa", "speed_diff_prev1", "dx_prev1", "dz_prev1",

@@ -79,8 +79,9 @@ def model_tensor(model, shape: pc.Shape, group: str = "RvR", effects: str = "pop
         cols = {**cols, **{k: np.asarray(v) for k, v in extra.items()}}
     proba = model.predict_members(cols, effects=effects)                        # [M, S*A, classes of the model]
     col_of = {name: i for i, name in enumerate(model.classes)}
-    out = np.zeros((proba.shape[0], shape.size, shape.n_actions, pc.C))
-    for name, c in pc.OC.items():
+    outcomes = pc.outcomes_for(model.classes)                                     # eight classes, or eleven when balls in play are split by the batted-ball type
+    out = np.zeros((proba.shape[0], shape.size, shape.n_actions, len(outcomes)))
+    for c, name in enumerate(outcomes):
         if name in col_of:
             out[:, :, :, c] = proba[:, :, col_of[name]].reshape(proba.shape[0], shape.size, shape.n_actions)
     out /= np.maximum(out.sum(axis=3, keepdims=True), 1e-300)

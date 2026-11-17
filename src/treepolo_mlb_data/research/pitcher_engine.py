@@ -329,7 +329,7 @@ def averaged_dynamics(shrunk, model, sub, pitcher: int, shape: pc.Shape, group: 
         return base
     logp = np.log(np.clip(base.P, 1e-12, None))                                         # [S, A, C] in the engine's class order
     cls = list(model.classes)
-    order = [cls.index(c) for c in pc.OUTCOMES if c in cls]                                 # the engine's classes in the model's order (the engine has the same eight)
+    order = [cls.index(c) for c in pc.outcomes_for(cls) if c in cls]                                 # the engine's classes in the model's order (the engine has the same eight)
     cells = dz.count_cell(pb.cell_columns(shape, group)).reshape(shape.size, shape.n_actions)[:, 0]
     acc = np.zeros_like(base.P)
     for weight, day, bat, bc in pitcher_context(model, sub, pitcher, mode):
@@ -351,7 +351,7 @@ def averaged_dynamics_batched(shrunk, model, sub, pitcher: int, shape: pc.Shape,
     if mode == "none":
         return base
     cls = list(model.classes)
-    order = [cls.index(c) for c in pc.OUTCOMES if c in cls]
+    order = [cls.index(c) for c in pc.outcomes_for(cls) if c in cls]
     cells = dz.count_cell(pb.cell_columns(shape, group)).reshape(shape.size, shape.n_actions)[:, 0]
     contexts = pitcher_context(model, sub, pitcher, mode)
     if not contexts:                                                                                    # a pitcher with no plate appearance in these rows: no probabilities, as ``averaged_dynamics`` has it
