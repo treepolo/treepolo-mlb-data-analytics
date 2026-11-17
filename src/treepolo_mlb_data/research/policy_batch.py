@@ -253,6 +253,5 @@ def run_in_batches(engine: BatchEngine, n_items: int, work: Callable[[slice, int
                 guard.checkpoint(label)
             continue
         start += size
-        cap = None
-        requested = "auto"
+        requested = "auto"                                                                         # the cap that an out-of-memory set stays: the next batches are not tried at the size that failed
     return results
