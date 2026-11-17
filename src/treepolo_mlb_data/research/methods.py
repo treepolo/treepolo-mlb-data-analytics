@@ -38,6 +38,16 @@ class ResearchContext:
     store: Any = None             # the research store, so that a method can read another run (an anchor) it was told to use
     parts: Any = None             # saved pieces of this run (``get(name)`` / ``put(name, payload)``): a method that works in pieces saves each one, so a stopped run starts again where it was
 
+    @property
+    def data_progress(self):
+        """The callback for the data layer (the analysis engines report a percentage between 0 and 100 of their own query): only its words go to the progress of the run, never its percentage,
+        because the fraction of a research run is the method's own (0 to 1)."""
+
+        if self.progress is None:
+            return None
+        report = self.progress
+        return lambda stage, percentage, detail=None: report(stage, None, detail)
+
     def source_node(self):
         """The pitch table restricted to the research scope (unrestricted when no scope)."""
 

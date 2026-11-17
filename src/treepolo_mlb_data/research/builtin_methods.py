@@ -37,7 +37,7 @@ class AnalysisPayloadMethod(ResearchMethod):
 
     def run(self, ctx: ResearchContext, config: dict[str, Any]) -> ResearchResult:
         payload = config["payload"]
-        result = ctx.facade.analyze(payload, progress=ctx.progress)
+        result = ctx.facade.analyze(payload, progress=ctx.data_progress)
         if isinstance(result.get("sections"), list) and result["sections"]:
             sections = tuple(dict(section) for section in result["sections"])
         else:

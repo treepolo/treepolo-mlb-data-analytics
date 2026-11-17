@@ -115,3 +115,14 @@ def test_the_progress_panel_is_wired_into_the_app():
     assert "/api/research/progress" in script and "預估再" in script and "已用" in script
     assert "node --check src/treepolo_mlb_data/web_static/research-progress.js" in ci and "node tests/research-progress.test.cjs" in ci
     assert "innerHTML" not in script and "localStorage" not in script and "sessionStorage" not in script
+
+
+def test_the_data_layers_percentage_never_reaches_the_bar_of_the_run():
+    from treepolo_mlb_data.research.methods import ResearchContext
+
+    seen = []
+    ctx = ResearchContext(config=None, facade=None, scope={}, progress=lambda stage, fraction, detail: seen.append((stage, fraction, detail)))
+    ctx.data_progress("duckdb_query", 22.0, "Running DuckDB analytical query")                 # the engine speaks in percent of its own query
+    ctx.data_progress("formatting", 97.0, "Formatting analysis result")
+    assert seen == [("duckdb_query", None, "Running DuckDB analytical query"), ("formatting", None, "Formatting analysis result")]       # only the words are passed on
+    assert ResearchContext(config=None, facade=None, scope={}).data_progress is None

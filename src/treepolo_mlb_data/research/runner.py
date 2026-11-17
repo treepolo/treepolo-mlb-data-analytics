@@ -30,7 +30,7 @@ def run_checked(ctx: ResearchContext, node: Node) -> AnalysisResult:
     problems = lint_columns(node, pitch_columns(ctx.config))
     if problems:
         raise ConfigError("Analysis tree uses unknown columns / 分析樹使用了不存在的欄位: " + "; ".join(problems[:5]))
-    result = ctx.engine().execute(node, progress=ctx.progress)
+    result = ctx.engine().execute(node, progress=ctx.data_progress)
     if ctx.config.analysis_backend == "duckdb" and result.backend != "duckdb":
         raise RuntimeError(
             "The query ran on SQLite although analysis_backend is 'duckdb' (run `analytics-sync`, or set analysis_backend to 'auto' "
