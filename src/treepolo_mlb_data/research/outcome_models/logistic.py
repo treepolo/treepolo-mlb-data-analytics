@@ -195,7 +195,7 @@ class LogisticModel(OutcomeModel):
         base_state = solver.get_state()
         exp = solver.export()
         chosen = {g: exp["penalties"][g] for g in self.groups}
-        est = estimated_penalties_for(self.groups, chosen) if (estimate or (start is not None and has_groups and any(g in start["penalties"] for g in self.groups)) or eb_cols is not None) else None
+        est = estimated_penalties_for(self.groups, chosen) if (estimate or (start is not None and has_groups and any(g in start["penalties"] for g in self.groups))) else None
         if est is not None and eb_cols is not None:
             est["count_pitch"] = np.asarray(exp["penalties"]["count_pitch"], dtype=float)                 # what the data chose for the count x pitch-type interactions, per outcome class
 
