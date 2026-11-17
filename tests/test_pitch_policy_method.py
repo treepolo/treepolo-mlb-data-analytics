@@ -206,8 +206,10 @@ def test_the_direct_check_run_lists_every_count_for_the_league_engine(service, r
     monkeypatch.setattr(pcm, "fetch_columns", lambda ctx, config, groups, years, re_by_state=None: cols)
     monkeypatch.setattr(pcm, "get_re_table", lambda ctx, scope: FakeRe(world.env.re_cnt))
     run = service.run("policy_check", {"scope": SCOPE, "re_scope": SCOPE, "policy_run_id": result["id"], "groups": ["RvR"]})["run"]
-    rows = section(service, run, "Direct check")
-    assert {r["engine"] for r in rows} == {"league"} and {r["policy"] for r in rows} == {"dp_trust", "dp_unrestricted"}
+    all_rows = section(service, run, "Direct check")
+    assert "league" in {r["engine"] for r in all_rows}                                              # the league-average engine solved per pitcher adds its own engine names; the plain league engine keeps its rows
+    rows = [r for r in all_rows if r["engine"] == "league"]
+    assert {r["policy"] for r in rows} == {"dp_trust", "dp_unrestricted"}
     cells = [r for r in rows if r["policy"] == "dp_trust"]
     assert [r["count"] for r in cells][0] == "all" and len(cells) == 13
     total = cells[0]
