@@ -108,7 +108,7 @@ class DataProfileMethod(ResearchMethod):
             available = profile.table_columns(conn)
             for index, name in enumerate(wanted):
                 if ctx.progress:
-                    ctx.progress("data_profile", 100.0 * index / len(wanted), f"Profiling {name}")
+                    ctx.progress("data_profile", index / len(wanted), f"Profiling {name}")
                 if name == "outcome_category_counts":
                     sections.append(profile.outcome_category_counts(ctx))
                 else:

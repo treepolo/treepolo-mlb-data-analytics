@@ -13,6 +13,7 @@ import zlib
 from typing import Any
 
 from .config_schema import ConfigError, ConfigField
+from .progress import Progress
 from .guards import scope_years
 from .league_methods import GROUPS, DIGITS, fetch_columns
 from .methods import ArtifactData, ResearchContext, ResearchMethod, ResearchResult, register_method
@@ -230,8 +231,10 @@ class PitchPolicyMethod(ResearchMethod):
             cols = lc.take(cols_all, sel)
             env = build_environment(cols, re.re_by_state, shape)
             start_re_by_group[group] = float((env.start * env.re_cnt[0, 0]).sum() / env.start.sum())            # the run expectancy table's value at the start of a plate appearance
-            if progress:
-                progress("pitch_policy", None, f"group {group}")
+            n_groups = max(len(config["groups"]), 1); gi = list(config["groups"]).index(group)
+            gp = Progress((lambda st, f, d, gi=gi: progress(st, (gi + (f or 0.0)) / n_groups, d)) if progress else None, "pitch_policy",
+                          (("analysis", 0.40), ("pitcher_engine", 0.12), ("league_engine", 0.40), ("sections", 0.08)))       # rough shares of the time of one group
+            gp.phase("analysis", f"group {group}: analysis")
             year_models = {"need": max(int(config["cross_members"]) if config["cross_eval"] else 1, int(config["replication_members"]), 1)}      # the model of each season alone, trained once for both uses
             anchor = self._load_anchor(ctx, config, group)
             if anchor is not None:
@@ -261,6 +264,7 @@ class PitchPolicyMethod(ResearchMethod):
                 comparisons["anchor"][group] = pc.chance_row(sum(r["cells"] for r in summary_rows), 0.95, sum(r["outside_anchor_interval"] for r in summary_rows), "outside_anchor_interval")
             if config["replication_members"] and len(set(int(y) for y in np.unique(cols["game_year"]))) >= 2:
                 replication_rows += self._replicate(group, cols, model, env, shape, obs, support, n, config, year_models)
+            gp.phase("pitcher_engine", f"group {group}: pitcher engine")
             if config["pitcher_engine"]:
                 why = pe.unavailable(load_model(ctx.store.load_artifact(int(config["predict_model_run_id"]), f"outcome_model_{group}")["rows"]) if config["predict_model_run_id"] else model)
                 if why:
@@ -275,7 +279,7 @@ class PitchPolicyMethod(ResearchMethod):
                     league = {k: float(np.mean(an.saving_pa[k])) for k in kinds}
                     s_rows, d_rows, cov, pol = pe.run(group, sub_g, pmodel, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]), context=("batter" if config["predict_model_run_id"] else config["pitcher_context"]), shrink=not config["predict_model_run_id"], min_type_share=float(config["pitcher_min_type_share"]),
                                                  pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league, league_start=float(np.mean(an.start["observed"])), league_hr=float(np.mean(an.hr_pa["observed"])),
-                                                 progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: pitcher engine {i}/{total}")) if progress else None)
+                                                 progress=(lambda i, total, g=group: gp.step(i, total, f"group {g}: pitcher engine {i}/{total}", phase="pitcher_engine")) if progress else None)
                     pitcher_summary += s_rows; pitcher_detail += d_rows
                     if pol["pitchers"].size:
                         artifacts.append(ArtifactData(f"pitcher_policies_{group}", f"The recommended pitch type of every pitcher with enough plate appearances, per state, for dp_trust and dp_unrestricted (group {group}; npz)",
@@ -283,13 +287,15 @@ class PitchPolicyMethod(ResearchMethod):
                     pitcher_cov.append({**cov, "tau_by_class": json.dumps(cov["tau_by_class"], ensure_ascii=False)})
                     pitcher_info[group] = {"enabled": True, "pitchers_used": cov["pitchers_used"], "pitchers_total": cov["pitchers_total"], "pa_share": cov["pa_share"]}
                     del sub_g
+            gp.phase("league_engine", f"group {group}: league engine by pitcher")
             if config["league_by_pitcher"]:
                 l_sum, l_det, l_cov, l_pol = pe.league_run(group, cols, tensor.mean(axis=0), env, shape, obs, support, n, trust=config["trust_region"], min_type_share=float(config["pitcher_min_type_share"]),
-                                                           progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: league engine by pitcher {i}/{total}")) if progress else None)
+                                                           progress=(lambda i, total, g=group: gp.step(i, total, f"group {g}: league engine by pitcher {i}/{total}", phase="league_engine")) if progress else None)
                 league_p_summary += l_sum; league_p_detail += l_det; league_p_cov.append(l_cov)
                 if l_pol["pitchers"].size:
                     artifacts.append(ArtifactData(f"league_pitcher_policies_{group}", f"The league-average engine solved for every pitcher with training pitches: the types he may be given, his own counts, the recommended type and the shares per state (group {group}; npz)",
                                                   ("part", "payload"), tuple(pack_arrays(l_pol))))
+            gp.phase("sections", f"group {group}: tables")
             if config["save_table"]:
                 artifacts.append(self._table_artifact(group, an, tensor, config, env))
         model_extras = ctx.store.load_result(int(config["model_run_id"]))["extras"]

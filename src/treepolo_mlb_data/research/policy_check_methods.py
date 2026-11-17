@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from .config_schema import ConfigError, ConfigField
+from .progress import Progress
 from .guards import scope_years
 from .league_methods import DIGITS, GROUPS, fetch_columns
 from .methods import ResearchContext, ResearchMethod, ResearchResult, register_method
@@ -133,7 +134,10 @@ class PolicyCheckMethod(ResearchMethod):
         rows: list[dict[str, Any]] = []
         within_rows: list[dict[str, Any]] = []
         coverage: list[dict[str, Any]] = []
-        for group in config["groups"]:
+        n_groups = max(len(config["groups"]), 1)
+        for gi, group in enumerate(config["groups"]):
+            gp = Progress((lambda st, f, d, gi=gi: ctx.progress(st, (gi + (f or 0.0)) / n_groups, d)) if ctx.progress else None, "policy_check", (("load", 0.45), ("policies", 0.55)))
+            gp.phase("load", f"group {group}: loading the {','.join(str(y) for y in scope_years(ctx.scope))} pitches")
             art = ctx.store.load_artifact(int(config["policy_run_id"]), f"situation_table_{group}")
             if art is None:
                 raise ConfigError(f"the policy run has no situation table for group {group} / 配球紀錄沒有分組 {group} 的情境表")
@@ -155,7 +159,9 @@ class PolicyCheckMethod(ResearchMethod):
             count = np.array([f"{x}-{y}" for x, y in zip(b[idx], k[idx])])
             pitcher = np.asarray(cols["pitcher"])[idx].astype(np.int64)
             coverage.append({"group": group, "pitches": int(len(idx)), "years": ",".join(str(y) for y in years)})
-            for policy in POLICIES:
+            gp.phase("policies", f"group {group}: comparing the recommendations")
+            for pi_, policy in enumerate(POLICIES):
+                gp.step(pi_, len(POLICIES), f"group {group}: {policy}", phase="policies")
                 league_rec = np.argmax(table[policy], axis=1)[state]
                 variants = [("league", np.ones(len(idx), dtype=bool), league_rec)]
                 if pitcher_policies is not None and policy in pitcher_policies:

@@ -22,6 +22,7 @@ class AnalysisJob:
     detail: str | None = None
     backend: str | None = None
     error: str | None = None
+    expected_seconds: float | None = None
     started_at: str = field(default_factory=_now_iso)
     finished_at: str | None = None
     _started_monotonic: float = field(default_factory=time.monotonic, repr=False)
@@ -38,6 +39,7 @@ class AnalysisJob:
             "detail": self.detail,
             "backend": self.backend,
             "error": self.error,
+            "expected_seconds": self.expected_seconds,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "elapsed_seconds": max(0.0, end - self._started_monotonic),
@@ -69,6 +71,7 @@ def update_analysis_job(
     detail: str | None = None,
     backend: str | None = None,
     preserve_percentage: bool = False,
+    expected_seconds: float | None = None,
 ) -> None:
     with _LOCK:
         job = _JOBS.get(job_id)
@@ -89,6 +92,8 @@ def update_analysis_job(
             job.detail = detail
         if backend is not None:
             job.backend = backend
+        if expected_seconds is not None:
+            job.expected_seconds = float(expected_seconds)
 
 
 def finish_analysis_job(job_id: str, *, backend: str | None = None, error: str | None = None) -> None:
@@ -118,3 +123,22 @@ def get_analysis_job(job_id: str | None = None) -> dict[str, Any] | None:
             job_id = _ORDER[-1]
         job = _JOBS.get(job_id)
         return job.as_dict() if job is not None else None
+
+
+def list_research_jobs(recent_seconds: float = 90.0) -> list[dict[str, Any]]:
+    """The research jobs that are running or finished less than ``recent_seconds`` ago (newest last), each with the time still to go worked out from how far it is (``eta_seconds``; None
+    while the fraction is too small to say) and whether the fraction is an estimate from earlier runs (``estimated``)."""
+
+    out: list[dict[str, Any]] = []
+    now = time.monotonic()
+    with _LOCK:
+        jobs = [_JOBS[j] for j in _ORDER if j in _JOBS and _JOBS[j].mode.startswith("research:")]
+    for job in jobs:
+        d = job.as_dict()
+        if job.status != "running" and job._finished_monotonic is not None and now - job._finished_monotonic > recent_seconds:
+            continue
+        p = d["percentage"]
+        d["eta_seconds"] = d["elapsed_seconds"] * (100.0 - p) / p if job.status == "running" and isinstance(p, (int, float)) and 2.0 <= p < 100.0 else None
+        d["estimated"] = bool(job.expected_seconds) and (isinstance(d["detail"], str) and "估計" in d["detail"])
+        out.append(d)
+    return out

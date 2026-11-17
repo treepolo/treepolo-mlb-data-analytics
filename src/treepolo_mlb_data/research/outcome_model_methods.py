@@ -143,12 +143,13 @@ class OutcomeModelTrainMethod(ResearchMethod):
         out["crosscheck_info"] = {}
         artifacts, comparisons, classes = [], {"pitch_effects": {}}, None
         for gi, group in enumerate(config["groups"]):
+            frac = gi / len(config["groups"]) if len(config["groups"]) > 1 else None                     # one group: the sweeps run until the model converges, so no honest fraction (the service estimates from the earlier runs)
             if progress:
-                progress("outcome_model_train", gi / len(config["groups"]), f"group {group}")
+                progress("outcome_model_train", frac, f"group {group}")
             piece = ctx.parts.get(f"outcome_model_train:{group}") if ctx.parts is not None else None
             if piece is not None:                                                   # an earlier try that was stopped had finished this group: use it
                 if progress:
-                    progress("outcome_model_train", gi / len(config["groups"]), f"group {group}: the result saved by the earlier try is used")
+                    progress("outcome_model_train", frac, f"group {group}: the result saved by the earlier try is used")
             else:
                 guard.shrink()                                                       # one group's rows at a time, and what the group before held is given back first
                 cols = fetch_columns(ctx, config, [group], years)

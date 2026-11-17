@@ -55,6 +55,10 @@ def handle_get(service: ResearchService, path: str, query_string: str = "") -> R
         return 200, {"methods": service.methods()}
     if route == "pipeline/status":
         return 200, service.pipeline().status()
+    if route == "progress":
+        from ..analysis_jobs import list_research_jobs
+
+        return 200, {"jobs": list_research_jobs()}
     if route == "pipeline/info":
         from .outcome_models import controls as ctl, model_kinds
         from .pipeline import AUTO_FIELDS, FILE_STEP_KEYS, FROM_THE_TOP, GROUPS, OPTIONAL_STEPS, STEPS, environment_info, tier_info

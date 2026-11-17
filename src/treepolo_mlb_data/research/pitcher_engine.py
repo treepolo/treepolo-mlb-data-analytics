@@ -700,7 +700,7 @@ def _league_batched(shape, env, P, obs, support, n, sets, keys, pending, trust, 
     return pi_u_by_key, solved
 
 
-def score_batched(shape: pc.Shape, env: pc.Environment, entries: Sequence[Mapping[str, Any]], kinds: Sequence[str], shared_P: np.ndarray | None = None) -> list[dict[str, float]]:
+def score_batched(shape: pc.Shape, env: pc.Environment, entries: Sequence[Mapping[str, Any]], kinds: Sequence[str], shared_P: np.ndarray | None = None, progress=None) -> list[dict[str, float]]:
     """The start value of the observed mix and of each policy in ``kinds`` for many pitchers at once (2025 scoring): ``entries`` hold ``obs`` [S, A], ``shares`` {kind: [S, A]} and, unless the
     probabilities are the same for everybody (``shared_P``), ``P`` = a function of the batch engine that gives the pitcher's probabilities [S, A, C]. The batch size is the resource guard's decision."""
 
@@ -708,6 +708,7 @@ def score_batched(shape: pc.Shape, env: pc.Environment, entries: Sequence[Mappin
 
     eng = BatchEngine(shape, env)
     K = len(kinds) + 1
+    done = [0]
 
     def work(sl: slice, size: int):
         items = entries[sl]; b = len(items)
@@ -717,6 +718,9 @@ def score_batched(shape: pc.Shape, env: pc.Environment, entries: Sequence[Mappin
         else:
             P = eng.tensor(np.stack([it["P"](eng) for it in items])).repeat_interleave(K, dim=0)
         st = eng.start_value(eng.evaluate(pi, P)).cpu().numpy().reshape(b, K)
+        done[0] += b
+        if progress:
+            progress(done[0], len(entries))
         return [dict(zip(("observed", *kinds), (float(x) for x in st[i]))) for i in range(b)]
 
     return [r for part in run_in_batches(eng, len(entries), work, copies=8.0 * K, label="policy score") for r in part]

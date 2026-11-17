@@ -33,7 +33,9 @@ jobs:
       - run: node --check src/treepolo_mlb_data/web_static/research-settings-form.js
       - run: node --check src/treepolo_mlb_data/web_static/research-query-page.js
       - run: node --check src/treepolo_mlb_data/web_static/research-pipeline-page.js
+      - run: node --check src/treepolo_mlb_data/web_static/research-progress.js
       - run: node tests/research-charts.test.cjs
+      - run: node tests/research-progress.test.cjs
       - run: pytest -q -m 'not integration'
 
   live-savant-smoke:

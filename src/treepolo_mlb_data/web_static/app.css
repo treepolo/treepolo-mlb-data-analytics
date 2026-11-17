@@ -306,3 +306,19 @@ legend { padding: 0 5px; color: #164079; font-weight: 700; }
   .result-sort-row > .remove-row { width: auto; min-width: 0; }
   .three-condition-grid .condition-row { grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1fr); }
 }
+
+/* research progress panel: every research job that is running, a bar, the time used and the time still to go */
+.research-progress-panel {
+  position: fixed; right: 14px; bottom: 14px; z-index: 900; width: 360px; max-width: calc(100vw - 28px); max-height: 60vh; overflow: auto;
+  padding: 8px 10px; border: 1px solid #6f8aa6; background: linear-gradient(#f8fbff, #e6eef7); box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+.research-progress-head { margin-bottom: 6px; font-weight: 700; color: #173f73; }
+.research-progress-job { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #c3d0de; }
+.research-progress-job:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.research-progress-title { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.research-progress-track { position: relative; height: 14px; overflow: hidden; border: 1px solid #6f7f8f; background: #fff; box-shadow: inset 1px 1px 2px rgba(0,0,0,.2); }
+.research-progress-bar { height: 100%; min-width: 0; background: repeating-linear-gradient(90deg, #4caf43 0 10px, #63bf59 10px 20px); transition: width .4s linear; }
+.research-progress-job.failed .research-progress-bar { background: #c0392b; }
+.research-progress-track.indeterminate .research-progress-bar { position: absolute; animation: treepolo-progress-slide 1.2s linear infinite; }
+.research-progress-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 3px; font-size: 12px; }
+.research-progress-detail { margin-top: 2px; font-size: 11px; color: #555; word-break: break-word; }

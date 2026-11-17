@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from .config_schema import ConfigError, ConfigField
+from .progress import Progress
 from .guards import scope_years
 from .league_methods import GROUPS, DIGITS, fetch_columns
 from .methods import ResearchContext, ResearchMethod, ResearchResult, register_method
@@ -86,7 +87,11 @@ class PolicyScoreMethod(ResearchMethod):
         re = get_re_table(ctx, config["re_scope"])
         shape = pc.Shape()
         rows: list[dict[str, Any]] = []
-        for group in config["groups"]:
+        n_groups = max(len(config["groups"]), 1)
+        for gi, group in enumerate(config["groups"]):
+            report = ctx.progress
+            gp = Progress((lambda st, f, d, gi=gi: report(st, (gi + (f or 0.0)) / n_groups, d)) if report else None, "policy_score", (("load", 0.35), ("league", 0.30), ("pitcher", 0.35)))
+            gp.phase("load", f"group {group}: loading the 2025 pitches and the scoring model")
             table_art = ctx.store.load_artifact(int(config["policy_run_id"]), f"situation_table_{group}")
             if table_art is None:
                 raise ConfigError(f"the policy run has no situation table for group {group} / 配球紀錄沒有分組 {group} 的情境表")
@@ -119,7 +124,8 @@ class PolicyScoreMethod(ResearchMethod):
                     ch = pe.choice_from_counts(np.asarray(lp["counts"][i], dtype=float), shape, support, min_share_l)
                     entries.append({"obs": ch["obs"], "shares": {k: lp[f"{k}_share"][i] for k in sav_l}})
                     w_l.append(float(lp["pa"][i]))
-                for r in pe.score_batched(shape, env, entries, tuple(sav_l), shared_P=tensor.mean(axis=0)):
+                gp.phase("league", f"group {group}: scoring the league-average engine by pitcher")
+                for r in pe.score_batched(shape, env, entries, tuple(sav_l), shared_P=tensor.mean(axis=0), progress=lambda i, t: gp.step(i, t, f"group {group}: league engine by pitcher {i}/{t}", phase="league")):
                     for kind in sav_l:
                         sav_l[kind].append(r["observed"] - r[kind])
                 for kind, v in sav_l.items():
@@ -158,7 +164,8 @@ class PolicyScoreMethod(ResearchMethod):
                                 "P": (lambda eng, pid=int(pid), po=p_obs, ps=p_support: pe.averaged_dynamics_batched(shrunk, pmodel_ctx, sub, pid, shape, group, po, ps, n, context, eng).P)})
                 w_all.append(float(per["pa"][i]))
                 seen += int(pa_in.get(int(pid), 0) >= int(config["pitcher_min_pa"]))
-            for r in pe.score_batched(shape, env, entries, tuple(kinds_p)):
+            gp.phase("pitcher", f"group {group}: scoring the per-pitcher engine")
+            for r in pe.score_batched(shape, env, entries, tuple(kinds_p), progress=lambda i, t: gp.step(i, t, f"group {group}: per-pitcher engine {i}/{t}", phase="pitcher")):
                 for kind in kinds_p:
                     sav[kind].append(r["observed"] - r[kind])
             w_arr = np.array(w_all)

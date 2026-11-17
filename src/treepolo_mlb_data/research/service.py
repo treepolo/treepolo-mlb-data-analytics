@@ -196,11 +196,38 @@ class ResearchService:
             self.store.restart_run(run_id, code_version=version, data_fingerprint=fingerprint, parent_run_id=parent_run_id)
 
         job_id = start_analysis_job(f"research:{kind}")
+        expected = self._expected_seconds(kind)                                                  # how long the earlier runs of this kind took (None when there are none)
+        if expected:
+            update_analysis_job(job_id, expected_seconds=expected)
+        state: dict[str, Any] = {"last": time.monotonic(), "stage": "queued", "detail": None, "determinate": False}
 
-        def report(stage: str, percentage: float | None, detail: str | None) -> None:
-            update_analysis_job(job_id, stage=stage, percentage=percentage, detail=detail)
+        def report(stage: str, fraction: float | None, detail: str | None) -> None:
+            """``fraction`` is between 0 and 1 (None: the method cannot say); the job keeps it as a percentage."""
+
+            state.update(last=time.monotonic(), stage=stage, detail=detail)
+            if fraction is not None:
+                state["determinate"] = True
+            update_analysis_job(job_id, stage=stage, percentage=None if fraction is None else 100.0 * float(fraction), detail=detail)
             if progress is not None:
-                progress(stage, percentage, detail)
+                progress(stage, fraction, detail)
+
+        beat_stop = threading.Event()
+        beat_started = time.monotonic()
+
+        def heartbeat() -> None:
+            """A method that only reports text (a model that sweeps until it converges): the bar follows the time the earlier runs of this kind took, labelled as an estimate."""
+
+            while not beat_stop.wait(1.0):
+                if not expected or state["determinate"]:
+                    continue
+                est = min(0.95, (time.monotonic() - beat_started) / expected)
+                note = f"（依先前同類研究約 {expected:.0f} 秒估計）"
+                detail = str(state["detail"] or state["stage"]).split("（依先前")[0] + note
+                update_analysis_job(job_id, percentage=100.0 * est, detail=detail)
+                if progress is not None:
+                    progress(state["stage"], est, detail)
+
+        threading.Thread(target=heartbeat, daemon=True).start()
 
         ctx = ResearchContext(config=self.config, facade=self.facade, scope=scope, progress=report, store=self.store, parts=RunParts(self.store, run_key, version))
         started = time.monotonic()
@@ -231,12 +258,24 @@ class ResearchService:
             )
             self.store.drop_parts(run_key)                                          # the run is whole: its saved pieces are not needed any more
         except BaseException as exc:
+            beat_stop.set()
             self.store.fail_run(run_id, f"{type(exc).__name__}: {exc}", time.monotonic() - started)
             finish_analysis_job(job_id, error=str(exc))
             raise
+        beat_stop.set()
         finish_analysis_job(job_id)
         self.store.link_run(study["id"], run_id)
         return {"run": self.store.get_run(run_id), "reused": False, "reproduced": reproduced}
+
+    def _expected_seconds(self, kind: str) -> float | None:
+        """The middle of how long the last few successful runs of this kind took, or None."""
+
+        try:
+            rows = self.store.list_runs(kind=kind, status="success", limit=5)
+        except Exception:
+            return None
+        durations = sorted(float(r["duration_seconds"]) for r in rows if r.get("duration_seconds") and float(r["duration_seconds"]) > 3.0)
+        return durations[len(durations) // 2] if durations else None
 
     def rerun(self, run_id: int, *, study_id: int | None = None) -> dict[str, Any]:
         run = self.store.get_run(run_id)
