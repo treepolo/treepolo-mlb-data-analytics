@@ -17,7 +17,7 @@ def test_with_the_other_effects_of_the_real_model_the_fit_converges_and_the_inte
 
     cols = make_pitches(2000, seed=7)
     other = dict(control_pitcher_pitch="within", control_day="within", control_batter="effect", control_survival="batter_and_count")
-    models = {mode: om.new_model("logistic").fit(cols, None, {**SETTINGS, **other, "max_iter": 600, "control_count_pitch": mode}) for mode in ("none", "effect")}
+    models = {mode: om.new_model("logistic").fit(cols, None, {**SETTINGS, **other, "control_count_pitch": mode}) for mode in ("none", "effect")}
     cell = dz.count_cell(cols) * dz.N_TYPES + np.maximum(dz.type_index(cols["pitch_type"]), 0)
     lo = dz.SIT_OFFSETS["count*type"]
     seen = np.bincount(cell, minlength=12 * dz.N_TYPES) > 0
