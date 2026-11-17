@@ -170,7 +170,7 @@ class BipTableMethod(ResearchMethod):
             for yi, year in enumerate(years):
                 if ctx.progress:
                     ctx.progress("bip_table", (gi * len(years) + yi) / (len(config["groups"]) * len(years)), f"group {group} {year}")
-                cols = fetch_columns(ctx, {**config, "class_scheme": "eight"}, [group], [year], re_by_state=re.re_by_state)
+                cols = fetch_columns(ctx, {**config, "class_scheme": "eight", "with_bb_type": True}, [group], [year], re_by_state=re.re_by_state)
                 rows = bip_rows(cols, re_cnt, shape)
                 del cols
                 per[(group, year)] = rows

@@ -12,7 +12,7 @@ from treepolo_mlb_data.research import outcome_models as om, policy_worlds as pw
 
 torch = pytest.importorskip("torch")
 
-BASE = dict(max_iter=1000, bagging_reps=1, seed=3, device="cpu")
+BASE = dict(max_iter=1000, bagging_reps=1, seed=3, device="cpu", control_count_pitch="none")  # the equivalence with the old solver is about the same model: the count x pitch-type block is shrunk only by the grouped solver
 
 
 def _world(kind, n_pa, seed=2):

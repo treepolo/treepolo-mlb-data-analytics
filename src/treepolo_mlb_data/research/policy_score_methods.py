@@ -103,7 +103,8 @@ class PolicyScoreMethod(ResearchMethod):
             if model_art is None:
                 raise ConfigError(f"the scoring model run has no model for group {group} / 評分模型紀錄沒有分組 {group} 的模型")
             model = load_model(model_art["rows"]); model.group = group
-            cols = fetch_columns(ctx, config, [group], years, re_by_state=re.re_by_state)
+            policy_cfg = ctx.store.get_run(int(config["policy_run_id"]))["config"]
+            cols = fetch_columns(ctx, {**config, "with_bb_type": bool(policy_cfg.get("bip_table_run_id"))}, [group], years, re_by_state=re.re_by_state)
             env = pm.build_environment(cols, re.re_by_state, shape)
             env.outcomes = pc.outcomes_for(model.classes)                                   # eight classes, or eleven when the scoring model splits balls in play by the batted-ball type
             if env.outcomes != pc.OUTCOMES:                                                 # the end value of a ball in play comes from the training seasons' table that the policies were made with

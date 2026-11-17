@@ -267,10 +267,11 @@ def test_shrinkage_is_a_precision_chosen_by_the_data_and_the_information_of_a_pi
     assert sh.info_per_pitch([0.5, 0.5]) == pytest.approx(0.25) and sh.info_per_pitch([0.9, 0.1]) == pytest.approx(0.09) and 0.05 < sh.info_per_pitch([0.36, 0.17, 0.17, 0.01, 0.004, 0.012, 0.16, 0.10]) < 0.12
     w, cols = _world("W4", 20_000, 5)
     auto = _fit("logistic", cols, max_iter=300, control_pitcher="effect", control_batter="effect")
-    assert auto.info["penalties_estimated"] and set(auto.info["penalties"]) == {"pitcher", "batter"} and all(0 < v <= 1e4 for v in auto.info["penalties"].values())
-    assert {g: len(v) for g, v in auto.info["penalties_by_class"].items()} == {"pitcher": 8, "batter": 8} and len(set(auto.info["penalties_by_class"]["pitcher"])) > 1          # one precision per outcome class
+    effects_only = lambda d: {k: v for k, v in d.items() if k != "count_pitch"}                      # the count x pitch-type block has its own estimated strength (tests/test_count_pitch_shrinkage.py)
+    assert auto.info["penalties_estimated"] and set(effects_only(auto.info["penalties"])) == {"pitcher", "batter"} and all(0 < v <= 1e4 for v in auto.info["penalties"].values())
+    assert {g: len(v) for g, v in effects_only(auto.info["penalties_by_class"]).items()} == {"pitcher": 8, "batter": 8} and len(set(auto.info["penalties_by_class"]["pitcher"])) > 1          # one precision per outcome class
     manual = _fit("logistic", cols, max_iter=300, control_pitcher="effect", control_batter="effect", effect_penalty_mode="manual", effect_penalty_pitcher=7.0, effect_penalty_batter=9.0)
-    assert not manual.info["penalties_estimated"] and manual.info["penalties"] == {"pitcher": 7.0, "batter": 9.0}                  # a manual value is kept as written
+    assert not manual.info["penalties_estimated"] and effects_only(manual.info["penalties"]) == {"pitcher": 7.0, "batter": 9.0}                  # a manual value is kept as written
     # the share of his own data a pitcher's effect uses is information / (information + penalty), not pitches / (pitches + penalty)
     pid = int(manual.players("pitcher")[0][0]); n = manual.player_info("pitcher", pid)["pitches"]
     got = manual.player_info("pitcher", pid)["shrinkage"]
