@@ -140,7 +140,8 @@ class LogisticModel(OutcomeModel):
             start += size
         penalties = (reference.info.get("penalties_by_class") or {})
         return {"dense": coef[:nd], "intercept": np.asarray(member["intercept"], dtype=np.float64), "effects": effects,
-                "penalties": {g: np.asarray(v, dtype=float) for g, v in penalties.items() if g in self.groups}}
+                "penalties": {g: np.asarray(v, dtype=float) for g, v in penalties.items() if g in self.groups},
+                "eb": (np.asarray(penalties["count_pitch"], dtype=float) if "count_pitch" in penalties else None)}
 
     def _fit_members_grouped(self, sub, y, s, progress, reference, device):
         from . import fastglm
@@ -162,21 +163,28 @@ class LogisticModel(OutcomeModel):
             counts = np.bincount(cell * K + y, minlength=S * K).reshape(S, K).astype(np.float64)
             solver_cell = np.arange(S)
             specs = []
-        make = lambda cnt: fastglm.GroupedSoftmax(sit_idx=sit_idx, n_dense=dz.SIT_WIDTH, l2=float(s["l2"]), cell=solver_cell, counts=cnt, groups=specs, device=device)
+        eb_cols = (dz.SIT_OFFSETS["count*type"] + np.arange(12 * dz.N_TYPES)) if s.get("control_count_pitch", "effect") == "effect" else None        # the count x pitch-type interactions: shrunk by the data
+        seen = np.bincount(dz.count_cell(sub) * dz.N_TYPES + np.maximum(dz.type_index(sub["pitch_type"]), 0), minlength=12 * dz.N_TYPES) > 0                 # the count x pitch-type cells that have pitches
+        make = lambda cnt: fastglm.GroupedSoftmax(sit_idx=sit_idx, n_dense=dz.SIT_WIDTH, l2=float(s["l2"]), cell=solver_cell, counts=cnt, groups=specs, device=device, shrink_cols=eb_cols,
+                                                  shrink_grid=(12, dz.N_TYPES), shrink_present=seen)
         solver = make(counts)
         start = self._reference_start(reference) if has_groups or reference is not None else None
-        estimate = bool(has_groups and any(not w for w in self.groups.values()) and (self.force_auto or s.get("effect_penalty_mode", "auto") == "auto"))
+        estimate = bool(((has_groups and any(not w for w in self.groups.values())) or eb_cols is not None) and (self.force_auto or s.get("effect_penalty_mode", "auto") == "auto"))
         if start is not None:
             solver.load_numpy(start["dense"], start["intercept"], start["effects"])
-            if estimate and all(g in start["penalties"] for g, w in self.groups.items() if not w):
+            if estimate and all(g in start["penalties"] for g, w in self.groups.items() if not w) and (eb_cols is None or start["eb"] is not None):
                 for g, lam in start["penalties"].items():                                  # a fit that follows another keeps its shrinkage
                     if not self.groups.get(g, True):
                         solver.lam[g] = solver.torch.as_tensor(lam, dtype=solver.torch.float64, device=solver.dev)
+                if eb_cols is not None:
+                    solver.lam_eb = solver.torch.as_tensor(start["eb"], dtype=solver.torch.float64, device=solver.dev)
                 estimate = False
         if not estimate:
             for g, within in self.groups.items():
                 if not within and not (start is not None and g in start["penalties"]):
                     solver.lam[g] = solver.torch.full((K,), float(s[f"effect_penalty_{g}"]), dtype=solver.torch.float64, device=solver.dev)
+            if eb_cols is not None and not (start is not None and start["eb"] is not None):
+                solver.lam_eb = solver.torch.full((K,), float(s.get("penalty_count_pitch", 50.0)), dtype=solver.torch.float64, device=solver.dev)
         cap = int(s["max_iter"])
         follow = start is not None
         tol = 1e-5 if follow else 1e-6                      # the convergence criterion of the main fit, which every bootstrap member uses as well
@@ -187,7 +195,9 @@ class LogisticModel(OutcomeModel):
         base_state = solver.get_state()
         exp = solver.export()
         chosen = {g: exp["penalties"][g] for g in self.groups}
-        est = estimated_penalties_for(self.groups, chosen) if (estimate or (start is not None and has_groups and any(g in start["penalties"] for g in self.groups))) else None
+        est = estimated_penalties_for(self.groups, chosen) if (estimate or (start is not None and has_groups and any(g in start["penalties"] for g in self.groups)) or eb_cols is not None) else None
+        if est is not None and eb_cols is not None:
+            est["count_pitch"] = np.asarray(exp["penalties"]["count_pitch"], dtype=float)                 # what the data chose for the count x pitch-type interactions, per outcome class
 
         def member_of(e):
             parts = [e["dense"]] + [e["effects"][g] for g in self.groups]

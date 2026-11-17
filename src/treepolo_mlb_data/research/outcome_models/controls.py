@@ -31,6 +31,9 @@ _CONTROL_SPECS = (
     ("control_location", ("exclude", "include_and_average"), "exclude", "控制：球的位置", "Control: pitch location",
      "exclude：不放進位置；include_and_average：訓練時放入 plate_x、plate_z，預測時對該球種在該球數的歷史位置分布抽樣平均。",
      "exclude, or train with plate_x / plate_z and average the prediction over the historical locations of that pitch type and count."),
+    ("control_count_pitch", ("none", "effect"), "effect", "控制：球數×球種交互作用的收縮", "Control: shrinkage of the count x pitch-type interaction",
+     "effect（預設）：「球數 × 球種」的 108 個交互作用依資料量自動收縮（經驗貝氏，做法和投手效應相同，每個結果類別各一個收縮強度），資料少的組合往 0（只有球數與球種各自的主效應）拉；none：只用一般的 L2。只有邏輯迴歸（grouped 解法）用，其他模型忽略。",
+     "effect (default): the 108 count x pitch-type interactions are shrunk by the amount of data (empirical Bayes, as for the pitcher effects, one strength per outcome class), thin cells are pulled towards 0 (the additive count and pitch-type effects only); none: only the ordinary L2. Used by the logistic model (grouped solver) only."),
     ("control_day_pitch", ("none", "effect", "within"), "none", "控制：投手當天某一種球的狀態", "Control: the pitcher's form of the day on one pitch type",
      "effect：投手×比賽×球種一個效應，資料很少，會被強收縮，效果有限；within：同一位投手同一場比賽同一種球之內比較（效應不收縮）。",
      "effect: one shrunken effect per pitcher, game and pitch type (very thin data, strongly shrunk, limited effect); within: compare only inside the same pitcher, game and pitch type (not shrunk)."),
@@ -71,6 +74,8 @@ CONTROL_FIELDS: tuple[ConfigField, ...] = tuple(
                 help_zh="只在「手動」時使用。這是效應先驗的精確度（變異數的倒數，單位是結果的對數機率），不是假想球數：一球對效應的資訊量約只有 p(1−p)，所以 100 就是很強的收縮。愈大愈往 0（聯盟平均）收縮。",
                 help_en="Used only in manual mode. The precision (1 / variance) of the prior of the effects, in logits: not a number of pseudo-pitches. One pitch carries about p(1-p) of information, so 100 is strong shrinkage.") for g in EFFECT_GROUPS
 ) + (
+    ConfigField("penalty_count_pitch", "float", default=50.0, minimum=0.0, label_zh="收縮強度（手動）：球數×球種交互作用", label_en="Shrinkage (manual): count x pitch-type interaction",
+                help_zh="只在「手動」且 control_count_pitch＝effect 時使用；精確度（變異數的倒數，單位是結果的對數機率）。", help_en="Manual mode with control_count_pitch = effect only; the precision (1 / variance) in logits."),
     ConfigField("location_samples", "int", default=50, minimum=1, maximum=1000, label_zh="位置抽樣數", label_en="Location samples", help_zh="control_location＝include_and_average 時，每個預測抽幾個歷史位置平均。",
                 help_en="Historical locations averaged per prediction when control_location = include_and_average."),
 )

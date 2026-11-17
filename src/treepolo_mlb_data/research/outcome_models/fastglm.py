@@ -31,6 +31,8 @@ from ..resource_guard import guard
 
 VAR_MIN, VAR_MAX = 1e-4, 100.0
 START_PENALTY = 1.0
+EB_KILL = 1e6             # precision that keeps the part of the shrunk block that the count and pitch-type main effects already carry (row and column means) at 0
+EB_RELAX = 1.5            # over-relaxation of the shrinkage estimate of the dense columns (1 = the plain update)
 
 
 def dz_offsets() -> tuple[int, int]:
@@ -39,6 +41,12 @@ def dz_offsets() -> tuple[int, int]:
     from . import design as dz
 
     return dz.SIT_OFFSETS["type"], dz.SIT_OFFSETS["count"]
+
+
+def torch_einsum(spec, *ops):
+    import torch
+
+    return torch.einsum(spec, *ops)
 
 
 def torch_cat(parts):
@@ -70,7 +78,8 @@ class Group:
 
 
 class GroupedSoftmax:
-    def __init__(self, *, sit_idx: np.ndarray, n_dense: int, l2: float, cell: np.ndarray, counts: np.ndarray, groups: Sequence[Group], device: str = "cpu"):
+    def __init__(self, *, sit_idx: np.ndarray, n_dense: int, l2: float, cell: np.ndarray, counts: np.ndarray, groups: Sequence[Group], device: str = "cpu",
+                 shrink_cols: Sequence[int] | None = None, shrink_grid: tuple[int, int] | None = None, shrink_present: np.ndarray | None = None):
         import torch
 
         self.torch = torch
@@ -93,12 +102,48 @@ class GroupedSoftmax:
         self.ia, self.ib = (t.to(self.dev) for t in torch.triu_indices(self.K, self.K))
         self.diag_pos = (self.ia == self.ib).nonzero().squeeze(1)
         self.l2vec = torch.full((self.D + 1, 1), self.l2, dtype=f64, device=self.dev); self.l2vec[self.D] = 0.0
+        # dense columns whose shrinkage is estimated from the data (empirical Bayes, one strength per outcome class) instead of the fixed ridge ``l2``: the count x pitch-type interaction
+        self.eb = torch.as_tensor(np.asarray(sorted(int(c) for c in shrink_cols), dtype=np.int64), device=self.dev) if shrink_cols is not None and len(shrink_cols) else None
+        self._post_tr = None
+        self._post_age = 0
+        self.eb_C = None
+        if self.eb is not None:
+            self.eb_C = torch.as_tensor(self._centering_matrix(len(shrink_cols), shrink_grid, shrink_present), device=self.dev, dtype=f64)
+            self.eb_df = max(float(self.eb_C.diagonal().sum()), 1.0)
         self._counts = {g.name: self.Y0.new_zeros((g.size,)).index_add_(0, self.unit[g.name], self.Y0.sum(dim=1)) for g in self.groups}
         self._parent_maps = {g.name: [(p, torch.as_tensor(m, device=self.dev)) for p, m in g.parents] for g in self.groups}
         self._plan_absorption()
         self.set_weights(None)
         self.reset()
         self._chol = None
+
+    @staticmethod
+    def _centering_matrix(m: int, grid: tuple[int, int] | None, present: np.ndarray | None) -> np.ndarray:
+        """[m, m] projector on the part of the shrunk block that is a real interaction: the coefficients of the cells that were seen, centred inside every row (count) and every column (pitch type) of the
+        grid. What is not in it (the row and column means, which the count and pitch-type main effects carry, and the cells never seen) is kept at 0, so the interaction cannot swap levels with the
+        main effects."""
+
+        seen = np.ones(m, dtype=bool) if present is None else np.asarray(present, dtype=bool)
+        idx = np.nonzero(seen)[0]
+        if grid is None or len(idx) == 0:
+            C = np.zeros((m, m)); C[np.ix_(idx, idx)] = np.eye(len(idx)); return C
+        rows, cols = idx // grid[1], idx % grid[1]
+        A = np.zeros((len(set(rows.tolist())) + len(set(cols.tolist())), len(idx)))
+        k = 0
+        for r in sorted(set(rows.tolist())):
+            A[k, rows == r] = 1.0; k += 1
+        for c in sorted(set(cols.tolist())):
+            A[k, cols == c] = 1.0; k += 1
+        Cp = np.eye(len(idx)) - A.T @ np.linalg.pinv(A @ A.T) @ A
+        C = np.zeros((m, m)); C[np.ix_(idx, idx)] = Cp
+        return C
+
+    def _eb_pmat(self):
+        """[K, m, m] precision matrix of the shrunk block for every outcome class: the estimated strength on the interaction part, a very large one on everything else."""
+
+        torch = self.torch
+        eye = torch.eye(self.eb_C.shape[0], dtype=self.eb_C.dtype, device=self.dev)
+        return self.lam_eb[:, None, None] * self.eb_C[None] + EB_KILL * (eye - self.eb_C)[None]
 
     def _plan_absorption(self) -> None:
         """What a 'within' group (nearly unpenalised effects, one per unit) makes redundant.
@@ -163,6 +208,7 @@ class GroupedSoftmax:
         self.Bt[self.D] = 0.0 if self.D in self.frozen_cols else torch.log(share)
         self.th = {g.name: torch.zeros((g.size, self.K), dtype=f64, device=self.dev) for g in self.groups}
         self.lam = {g.name: torch.full((self.K,), 1e-4 if g.within else (1e12 if g.name in self.frozen_groups else START_PENALTY), dtype=f64, device=self.dev) for g in self.groups}
+        self.lam_eb = torch.full((self.K,), START_PENALTY, dtype=f64, device=self.dev)
         self._chol = None
 
     def set_weights(self, row_weight: np.ndarray | None) -> None:
@@ -177,12 +223,14 @@ class GroupedSoftmax:
         self._chol = None
 
     def get_state(self) -> dict[str, Any]:
-        return {"Bt": self.Bt.clone(), "th": {k: v.clone() for k, v in self.th.items()}, "lam": {k: v.clone() for k, v in self.lam.items()}}
+        return {"Bt": self.Bt.clone(), "th": {k: v.clone() for k, v in self.th.items()}, "lam": {k: v.clone() for k, v in self.lam.items()}, "lam_eb": self.lam_eb.clone()}
 
     def set_state(self, state: Mapping[str, Any]) -> None:
         self.Bt = state["Bt"].clone()
         self.th = {k: v.clone() for k, v in state["th"].items()}
         self.lam = {k: v.clone() for k, v in state["lam"].items()}
+        if "lam_eb" in state:
+            self.lam_eb = state["lam_eb"].clone()
         self._chol = None
 
     def load_numpy(self, dense: np.ndarray, intercept: np.ndarray, effects: Mapping[str, np.ndarray]) -> None:
@@ -210,10 +258,18 @@ class GroupedSoftmax:
         return -(self.Y * logp).sum()
 
     def _penalty(self):
-        pen = 0.5 * self.l2 * (self.Bt[: self.D] ** 2).sum()
+        pen = 0.5 * self.l2 * (self.Bt[: self.D] ** 2).sum() + self._eb_penalty()
         for g in self.groups:
             pen = pen + 0.5 * (self.lam[g.name][None, :] * self.th[g.name] ** 2).sum()
         return pen
+
+    def _eb_penalty(self, Bt=None):
+        """What the shrunk columns add to the ridge penalty: the estimated strength of every class instead of ``l2`` (0 when no column is shrunk)."""
+
+        if self.eb is None:
+            return 0.0
+        B = (self.Bt if Bt is None else Bt)[self.eb]                                  # [m, K]
+        return 0.5 * torch_einsum("ak,kab,bk->", B, self._eb_pmat(), B) - 0.5 * self.l2 * (B ** 2).sum()
 
     def objective(self) -> float:
         torch = self.torch
@@ -265,7 +321,7 @@ class GroupedSoftmax:
         return out
 
     # ------------------------------------------------------------------------------------------------ dense block
-    def _dense_step(self, eta, logp, P, refresh: bool) -> float:
+    def _dense_step(self, eta, logp, P, refresh: bool, want_post: bool = False) -> float:
         torch = self.torch
         K, D1 = self.K, self.D + 1
         r = self.Y - self.W[:, None] * P
@@ -274,6 +330,10 @@ class GroupedSoftmax:
         for b in range(self.B):
             g += self._scatter(self.sit[:, b], Rc, D1)
         g = g - self.l2vec * self.Bt
+        if self.eb is not None:
+            self._post_age += 1
+            Be = self.Bt[self.eb]
+            g[self.eb] = g[self.eb] + self.l2 * Be - torch.einsum("kab,bk->ak", self._eb_pmat(), Be)
         if refresh or self._chol is None:
             Hc = self._scatter_hess(self.cell, P, self.W, self.S)
             Hc = self._full_from_tri(Hc).reshape(self.S, K * K)
@@ -285,7 +345,15 @@ class GroupedSoftmax:
                         acc.index_add_(0, idx[sl], Hc[sl])
                 guard.checkpoint("dense Hessian")
             M = acc.reshape(D1, D1, K, K).permute(0, 2, 1, 3).reshape(D1 * K, D1 * K)
-            ridge = (self.l2vec.expand(D1, K).reshape(-1)).clone()
+            ridge2d = self.l2vec.expand(D1, K).clone()
+            if self.eb is not None:
+                ridge2d[self.eb] = 0.0
+                M4 = M.reshape(D1, K, D1, K)
+                P3 = self._eb_pmat()
+                for k_ in range(K):
+                    M4[self.eb[:, None], k_, self.eb[None, :], k_] += P3[k_]
+                M = M4.reshape(D1 * K, D1 * K)
+            ridge = ridge2d.reshape(-1)
             jitter = 1e-6 * float(M.diagonal().mean()) + 1e-9
             M = M + torch.diag(ridge + jitter)
             L, info = torch.linalg.cholesky_ex(M)
@@ -294,16 +362,25 @@ class GroupedSoftmax:
                 M = M + torch.eye(D1 * K, dtype=M.dtype, device=M.device) * jitter
                 L, info = torch.linalg.cholesky_ex(M)
             self._chol = L
+            if self.eb is not None and want_post and (self._post_tr is None or self._post_age >= 3):            # the posterior covariance of the shrunk block (given everything else), from the inverse of the same Hessian: its trace on the interaction part
+                self._post_age = 0
+                m_ = int(self.eb.numel())
+                rows_k = [self.eb * K + k_ for k_ in range(K)]                                     # the rows of M that belong to the shrunk block, class by class
+                E = torch.zeros((D1 * K, K * m_), dtype=L.dtype, device=L.device)
+                for k_ in range(K):
+                    E[rows_k[k_], k_ * m_ + torch.arange(m_, device=L.device)] = 1.0
+                X = torch.cholesky_solve(E, L)                                                    # the columns of the inverse that we need, not the whole inverse
+                self._post_tr = torch.stack([(self.eb_C * X[rows_k[k_]][:, k_ * m_:(k_ + 1) * m_]).sum() for k_ in range(K)])
         delta = torch.cholesky_solve(g.reshape(-1, 1), self._chol).reshape(D1, K)
         if self.frozen_cols:
             delta[self.frozen_cols] = 0.0                                          # absorbed by a within group: stays at 0 during the sweeps
-        f0 = float(self._nll(logp) + 0.5 * self.l2 * (self.Bt[: self.D] ** 2).sum())
+        f0 = float(self._nll(logp) + 0.5 * self.l2 * (self.Bt[: self.D] ** 2).sum() + self._eb_penalty())
         zc0 = self._zc(self.Bt)
         step = 1.0
         for _ in range(6):
             Bn = self.Bt + step * delta
             eta_n = eta + (self._zc(Bn) - zc0)[self.cell]
-            f1 = float(self._nll(torch.log_softmax(eta_n, dim=1)) + 0.5 * self.l2 * (Bn[: self.D] ** 2).sum())
+            f1 = float(self._nll(torch.log_softmax(eta_n, dim=1)) + 0.5 * self.l2 * (Bn[: self.D] ** 2).sum() + self._eb_penalty(Bn))
             if f1 <= f0 + 1e-9 * abs(f0):
                 self.Bt = Bn
                 return step
@@ -383,7 +460,7 @@ class GroupedSoftmax:
         torch = self.torch
         eta = self._eta(); logp = torch.log_softmax(eta, dim=1); P = torch.exp(logp)
         eta_start = eta.clone()
-        self._dense_step(eta, logp, P, (not self.groups) or number <= 3 or number % hess_every == 0)
+        self._dense_step(eta, logp, P, (not self.groups) or number <= 3 or number % hess_every == 0, want_post=bool(want_variance and self.eb is not None))
         eta = self._eta()
         variances: dict[str, Any] = {}
         for g in self.groups:
@@ -419,7 +496,7 @@ class GroupedSoftmax:
         started = time.monotonic()
         trace: list[tuple[int, float, None]] = []
         changes: list[float] = []
-        em = bool(estimate and any((not g.within) and g.name not in self.frozen_groups for g in self.groups))
+        em = bool(estimate and (any((not g.within) and g.name not in self.frozen_groups for g in self.groups) or self.eb is not None))
         sweeps, converged = 0, False
         lam_stable = not em
         while sweeps < int(max_sweeps) and not lam_stable:                    # phase A: plain sweeps while the penalties are still moving
@@ -432,7 +509,16 @@ class GroupedSoftmax:
                 new = 1.0 / var
                 worst = max(worst, float((new / self.lam[name]).log().abs().max()))
                 self.lam[name] = new
-            if variances and worst < tol_lam:
+            have = bool(variances)
+            if self.eb is not None and sweeps >= 2 and self._post_tr is not None:       # the shrunk block: the same estimate as for an effect group (variance = mean of effect^2 + posterior variance), one strength per class, over the interaction part only
+                Be = self.Bt[self.eb]
+                var = ((torch.einsum("ak,ab,bk->k", Be, self.eb_C, Be) + self._post_tr) / self.eb_df).clamp(VAR_MIN, VAR_MAX)
+                new = 1.0 / var
+                worst = max(worst, float((new / self.lam_eb).log().abs().max()))
+                # the variance estimate creeps (the dense step moves the coefficients only a little per sweep), so the step in log units is over-relaxed; the fixed point is the same
+                self.lam_eb = (self.lam_eb * (new / self.lam_eb) ** EB_RELAX).clamp(1.0 / VAR_MAX, 1.0 / VAR_MIN)                                                  # the Hessian is refreshed on its usual schedule; the variance below comes from the last refresh
+                have = True
+            if have and worst < tol_lam:
                 lam_stable = True
             changes.append(change)
             if sweeps % 10 == 0 or sweeps == 1:
@@ -558,4 +644,4 @@ class GroupedSoftmax:
 
     def export(self) -> dict[str, Any]:
         return {"dense": self.Bt[: self.D].cpu().numpy(), "intercept": self.Bt[self.D].cpu().numpy(), "effects": {k: v.cpu().numpy() for k, v in self.th.items()},
-                "penalties": {k: v.cpu().numpy() for k, v in self.lam.items()}}
+                "penalties": {**{k: v.cpu().numpy() for k, v in self.lam.items()}, **({"count_pitch": self.lam_eb.cpu().numpy()} if self.eb is not None else {})}}
