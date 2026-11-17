@@ -68,7 +68,7 @@ def controls_active(settings: dict[str, Any]) -> bool:
 
 class OutcomeModelTrainMethod(ResearchMethod):
     kind = "outcome_model_train"
-    version = 3     # 3: the count x pitch-type interactions are shrunk by the data (control_count_pitch). 2: bootstrap members run until they converge (the sweeps and the convergence of every fit are in the Members section)
+    version = 4     # 4: the shrunk interactions are centred inside every count and pitch type (the first version let them swap levels with the main effects). 3: the count x pitch-type interactions are shrunk by the data (control_count_pitch). 2: bootstrap members run until they converge (the sweeps and the convergence of every fit are in the Members section)
     label_zh = "訓練結果模型（可消除偏差、可選多種模型）"
     label_en = "Train an outcome model (bias controls, several models)"
     requires_scope = True
