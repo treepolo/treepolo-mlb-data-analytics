@@ -114,14 +114,14 @@ class PolicyScoreMethod(ResearchMethod):
                 lp = pm.unpack_arrays(lp_art["rows"])
                 min_share_l = float(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_min_type_share", 0.01))
                 sav_l = {k: [] for k in ("dp_trust", "dp_unrestricted")}; w_l = []
+                entries = []
                 for i in range(len(lp["pitchers"])):
-                    guard.checkpoint("policy score")
                     ch = pe.choice_from_counts(np.asarray(lp["counts"][i], dtype=float), shape, support, min_share_l)
-                    e = pc.Engine(shape, pc.Dynamics(P=tensor.mean(axis=0), obs=ch["obs"], support=ch["support"], n=n), env)
-                    b = e.start_value(e.evaluate(e.policy_observed()))
-                    for kind in sav_l:
-                        sav_l[kind].append(b - e.start_value(e.evaluate(np.asarray(lp[f"{kind}_share"][i], dtype=float))))
+                    entries.append({"obs": ch["obs"], "shares": {k: lp[f"{k}_share"][i] for k in sav_l}})
                     w_l.append(float(lp["pa"][i]))
+                for r in pe.score_batched(shape, env, entries, tuple(sav_l), shared_P=tensor.mean(axis=0)):
+                    for kind in sav_l:
+                        sav_l[kind].append(r["observed"] - r[kind])
                 for kind, v in sav_l.items():
                     mean = float(np.average(np.array(v), weights=np.array(w_l)))
                     rows.append({"group": group, "engine": "league_by_pitcher", "policy": kind, "pitchers": int(len(v)), "pa_share": None, "saving_pa": mean, "saving_per_team_season": mean * pm.PA_PER_TEAM_SEASON,
@@ -147,20 +147,20 @@ class PolicyScoreMethod(ResearchMethod):
             seen = 0
             min_share = float(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_min_type_share", 0.01))
             sav = {k: [] for k in kinds_p}; w_all = []
+            entries = []
+            pmodel_ctx = pmodel if config["predict_model_run_id"] else shrunk
             for i, pid in enumerate(per["pitchers"].tolist()):
-                guard.checkpoint("policy score")
                 p_obs, p_support = obs, support
                 if "counts" in per:                                  # a run that gave every pitcher only the types he uses: his own mix and his allowed types, as when the policies were chosen
                     choice = pe.choice_from_counts(np.asarray(per["counts"][i], dtype=float), shape, support, min_share)
                     p_obs, p_support = choice["obs"], choice["support"]
-                dyn = pe.averaged_dynamics(shrunk, pmodel if config["predict_model_run_id"] else shrunk, sub, int(pid), shape, group, p_obs, p_support, n, context)
-                e = pc.Engine(shape, dyn, env)
-                b = e.start_value(e.evaluate(e.policy_observed()))
-                w = float(per["pa"][i]); w_all.append(w)
-                for kind in kinds_p:
-                    s = np.asarray(per[f"{kind}_share"][i], dtype=float)
-                    sav[kind].append(b - e.start_value(e.evaluate(s)))
+                entries.append({"obs": p_obs, "shares": {k: per[f"{k}_share"][i] for k in kinds_p},
+                                "P": (lambda eng, pid=int(pid), po=p_obs, ps=p_support: pe.averaged_dynamics_batched(shrunk, pmodel_ctx, sub, pid, shape, group, po, ps, n, context, eng).P)})
+                w_all.append(float(per["pa"][i]))
                 seen += int(pa_in.get(int(pid), 0) >= int(config["pitcher_min_pa"]))
+            for r in pe.score_batched(shape, env, entries, tuple(kinds_p)):
+                for kind in kinds_p:
+                    sav[kind].append(r["observed"] - r[kind])
             w_arr = np.array(w_all)
             for kind in kinds_p:
                 v = np.array(sav[kind])

@@ -243,3 +243,24 @@ def test_the_card_rests_only_after_enough_work_has_piled_up_not_after_every_tiny
     assert len(g._sleeps) == 1 and g._sleeps[0] == pytest.approx(0.16 * g.duty)
     g._rest(0.01)
     assert len(g._sleeps) == 1
+
+
+def test_the_number_of_items_in_a_batch_follows_the_free_memory_and_is_never_zero():
+    per_item = 50e6
+    big = make(Machine(12 * GB)).batch_items(per_item, "cpu")
+    small = make(Machine(5 * GB)).batch_items(per_item, "cpu")
+    assert big > small >= 1
+    g = make(Machine(12 * GB)); g._state = "pressure"
+    assert g.batch_items(per_item, "cpu") < big                                                      # under pressure the batch is smaller
+    assert make(Machine(1 * GB)).batch_items(per_item, "cpu") == 1                                    # almost nothing free: one item, never zero
+    assert make(Machine(12 * GB)).batch_items(1e12, "cpu") == 1
+    assert make(Machine(12 * GB)).batch_items(1.0, "cpu", ceiling=7) == 7
+
+
+def test_the_batch_on_the_card_follows_the_graphics_memory_free_now(monkeypatch):
+    g = make(Machine(12 * GB))
+    sizes = []
+    for free in (3.5 * GB, 2.0 * GB, 1.2 * GB):
+        monkeypatch.setattr(g, "gpu_free_bytes", lambda f=int(free): f)
+        sizes.append(g.batch_items(50e6, "cuda"))
+    assert sizes[0] > sizes[1] > sizes[2] >= 1                                                        # less graphics memory, smaller batches; the display's reserve is never used

@@ -515,6 +515,16 @@ class Guard:
                 pass
         return "cuda"
 
+    def batch_items(self, bytes_per_item: float, device: str = "cpu", *, ceiling: int = 512) -> int:
+        """How many items (pitchers) to put in one batch so that the batch takes at most a fifth of what may be used now: the graphics memory above what the display needs when the card is used,
+        else the memory still free above the limit; a quarter of that while the machine is under pressure. Always at least one item. Looked up at the moment of the call, so it follows the free memory."""
+
+        if device == "cuda":
+            usable = max(self.gpu_free_bytes() - Limits.for_total(16 * GB).gpu_reserve, 0)
+            share = 0.2 if self._state == "ok" else 0.05
+            return int(max(1, min(ceiling, share * usable / max(bytes_per_item, 1.0))))
+        return int(max(1, self.chunk_rows(bytes_per_item, share=0.2, floor=1, ceiling=ceiling)))
+
     def gpu_free_bytes(self) -> int:
         """Graphics memory free now (looked up at most twice a second: the call goes to the driver)."""
 

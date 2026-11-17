@@ -341,6 +341,51 @@ def averaged_dynamics(shrunk, model, sub, pitcher: int, shape: pc.Shape, group: 
     return pc.Dynamics(P=acc, obs=obs, support=support, n=n)
 
 
+def averaged_dynamics_batched(shrunk, model, sub, pitcher: int, shape: pc.Shape, group: str, obs, support, n, mode: str, eng) -> pc.Dynamics:
+    """``averaged_dynamics`` with the days and batters of the pitcher taken many at a time (torch, on the device of ``eng``): the same arithmetic, the contexts in pieces whose size the resource
+    guard picks from the memory free now (halved and tried again when a piece does not fit)."""
+
+    import torch
+
+    base = pitcher_dynamics(shrunk, pitcher, shape, group, obs, support, n)
+    if mode == "none":
+        return base
+    cls = list(model.classes)
+    order = [cls.index(c) for c in pc.OUTCOMES if c in cls]
+    cells = dz.count_cell(pb.cell_columns(shape, group)).reshape(shape.size, shape.n_actions)[:, 0]
+    contexts = pitcher_context(model, sub, pitcher, mode)
+    if not contexts:                                                                                    # a pitcher with no plate appearance in these rows: no probabilities, as ``averaged_dynamics`` has it
+        return pc.Dynamics(P=np.zeros_like(base.P), obs=obs, support=support, n=n)
+    weight = np.array([c[0] for c in contexts]); delta = np.stack([(c[1] + c[2])[None, :] + c[3][cells] for c in contexts])            # [J, S, K] in the model's class order
+    if len(order) == delta.shape[2]:
+        delta = delta[:, :, order]
+    dev = eng._t["live"].device
+    logp = torch.as_tensor(np.log(np.clip(base.P, 1e-12, None)), device=dev, dtype=torch.float64)                                         # [S, A, C]
+    w_t = torch.as_tensor(weight, device=dev, dtype=torch.float64); d_t = torch.as_tensor(delta, device=dev, dtype=torch.float64)
+    acc = torch.zeros_like(logp)
+    per_item = float(logp.numel() * 8 * 4)
+    j, cap = 0, None
+    while j < len(weight):
+        guard.checkpoint("pitcher engine: day and batter")
+        size = guard.batch_items(per_item, eng.device, ceiling=256)
+        size = max(1, min(size if cap is None else min(size, cap), len(weight) - j))
+        try:
+            z = logp[None] + d_t[j:j + size, :, None, :]
+            z = z - z.max(dim=-1, keepdim=True).values
+            p = torch.exp(z); p = p / p.sum(dim=-1, keepdim=True)
+            acc += (w_t[j:j + size, None, None, None] * p).sum(dim=0)
+        except (torch.cuda.OutOfMemoryError, MemoryError):
+            guard.shrink()
+            if eng.device == "cuda":
+                torch.cuda.empty_cache()
+            cap = max(1, size // 2)
+            continue
+        if eng.device == "cuda":
+            guard.gpu_pause(torch)
+        j += size; cap = None
+    return pc.Dynamics(P=acc.cpu().numpy(), obs=obs, support=support, n=n)
+
+
 def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds: Sequence[str], trust: float) -> dict[str, dict[str, float]]:
     """Per policy kind: the value at the start of a plate appearance (and the home-run probability for ``HR_KINDS``)."""
 
@@ -351,6 +396,45 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
         out[kind] = {"start": eng.start_value(V), "hr": eng.hr_probability(pi) if kind in HR_KINDS else float("nan"), "action": np.argmax(pi, axis=1).astype(np.uint8),
                      "share": pi.astype(np.float16) if kind in ("dp_trust", "dp_unrestricted") else None}
     return out
+
+
+def _kind_rows(out: Mapping[str, Mapping[str, Any]], b: int) -> dict[str, dict[str, Any]]:
+    """The solution of pitcher ``b`` of a batch in the form ``solve_pitcher`` returns."""
+
+    res: dict[str, dict[str, Any]] = {}
+    for kind, v in out.items():
+        pi = v["pi"][b].cpu().numpy()
+        res[kind] = {"start": float(v["start"][b]), "hr": float(v["hr"][b]) if "hr" in v else float("nan"), "action": np.argmax(pi, axis=1).astype(np.uint8),
+                     "share": pi.astype(np.float16) if kind in ("dp_trust", "dp_unrestricted") else None}
+    return res
+
+
+def solve_pitchers_batched(prepared, make_dynamics, shape: pc.Shape, env: pc.Environment, kinds: Sequence[str], trust: float, progress=None) -> list[dict[str, dict[str, Any]]]:
+    """``solve_pitcher`` for all the pitchers of ``prepared`` ([(pitcher, row, choice)]), many at a time: the batch size is the resource guard's decision (``policy_batch.run_in_batches``)."""
+
+    from .policy_batch import BatchEngine, run_in_batches
+
+    eng = BatchEngine(shape, env)
+    done = [0]
+
+    def work(sl: slice, size: int):
+        items = prepared[sl]
+        P = np.stack([make_dynamics(pid, ch, eng).P for pid, _, ch in items])
+        obs = eng.tensor(np.stack([ch["obs"] for _, _, ch in items])); sup = eng.tensor(np.stack([ch["support"] for _, _, ch in items]), dtype=_bool())
+        out = eng.solve_kinds(eng.tensor(P), obs, sup, kinds, trust, hr_kinds=HR_KINDS)
+        rows = [_kind_rows(out, b) for b in range(len(items))]
+        done[0] += len(items)
+        if progress:
+            progress(done[0], len(prepared))
+        return rows
+
+    return [r for part in run_in_batches(eng, len(prepared), work, copies=8.0, label="pitcher engine") for r in part]
+
+
+def _bool():
+    import torch
+
+    return torch.bool
 
 
 # ------------------------------------------------------------------------------------------------ what one pitcher may throw and what he really throws
@@ -409,7 +493,7 @@ def choice_from_counts(by_count: np.ndarray, shape: pc.Shape, league_support: np
 
 # ------------------------------------------------------------------------------------------------ the whole thing for a group
 def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, shape: pc.Shape, obs, support, n, *, kinds: Sequence[str], trust: float, min_pa: int,
-        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", shrink: bool = True, min_type_share: float = 0.01, progress=None
+        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", shrink: bool = True, min_type_share: float = 0.01, batch: bool = True, progress=None
         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
     """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
     of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
@@ -433,16 +517,29 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
     order = use[np.argsort(-pa[use])]
     ok_rows, act_all, b_all, k_all = type_counts(sub, shape)
     pit_all = np.asarray(sub["pitcher"]).astype(np.int64)
-    for i, j in enumerate(order):
+    prepared: list[tuple[int, int, dict[str, Any]]] = []
+    for j in order:
         guard.checkpoint("pitcher engine")
         pid = int(ids[j])
         mine_rows = ok_rows & (pit_all == pid)
         counts_p = pitcher_counts(act_all[mine_rows], b_all[mine_rows], k_all[mine_rows], shape)
-        choice = choice_from_counts(counts_p, shape, support, min_type_share)
         counts_by_pitcher.append(counts_p.astype(np.float32))
-        dyn = averaged_dynamics(shrunk, shrunk, sub, pid, shape, group, choice["obs"], choice["support"], n, context)
-        res = solve_pitcher(dyn, env, shape, use_kinds, trust)
-        results.append(res)
+        prepared.append((pid, int(j), choice_from_counts(counts_p, shape, support, min_type_share)))
+    def make(pid, ch, eng=None):
+        if eng is None:
+            return averaged_dynamics(shrunk, shrunk, sub, pid, shape, group, ch["obs"], ch["support"], n, context)
+        return averaged_dynamics_batched(shrunk, shrunk, sub, pid, shape, group, ch["obs"], ch["support"], n, context, eng)
+
+    if batch:
+        results = solve_pitchers_batched(prepared, make, shape, env, use_kinds, trust, progress)
+    else:
+        results = []
+        for i, (pid, j, choice) in enumerate(prepared):
+            guard.checkpoint("pitcher engine")
+            results.append(solve_pitcher(make(pid, choice), env, shape, use_kinds, trust))
+            if progress:
+                progress(i + 1, len(prepared))
+    for (pid, j, choice), res in zip(prepared, results):
         mine = unit_pitcher == pid
         w = unit_rows[mine]
         row = {"group": group, "pitcher": pid, "pa": int(pa[j]), "pitches": int(pitches[j]), "units": int(mine.sum()),
@@ -455,8 +552,6 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
             if k != "observed":
                 row[f"saving_{k}"] = res["observed"]["start"] - res[k]["start"]
         detail.append(row)
-        if progress:
-            progress(i + 1, len(order))
     total_pa = float(pa.sum()); used_pa = float(pa[use].sum()) if len(use) else 0.0
     coverage = {"group": group, "min_pa": int(min_pa), "pitchers_total": int(len(ids)), "pitchers_used": int(len(use)), "pa_total": int(total_pa), "pa_used": int(used_pa),
                 "pa_share": used_pa / total_pa if total_pa else float("nan"), "pitch_share": float(pitches[use].sum() / pitches.sum()) if len(use) else 0.0,
@@ -497,57 +592,131 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
 
 
 # ------------------------------------------------------------------------------------------------ the league-average engine, one pitcher at a time
+def _canonical_obs(obs: np.ndarray, choice: Mapping[str, Any]) -> np.ndarray:
+    """The observed mix ``dp_unrestricted`` uses where nothing may be given: the league's mix of the types the pitcher may be given (shared by every pitcher with the same types)."""
+
+    canon = pc.masked_shares(obs, choice["allowed"][None, :])
+    return np.where(canon.sum(axis=1, keepdims=True) > 0, canon, choice["allowed"].astype(float)[None, :] / max(float(choice["allowed"].sum()), 1.0))
+
+
 def league_run(group: str, sub: Mapping[str, np.ndarray], P: np.ndarray, env: pc.Environment, shape: pc.Shape, obs, support, n, *, trust: float, min_type_share: float = 0.01,
-               progress=None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
-    """The league-average engine (every pitch type as strong as the league average, ``P`` [S, A, C]) solved once for every pitcher that has pitches in ``sub`` (the training rows of the group),
+               batch: bool = True, progress=None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
+    """The league-average engine (every pitch type as strong as the league average, ``P`` [S, A, C]) solved for every pitcher that has pitches in ``sub`` (the training rows of the group),
     with the pitch types he may be given (the league's support rule and at least ``min_type_share`` of his pitches) and his own mix by count as the observed behaviour.
 
     ``dp_unrestricted`` depends only on the types he may be given: pitchers with the same types share one solution (a state where nothing may be given plays the league's mix of the types he may
-    be given). ``dp_trust`` and the observed mix are his own. Returns (summary rows, one detail row per pitcher, the coverage row, the stored policies of every pitcher)."""
+    be given). ``dp_trust`` and the observed mix are his own. The pitchers are solved many at a time (``batch``; the resource guard sizes the batches), or one by one (``batch=False``, the
+    reference the batched way is tested against). Returns (summary rows, one detail row per pitcher, the coverage row, the stored policies of every pitcher)."""
 
     ids, pa, pitches = plate_appearances(sub)
     ok_rows, act_all, b_all, k_all = type_counts(sub, shape)
     pit_all = np.asarray(sub["pitcher"]).astype(np.int64)
-    A = shape.n_actions
     order = np.argsort(-pa)
-    shared: dict[bytes, tuple[np.ndarray, np.ndarray]] = {}
-    detail: list[dict[str, Any]] = []
-    out: dict[str, list] = {"allowed": [], "counts": [], "dp_trust": [], "dp_trust_share": [], "dp_unrestricted": [], "dp_unrestricted_share": []}
-    for i, j in enumerate(order):
+    pending = []                                                                                  # (pitcher id, row in ids, counts, choice, key of his set of types)
+    for j in order:
         guard.checkpoint("league engine by pitcher")
         pid = int(ids[j])
-        mine = ok_rows & (pit_all == pid)
-        counts = pitcher_counts(act_all[mine], b_all[mine], k_all[mine], shape)
+        counts = pitcher_counts(act_all[ok_rows & (pit_all == pid)], b_all[ok_rows & (pit_all == pid)], k_all[ok_rows & (pit_all == pid)], shape)
         if counts.sum() <= 0:
             continue
         ch = choice_from_counts(counts, shape, support, min_type_share)
-        key = ch["allowed"].tobytes()
-        if key not in shared:                                                                       # the same types: the same solution (the league's mix of his types where nothing may be given)
-            canon = pc.masked_shares(obs, ch["allowed"][None, :])
-            canon = np.where(canon.sum(axis=1, keepdims=True) > 0, canon, ch["allowed"].astype(float)[None, :] / max(float(ch["allowed"].sum()), 1.0))
-            eng_u = pc.Engine(shape, pc.Dynamics(P=P, obs=canon, support=ch["support"], n=n), env)
-            _, pi_u = eng_u.solve("dp_unrestricted", trust)
-            shared[key] = (pi_u, np.argmax(pi_u, axis=1).astype(np.uint8))
-        pi_u, act_u = shared[key]
-        eng = pc.Engine(shape, pc.Dynamics(P=P, obs=ch["obs"], support=ch["support"], n=n), env)
-        V_o, _ = eng.solve("observed", trust)
-        V_t, pi_t = eng.solve("dp_trust", trust)
-        V_u = eng.evaluate(pi_u)
-        base = eng.start_value(V_o)
+        pending.append((pid, int(j), counts, ch, ch["allowed"].tobytes()))
+    sets: dict[bytes, Mapping[str, Any]] = {}
+    for _, _, _, ch, key in pending:
+        sets.setdefault(key, ch)
+    keys = list(sets)
+    if batch:
+        pi_u_by_key, solved = _league_batched(shape, env, P, obs, support, n, sets, keys, pending, trust, progress)
+    else:
+        pi_u_by_key, solved = {}, []
+        for i, (pid, j, counts, ch, key) in enumerate(pending):
+            guard.checkpoint("league engine by pitcher")
+            if key not in pi_u_by_key:
+                eng_u = pc.Engine(shape, pc.Dynamics(P=P, obs=_canonical_obs(obs, ch), support=ch["support"], n=n), env)
+                pi_u_by_key[key] = eng_u.solve("dp_unrestricted", trust)[1]
+            eng = pc.Engine(shape, pc.Dynamics(P=P, obs=ch["obs"], support=ch["support"], n=n), env)
+            V_o, _ = eng.solve("observed", trust)
+            V_t, pi_t = eng.solve("dp_trust", trust)
+            V_u = eng.evaluate(pi_u_by_key[key])
+            solved.append((eng.start_value(V_o), eng.start_value(V_t), eng.start_value(V_u), pi_t))
+            if progress:
+                progress(i + 1, len(pending))
+    detail: list[dict[str, Any]] = []
+    out: dict[str, list] = {"allowed": [], "counts": [], "dp_trust": [], "dp_trust_share": [], "dp_unrestricted": [], "dp_unrestricted_share": []}
+    for (pid, j, counts, ch, key), (base, v_trust, v_unres, pi_t) in zip(pending, solved):
+        pi_u = pi_u_by_key[key]
         detail.append({"group": group, "pitcher": pid, "pa": int(pa[j]), "pitches": int(pitches[j]), "allowed_types": int(ch["allowed"].sum()), "excluded_types": int(ch["excluded"].sum()),
                        "excluded_names": " ".join(pb.PITCH_TYPES[x] for x in np.nonzero(ch["excluded"])[0]), "start_observed": base,
-                       "saving_dp_trust": base - eng.start_value(V_t), "saving_dp_unrestricted": base - eng.start_value(V_u)})
+                       "saving_dp_trust": base - v_trust, "saving_dp_unrestricted": base - v_unres})
         out["allowed"].append(ch["allowed"].astype(np.uint8)); out["counts"].append(counts.astype(np.float32))
         out["dp_trust"].append(np.argmax(pi_t, axis=1).astype(np.uint8)); out["dp_trust_share"].append(pi_t.astype(np.float16))
-        out["dp_unrestricted"].append(act_u); out["dp_unrestricted_share"].append(pi_u.astype(np.float16))
-        if progress:
-            progress(i + 1, len(order))
+        out["dp_unrestricted"].append(np.argmax(pi_u, axis=1).astype(np.uint8)); out["dp_unrestricted_share"].append(pi_u.astype(np.float16))
     policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64), "pa": np.array([d["pa"] for d in detail], dtype=np.float64)}
     for key, v in out.items():
         if v:
             policies[key] = np.stack(v)
     w = np.array([d["pa"] for d in detail], dtype=float)
     summary = [{"group": group, "policy": k, "pitchers": len(detail), "saving_pa": float(np.average([d[f"saving_{k}"] for d in detail], weights=w)) if len(detail) else float("nan")} for k in ("dp_trust", "dp_unrestricted")]
-    coverage = {"group": group, "pitchers": len(detail), "pitchers_total": int(len(ids)), "different_type_sets": len(shared), "excluded_types_mean": float(np.mean([d["excluded_types"] for d in detail])) if detail else float("nan"),
+    coverage = {"group": group, "pitchers": len(detail), "pitchers_total": int(len(ids)), "different_type_sets": len(sets), "excluded_types_mean": float(np.mean([d["excluded_types"] for d in detail])) if detail else float("nan"),
                 "pa": int(sum(d["pa"] for d in detail)), "min_type_share": float(min_type_share)}
     return summary, detail, coverage, policies
+
+
+def _league_batched(shape, env, P, obs, support, n, sets, keys, pending, trust, progress):
+    """The batched solutions of ``league_run``: (pi_unrestricted by set of types, [(start observed, start dp_trust, start dp_unrestricted, pi dp_trust)] per pitcher)."""
+
+    import torch
+
+    from .policy_batch import BatchEngine, run_in_batches
+
+    eng = BatchEngine(shape, env)
+    pi_u_by_key: dict[bytes, np.ndarray] = {}
+
+    def work_sets(sl: slice, size: int):
+        ks = keys[sl]
+        o = eng.tensor(np.stack([_canonical_obs(obs, sets[k]) for k in ks])); sp = eng.tensor(np.stack([sets[k]["support"] for k in ks]), dtype=torch.bool)
+        s_, e_ = eng._effective(o, sp)
+        _, pi = eng.solve_dp("dp_unrestricted", eng.tensor(P), o, s_, e_, trust)
+        return [(k, pi[i].cpu().numpy()) for i, k in enumerate(ks)]
+
+    for part in run_in_batches(eng, len(keys), work_sets, copies=6.0, label="league engine by pitcher"):
+        pi_u_by_key.update(part)
+    done = [0]
+
+    def work_pitchers(sl: slice, size: int):
+        items = pending[sl]
+        o = eng.tensor(np.stack([it[3]["obs"] for it in items])); sp = eng.tensor(np.stack([it[3]["support"] for it in items]), dtype=torch.bool)
+        Pt = eng.tensor(P)
+        res = eng.solve_kinds(Pt, o, sp, ("dp_trust",), trust)
+        pi_u = eng.tensor(np.stack([pi_u_by_key[it[4]] for it in items]))
+        v_u = eng.start_value(eng.evaluate(pi_u, Pt)).cpu().numpy()
+        rows = [(float(res["observed"]["start"][i]), float(res["dp_trust"]["start"][i]), float(v_u[i]), res["dp_trust"]["pi"][i].cpu().numpy()) for i in range(len(items))]
+        done[0] += len(items)
+        if progress:
+            progress(done[0], len(pending))
+        return rows
+
+    solved = [r for part in run_in_batches(eng, len(pending), work_pitchers, copies=6.0, label="league engine by pitcher") for r in part]
+    return pi_u_by_key, solved
+
+
+def score_batched(shape: pc.Shape, env: pc.Environment, entries: Sequence[Mapping[str, Any]], kinds: Sequence[str], shared_P: np.ndarray | None = None) -> list[dict[str, float]]:
+    """The start value of the observed mix and of each policy in ``kinds`` for many pitchers at once (2025 scoring): ``entries`` hold ``obs`` [S, A], ``shares`` {kind: [S, A]} and, unless the
+    probabilities are the same for everybody (``shared_P``), ``P`` = a function of the batch engine that gives the pitcher's probabilities [S, A, C]. The batch size is the resource guard's decision."""
+
+    from .policy_batch import BatchEngine, run_in_batches
+
+    eng = BatchEngine(shape, env)
+    K = len(kinds) + 1
+
+    def work(sl: slice, size: int):
+        items = entries[sl]; b = len(items)
+        pi = eng.tensor(np.stack([np.stack([it["obs"]] + [np.asarray(it["shares"][k], dtype=float) for k in kinds]) for it in items])).reshape(b * K, shape.size, shape.n_actions)
+        if shared_P is not None:
+            P = eng.tensor(shared_P)
+        else:
+            P = eng.tensor(np.stack([it["P"](eng) for it in items])).repeat_interleave(K, dim=0)
+        st = eng.start_value(eng.evaluate(pi, P)).cpu().numpy().reshape(b, K)
+        return [dict(zip(("observed", *kinds), (float(x) for x in st[i]))) for i in range(b)]
+
+    return [r for part in run_in_batches(eng, len(entries), work, copies=8.0 * K, label="policy score") for r in part]
