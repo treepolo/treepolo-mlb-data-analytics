@@ -494,3 +494,60 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
             policies[k] = np.stack([r[k]["action"] for r in results])
             policies[k + "_share"] = np.stack([r[k]["share"] for r in results])
     return summary, detail, coverage, policies
+
+
+# ------------------------------------------------------------------------------------------------ the league-average engine, one pitcher at a time
+def league_run(group: str, sub: Mapping[str, np.ndarray], P: np.ndarray, env: pc.Environment, shape: pc.Shape, obs, support, n, *, trust: float, min_type_share: float = 0.01,
+               progress=None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
+    """The league-average engine (every pitch type as strong as the league average, ``P`` [S, A, C]) solved once for every pitcher that has pitches in ``sub`` (the training rows of the group),
+    with the pitch types he may be given (the league's support rule and at least ``min_type_share`` of his pitches) and his own mix by count as the observed behaviour.
+
+    ``dp_unrestricted`` depends only on the types he may be given: pitchers with the same types share one solution (a state where nothing may be given plays the league's mix of the types he may
+    be given). ``dp_trust`` and the observed mix are his own. Returns (summary rows, one detail row per pitcher, the coverage row, the stored policies of every pitcher)."""
+
+    ids, pa, pitches = plate_appearances(sub)
+    ok_rows, act_all, b_all, k_all = type_counts(sub, shape)
+    pit_all = np.asarray(sub["pitcher"]).astype(np.int64)
+    A = shape.n_actions
+    order = np.argsort(-pa)
+    shared: dict[bytes, tuple[np.ndarray, np.ndarray]] = {}
+    detail: list[dict[str, Any]] = []
+    out: dict[str, list] = {"allowed": [], "counts": [], "dp_trust": [], "dp_trust_share": [], "dp_unrestricted": [], "dp_unrestricted_share": []}
+    for i, j in enumerate(order):
+        guard.checkpoint("league engine by pitcher")
+        pid = int(ids[j])
+        mine = ok_rows & (pit_all == pid)
+        counts = pitcher_counts(act_all[mine], b_all[mine], k_all[mine], shape)
+        if counts.sum() <= 0:
+            continue
+        ch = choice_from_counts(counts, shape, support, min_type_share)
+        key = ch["allowed"].tobytes()
+        if key not in shared:                                                                       # the same types: the same solution (the league's mix of his types where nothing may be given)
+            canon = pc.masked_shares(obs, ch["allowed"][None, :])
+            canon = np.where(canon.sum(axis=1, keepdims=True) > 0, canon, ch["allowed"].astype(float)[None, :] / max(float(ch["allowed"].sum()), 1.0))
+            eng_u = pc.Engine(shape, pc.Dynamics(P=P, obs=canon, support=ch["support"], n=n), env)
+            _, pi_u = eng_u.solve("dp_unrestricted", trust)
+            shared[key] = (pi_u, np.argmax(pi_u, axis=1).astype(np.uint8))
+        pi_u, act_u = shared[key]
+        eng = pc.Engine(shape, pc.Dynamics(P=P, obs=ch["obs"], support=ch["support"], n=n), env)
+        V_o, _ = eng.solve("observed", trust)
+        V_t, pi_t = eng.solve("dp_trust", trust)
+        V_u = eng.evaluate(pi_u)
+        base = eng.start_value(V_o)
+        detail.append({"group": group, "pitcher": pid, "pa": int(pa[j]), "pitches": int(pitches[j]), "allowed_types": int(ch["allowed"].sum()), "excluded_types": int(ch["excluded"].sum()),
+                       "excluded_names": " ".join(pb.PITCH_TYPES[x] for x in np.nonzero(ch["excluded"])[0]), "start_observed": base,
+                       "saving_dp_trust": base - eng.start_value(V_t), "saving_dp_unrestricted": base - eng.start_value(V_u)})
+        out["allowed"].append(ch["allowed"].astype(np.uint8)); out["counts"].append(counts.astype(np.float32))
+        out["dp_trust"].append(np.argmax(pi_t, axis=1).astype(np.uint8)); out["dp_trust_share"].append(pi_t.astype(np.float16))
+        out["dp_unrestricted"].append(act_u); out["dp_unrestricted_share"].append(pi_u.astype(np.float16))
+        if progress:
+            progress(i + 1, len(order))
+    policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64), "pa": np.array([d["pa"] for d in detail], dtype=np.float64)}
+    for key, v in out.items():
+        if v:
+            policies[key] = np.stack(v)
+    w = np.array([d["pa"] for d in detail], dtype=float)
+    summary = [{"group": group, "policy": k, "pitchers": len(detail), "saving_pa": float(np.average([d[f"saving_{k}"] for d in detail], weights=w)) if len(detail) else float("nan")} for k in ("dp_trust", "dp_unrestricted")]
+    coverage = {"group": group, "pitchers": len(detail), "pitchers_total": int(len(ids)), "different_type_sets": len(shared), "excluded_types_mean": float(np.mean([d["excluded_types"] for d in detail])) if detail else float("nan"),
+                "pa": int(sum(d["pa"] for d in detail)), "min_type_share": float(min_type_share)}
+    return summary, detail, coverage, policies

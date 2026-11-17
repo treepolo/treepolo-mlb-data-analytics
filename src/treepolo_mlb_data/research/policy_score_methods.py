@@ -39,7 +39,7 @@ POLICIES = ("dp_trust", "dp_unrestricted")
 
 class PolicyScoreMethod(ResearchMethod):
     kind = "policy_score"
-    version = 2     # 2: a run whose per-pitcher policies carry the pitcher's own counts is scored with his own mix and allowed types
+    version = 3     # 3: the league-average engine solved for every pitcher is scored too. 2: 2: a run whose per-pitcher policies carry the pitcher's own counts is scored with his own mix and allowed types
     label_zh = "配球建議的評分（用另一季單獨訓練的模型）"
     label_en = "Score the pitch recommendations with a model trained on another season"
     requires_scope = True
@@ -109,6 +109,23 @@ class PolicyScoreMethod(ResearchMethod):
                 value = eng.start_value(eng.evaluate(share))
                 rows.append({"group": group, "engine": "league", "policy": kind, "pitchers": None, "pa_share": None, "saving_pa": base - value, "saving_per_team_season": (base - value) * pm.PA_PER_TEAM_SEASON,
                              "start_observed": base, "start_policy": value})
+            lp_art = ctx.store.load_artifact(int(config["policy_run_id"]), f"league_pitcher_policies_{group}")
+            if lp_art is not None:                                                    # the league-average engine solved for every pitcher: his own mix and types, the scoring model's league-average dynamics
+                lp = pm.unpack_arrays(lp_art["rows"])
+                min_share_l = float(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_min_type_share", 0.01))
+                sav_l = {k: [] for k in ("dp_trust", "dp_unrestricted")}; w_l = []
+                for i in range(len(lp["pitchers"])):
+                    guard.checkpoint("policy score")
+                    ch = pe.choice_from_counts(np.asarray(lp["counts"][i], dtype=float), shape, support, min_share_l)
+                    e = pc.Engine(shape, pc.Dynamics(P=tensor.mean(axis=0), obs=ch["obs"], support=ch["support"], n=n), env)
+                    b = e.start_value(e.evaluate(e.policy_observed()))
+                    for kind in sav_l:
+                        sav_l[kind].append(b - e.start_value(e.evaluate(np.asarray(lp[f"{kind}_share"][i], dtype=float))))
+                    w_l.append(float(lp["pa"][i]))
+                for kind, v in sav_l.items():
+                    mean = float(np.average(np.array(v), weights=np.array(w_l)))
+                    rows.append({"group": group, "engine": "league_by_pitcher", "policy": kind, "pitchers": int(len(v)), "pa_share": None, "saving_pa": mean, "saving_per_team_season": mean * pm.PA_PER_TEAM_SEASON,
+                                 "start_observed": None, "start_policy": None})
             if per is None or not any(f"{k}_share" in per for k in POLICIES):
                 continue
             # per-pitcher engine: every pitcher's own dynamics from the scoring model (merged pitcher effects, shrunk on the scoring season's rows)

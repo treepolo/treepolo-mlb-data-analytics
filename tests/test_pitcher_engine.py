@@ -167,3 +167,20 @@ def test_a_type_a_pitcher_does_not_use_is_never_recommended_to_him_in_any_state(
             shares = np.asarray(policies[kind + "_share"][i], dtype=float)
             assert not shares[:, ~allowed[i]].any(), (kind, detail[i]["pitcher"])
             assert allowed[i][policies[kind][i]].all()
+
+
+def test_the_league_engine_by_pitcher_never_recommends_a_type_the_pitcher_does_not_use(world, model):
+    w, cols = world
+    shape = pc.Shape()
+    obs, support, n = pb.usage_from_counts(cols, shape, min_count=50)
+    model.group = "RvR"
+    P = pb.model_tensor(model, shape, "RvR", effects="population").mean(axis=0)
+    summary, detail, coverage, pol = pe.league_run("RvR", cols, P, w.env, shape, obs, support, n, trust=0.10, min_type_share=0.12)
+    allowed = pol["allowed"].astype(bool)
+    assert len(detail) == len(pol["pitchers"]) > 3 and (~allowed).any() and coverage["pitchers"] == len(detail) and coverage["different_type_sets"] <= len(detail)
+    for kind in ("dp_trust", "dp_unrestricted"):
+        for i in range(len(detail)):
+            assert not np.asarray(pol[kind + "_share"][i], dtype=float)[:, ~allowed[i]].any(), (kind, detail[i]["pitcher"])
+            assert allowed[i][pol[kind][i]].all()
+    assert all(d["saving_dp_unrestricted"] >= d["saving_dp_trust"] - 1e-9 and d["saving_dp_trust"] >= -1e-9 for d in detail)
+    assert {r["policy"] for r in summary} == {"dp_trust", "dp_unrestricted"}

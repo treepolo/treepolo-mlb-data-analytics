@@ -66,7 +66,7 @@ def compare(value, followed, game, z: float) -> dict[str, Any]:
 
 class PolicyCheckMethod(ResearchMethod):
     kind = "policy_check"
-    version = 1
+    version = 2     # 2: also checks the league-average engine solved for every pitcher
     label_zh = "配球建議的直接檢查（用另一季的實際投球，不用任何模型）"
     label_en = "Direct check of the pitch recommendations on another season (actual pitches, no model)"
     requires_scope = True
@@ -136,6 +136,19 @@ class PolicyCheckMethod(ResearchMethod):
                     rec = np.zeros(len(idx), dtype=int)
                     rec[known] = pitcher_policies[policy][[row_of[int(p)] for p in pitcher[known]], state[known]]
                     variants.append(("pitcher", known, rec))
+                lp = ctx.store.load_artifact(int(config["policy_run_id"]), f"league_pitcher_policies_{group}")
+                if lp is not None:
+                    lpp = pm.unpack_arrays(lp["rows"])
+                    if policy in lpp:
+                        row_l = {int(p): i for i, p in enumerate(lpp["pitchers"])}
+                        known_l = np.array([int(p) in row_l for p in pitcher])
+                        rec_l = league_rec.copy()                                                                   # a pitcher with no training pitches keeps the league recommendation
+                        rec_l[known_l] = lpp[policy][[row_l[int(p)] for p in pitcher[known_l]], state[known_l]]
+                        variants.append(("league_by_pitcher (pitchers with training pitches)", known_l, rec_l))
+                        variants.append(("league (same pitches)", known_l, league_rec))
+                        variants.append(("league_by_pitcher (all pitches; pitchers without training pitches keep the league)", np.ones(len(idx), dtype=bool), rec_l))
+                        if policy == POLICIES[0]:
+                            coverage.append({"group": group, "pitches": int((~known_l).sum()), "years": "pitches of pitchers with no training pitches (" + ",".join(str(y) for y in years) + ")"})
                 for engine, use, rec in variants:
                     followed = act == rec
                     for cell in COUNTS:
