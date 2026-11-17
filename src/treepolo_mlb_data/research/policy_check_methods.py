@@ -39,6 +39,33 @@ POLICIES = ("dp_trust", "dp_unrestricted")
 COUNTS = ["all"] + [f"{b}-{k}" for b in range(4) for k in range(3)]
 
 
+def within_state(value, followed, state, game, confidence: float = 0.95) -> dict[str, Any]:
+    """The same comparison inside the same situation: ``value ~ followed | situation`` (pyfixest, the situation as a fixed effect, standard errors clustered by ``game``). Only the situations in which
+    pitches were followed AND not followed count (the others say nothing about the difference); ``share_used`` is the share of the given pitches that are in such situations. The plain difference
+    on those same pitches (``diff_plain``, nothing adjusted) is given next to the coefficient, so the effect of comparing inside the situation can be seen."""
+
+    value = np.asarray(value, dtype=float); followed = np.asarray(followed, dtype=bool); state = np.asarray(state, dtype=np.int64); game = np.asarray(game)
+    out: dict[str, Any] = {"n_used": 0, "share_used": 0.0, "states_used": 0, "states_total": int(len(np.unique(state))), "n_followed_used": 0, "n_not_followed_used": 0, "coef": None, "lo": None, "hi": None, "diff_plain": None}
+    if len(value) == 0:
+        return out
+    codes = np.unique(state, return_inverse=True)[1]
+    n_all = np.bincount(codes); n_fol = np.bincount(codes, weights=followed.astype(float))
+    both = (n_fol > 0) & (n_fol < n_all)
+    keep = both[codes]
+    out.update(n_used=int(keep.sum()), share_used=float(keep.mean()), states_used=int(both.sum()), n_followed_used=int(followed[keep].sum()), n_not_followed_used=int((~followed[keep]).sum()))
+    if out["n_followed_used"] < 2 or out["n_not_followed_used"] < 2 or len(np.unique(game[keep])) < 2:
+        return out
+    import pandas as pd
+    import pyfixest as pf
+
+    df = pd.DataFrame({"y": value[keep], "followed": followed[keep].astype(float), "state": state[keep], "game": game[keep]})
+    fit = pf.feols("y ~ followed | state", data=df, vcov={"CRV1": "game"})
+    tidy = fit.confint(alpha=1.0 - float(confidence)).loc["followed"]
+    out.update(coef=float(fit.coef()["followed"]), lo=float(tidy.iloc[0]), hi=float(tidy.iloc[1]))
+    out["diff_plain"] = float(value[keep][followed[keep]].mean() - value[keep][~followed[keep]].mean())
+    return out
+
+
 def compare(value, followed, game, z: float) -> dict[str, Any]:
     """Mean of ``value`` for followed and not followed pitches, the difference (followed minus not followed) and its interval, clustered by ``game``."""
 
@@ -66,7 +93,7 @@ def compare(value, followed, game, z: float) -> dict[str, Any]:
 
 class PolicyCheckMethod(ResearchMethod):
     kind = "policy_check"
-    version = 2     # 2: also checks the league-average engine solved for every pitcher
+    version = 3     # 3: a within-situation version of the check (situation fixed effects, pyfixest). 2: also checks the league-average engine solved for every pitcher
     label_zh = "配球建議的直接檢查（用另一季的實際投球，不用任何模型）"
     label_en = "Direct check of the pitch recommendations on another season (actual pitches, no model)"
     requires_scope = True
@@ -104,6 +131,7 @@ class PolicyCheckMethod(ResearchMethod):
         re = get_re_table(ctx, config["re_scope"])
         shape = pc.Shape()
         rows: list[dict[str, Any]] = []
+        within_rows: list[dict[str, Any]] = []
         coverage: list[dict[str, Any]] = []
         for group in config["groups"]:
             art = ctx.store.load_artifact(int(config["policy_run_id"]), f"situation_table_{group}")
@@ -156,10 +184,14 @@ class PolicyCheckMethod(ResearchMethod):
                         if not m.any():
                             continue
                         rows.append({"group": group, "engine": engine, "policy": policy, "count": cell, **compare(val[m], followed[m], game[m], z)})
+                    within_rows.append({"group": group, "engine": engine, "policy": policy, "pitches_of_engine": int(use.sum()), "pitches_all": int(len(idx)), **within_state(val[use], followed[use], state[use], game[use], float(config["confidence"]))})
         columns = ("group", "engine", "policy", "count", "n_followed", "n_not_followed", "share_followed", "mean_followed", "mean_not_followed", "diff", "lo", "hi")
         sections = (
             make_section("Direct check 直接檢查（實際投球的每球失分變化，每 100 球幾分；照建議投 vs 沒照建議投；diff＝照建議減沒照建議，區間按比賽分群；不用任何模型，也沒有調整球數以外的任何條件）",
                          columns, rows, ("group", "engine", "policy", "count"), "duckdb", DIGITS),
+            make_section("Within situation 同一情況內比較（每 100 球失分對「照建議」迴歸，情況＝好壞球數、出局、壘上、上一球、連投顆數，當固定效果；標準誤按比賽分群；只用照建議與沒照建議都有的情況；coef＝照建議減沒照建議，負＝照建議較好；share_of_all＝用到的投球占這一季全部投球的比例）",
+                         ("group", "engine", "policy", "pitches_of_engine", "n_used", "share_of_engine", "share_of_all", "states_used", "states_total", "n_followed_used", "n_not_followed_used", "coef", "lo", "hi", "diff_plain"),
+                         [{**r, "share_of_engine": r["n_used"] / max(r["pitches_of_engine"], 1), "share_of_all": r["n_used"] / max(r["pitches_all"], 1)} for r in within_rows], ("group", "engine", "policy"), "duckdb", DIGITS),
             make_section("Coverage 檢查的投球數", ("group", "pitches", "years"), coverage, ("group",), "duckdb", DIGITS),
         )
         notes = [{"control": "direct_check", "zh": "照建議投＝實際投的球種是該狀態（球數、出局、壘包、前一球、連投）下配球建議裡份額最大的球種；沒有用任何模型，只是把實際發生的事分成兩組比較，沒有調整球數以外的條件。",
