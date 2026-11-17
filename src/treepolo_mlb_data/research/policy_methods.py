@@ -110,7 +110,7 @@ def unpack_arrays(rows) -> dict[str, Any]:
 
 class PitchPolicyMethod(ResearchMethod):
     kind = "pitch_policy"
-    version = 14     # 14: the per-pitcher check is in absolute values. 13: predict_model_run_id: the per-pitcher engine can use a prediction model. 12: the day and batter effects are shrunk by empirical Bayes before they are averaged. 11: the per-pitcher engine averages the day and the batter effects over his plate appearances on the probability scale (pitcher_context). 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
+    version = 15     # 15: the per-pitcher engine gives each pitcher only the types he uses (pitcher_min_type_share of his pitches) and his own mix by count as the observed behaviour. 14: the per-pitcher check is in absolute values. 13: predict_model_run_id: the per-pitcher engine can use a prediction model. 12: the day and batter effects are shrunk by empirical Bayes before they are averaged. 11: the per-pitcher engine averages the day and the batter effects over his plate appearances on the probability scale (pitcher_context). 10: one shrinkage factor per (pitcher, type) unit for all classes. 9: the per-pitcher check compares with what each pitcher really did, the stored per-pitcher policies hold the full shares and the plate appearances. 8: the per-pitcher engine merges the pitcher's overall effect into the shrunk effect, a check section, the recommendations are stored. 7: the cross-season evaluation has intervals (every bagged member chooses on one season and is judged on the other), cross rows come before the same-data rows, a per-pitcher engine. 6: 6: support judged by count and pitch type only (shared by every state of the count), min_share and min_count documented, a "Support coverage" section. 5: states with no supported action keep the observed behaviour (they were left at value 0) and every policy plays it there. 4: the outcome model comes from an outcome_model_train run (model_run_id); no reserved-season rule. 3: no verdicts or tau, comparison counts, per-year replication
     label_zh = "配球決策引擎（動態規劃、情境表、餘裕）"
     label_en = "Pitch policy engine (dynamic programming, situation table, margin)"
     requires_scope = True
@@ -145,6 +145,9 @@ class PitchPolicyMethod(ResearchMethod):
         ConfigField("predict_model_run_id", "int", default=0, minimum=0, label_zh="逐投手引擎用的預測模型（outcome_model_train 紀錄編號，0＝用上面的模型事後收縮）", label_en="Prediction model for the per-pitcher engine (outcome_model_train run id; 0 = the model above, shrunk after the fit)",
                     help_zh="全控制模型的同組內效應是為了扣掉偏差設計的，不適合預測個別投手。這裡放一個投手×球種用 effect（自動收縮）的模型；打者效應按他實際面對的打者在機率尺度上平均。",
                     help_en="Within effects are made to remove a bias, not to predict a pitcher. Give a model with pitcher x pitch-type effects (shrunk by the fit); the batter effects are averaged over the batters he faced."),
+        ConfigField("pitcher_min_type_share", "float", default=0.01, minimum=0.0, maximum=1.0, label_zh="逐投手引擎：球種最低占比（占該投手這一組投球）", label_en="Per-pitcher engine: minimum share of a pitch type among the pitcher's pitches",
+                    help_zh="一種球要被建議給某位投手，除了通過聯盟的支持規則，還要佔他這一組訓練期投球的這個比例以上；他自己的配球比例也用來當作小幅調整的基準。",
+                    help_en="A pitch type can be recommended to a pitcher only if the league's support rule allows it and it is at least this share of his pitches in the group; his own mix by count is the observed behaviour."),
         ConfigField("pitcher_min_pa", "int", default=200, minimum=1, label_zh="逐投手引擎：投手最少出場打席數（資料量門檻）", label_en="Per-pitcher engine: minimum plate appearances of a pitcher",
                     help_zh="只算打席數達到門檻的投手；結果會報告這些投手涵蓋了多少比例的打席。", help_en="Only pitchers with at least this many plate appearances; the result says what share of all plate appearances they cover."),
         ConfigField("anchor_run_id", "int", default=0, minimum=0, label_zh="錨點（action_effects）紀錄編號，0＝不用", label_en="Anchor run id (action_effects), 0 = none",
@@ -266,7 +269,7 @@ class PitchPolicyMethod(ResearchMethod):
                         pmodel = model
                         sub_g, _ = model._encode(cols, model.settings, fixed_classes=True)
                     league = {k: float(np.mean(an.saving_pa[k])) for k in kinds}
-                    s_rows, d_rows, cov, pol = pe.run(group, sub_g, pmodel, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]), context=("batter" if config["predict_model_run_id"] else config["pitcher_context"]), shrink=not config["predict_model_run_id"],
+                    s_rows, d_rows, cov, pol = pe.run(group, sub_g, pmodel, env, shape, obs, support, n, kinds=kinds, trust=config["trust_region"], min_pa=int(config["pitcher_min_pa"]), context=("batter" if config["predict_model_run_id"] else config["pitcher_context"]), shrink=not config["predict_model_run_id"], min_type_share=float(config["pitcher_min_type_share"]),
                                                  pa_per_team_season=PA_PER_TEAM_SEASON, league_saving=league, league_start=float(np.mean(an.start["observed"])), league_hr=float(np.mean(an.hr_pa["observed"])),
                                                  progress=(lambda i, total, g=group: progress("pitch_policy", None, f"group {g}: pitcher engine {i}/{total}")) if progress else None)
                     pitcher_summary += s_rows; pitcher_detail += d_rows
@@ -326,7 +329,7 @@ class PitchPolicyMethod(ResearchMethod):
                                  "start_value_actual": start_re_by_group[c["group"]] + c["actual_excess_runs"] if "actual_excess_runs" in c else None, "hr_predicted": c.get("hr_predicted"), "hr_actual": c.get("hr_actual"), "shrink_mean": None}
                                 for c in pitcher_cov if "predicted_excess_runs" in c], ("group", "pitcher"), "duckdb", DIGITS),
                 make_section("Pitcher engine detail 逐投手引擎明細（每位投手一列；saving＝比實際配球每打席少失分）",
-                             ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "start_observed", "hr_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
+                             ("group", "pitcher", "pa", "pitches", "units", "shrink_mean", "allowed_types", "excluded_types", "excluded_names", "start_observed", "hr_observed") + tuple(f"saving_{k}" for k in kinds_p if k != "observed"),
                              pitcher_detail, ("group", "pitcher"), "duckdb", DIGITS))
         return ResearchResult(sections=sections, extras=extras, artifacts=tuple(artifacts))
 
@@ -572,10 +575,10 @@ def policy_notes(config, with_pitcher_engine: bool) -> list[dict[str, str]]:
 
     notes = [{"control": "same_data", **NOTE_SAME_DATA}, {"control": "upper_bound", "zh": ASSUMPTION_ZH, "en": ASSUMPTION_EN}]
     if with_pitcher_engine:
-        notes.append({"control": "pitcher_engine", "zh": "逐投手引擎：每位投手用自己的投手×球種效應（先事後經驗貝氏收縮，資料少的往平均拉），當天狀態設為平常、打者是聯盟平均打者；觀察到的配球與支持規則仍是聯盟的；"
-                                                         f"只算至少 {int(config['pitcher_min_pa'])} 個打席的投手，每位各解一次引擎，按出場打席數加權；沒有區間。",
+        notes.append({"control": "pitcher_engine", "zh": "逐投手引擎：每位投手用自己的投手×球種效應（先事後經驗貝氏收縮，資料少的往平均拉），當天狀態設為平常、打者是聯盟平均打者；"
+                                                         f"只給每位投手他會投的球種（至少占他投球 {float(config['pitcher_min_type_share']):.1%} 且通過聯盟支持規則），小幅調整的基準是他自己在每個球數下的配球比例；只算至少 {int(config['pitcher_min_pa'])} 個打席的投手，每位各解一次引擎，按出場打席數加權；沒有區間。",
                       "en": "Per-pitcher engine: every pitcher with his own pitcher x pitch-type effects (shrunk after the fit by empirical Bayes), the usual day and the league-average batter; the observed mix "
-                            f"and the support rule are the league's; only pitchers with at least {int(config['pitcher_min_pa'])} plate appearances, the engine solved once per pitcher and added up "
+                            f"is the pitcher's own by count and a pitch type is given to him only if the league's support rule allows it and it is at least {float(config['pitcher_min_type_share']):.1%} of his pitches; only pitchers with at least {int(config['pitcher_min_pa'])} plate appearances, the engine solved once per pitcher and added up "
                             "weighted by plate appearances; no interval."})
     return notes
 

@@ -131,3 +131,39 @@ def test_the_day_and_the_batter_are_averaged_on_the_probability_scale_over_the_p
         P = pe.averaged_dynamics(shrunk, model, sub, pid, shape, "RvR", obs, support, n, mode).P
         assert P.shape == base.shape and np.allclose(P.sum(axis=2), 1.0) and np.isfinite(P).all()
     assert np.abs(pe.averaged_dynamics(shrunk, model, sub, pid, shape, "RvR", obs, support, n, "both").P - base).max() > 1e-4        # his real days and batters move the probabilities
+
+
+# ------------------------------------------------------------------------------------------------ what a pitcher may throw
+def test_choice_from_counts_gives_a_pitcher_only_the_types_he_uses_and_his_own_mix():
+    shape = pc.Shape(); A = shape.n_actions
+    counts = np.zeros((shape.n_balls, shape.n_strikes, A))
+    counts[0, 0, 0], counts[0, 0, 1], counts[0, 0, 2] = 60, 39, 1                 # type 2 is 1% of his pitches (below a 2% bar), type 3 never
+    counts[1, 1, 0] = 30
+    league = np.ones((shape.size, A), dtype=bool)
+    c = pe.choice_from_counts(counts, shape, league, 0.02)
+    assert c["allowed"].tolist()[:4] == [True, True, False, False] and c["excluded"][2] and c["excluded"][3] and not c["excluded"][0]
+    assert not c["support"][:, 2].any() and not c["obs"][:, 2:].any() and np.allclose(c["obs"].sum(axis=1), 1.0)
+    bb, kk, *_ = shape.coords()
+    s00 = np.nonzero((bb == 0) & (kk == 0))[0][0]; s11 = np.nonzero((bb == 1) & (kk == 1))[0][0]; s20 = np.nonzero((bb == 2) & (kk == 0))[0][0]
+    assert c["obs"][s00, 0] == pytest.approx(60 / 99) and c["obs"][s00, 1] == pytest.approx(39 / 99)           # his own mix in the count, the type he does not use removed
+    assert c["obs"][s11, 0] == pytest.approx(1.0)
+    assert c["obs"][s20, 0] == pytest.approx(90 / 129)                                                           # a count he never threw in: his overall mix of the allowed types
+    thin = np.zeros_like(league); thin[:, 2] = True                                                             # the league supports only a type he does not use
+    c2 = pe.choice_from_counts(counts, shape, thin, 0.02)
+    assert not c2["support"].any() and not c2["obs"][:, 2:].any() and np.allclose(c2["obs"].sum(axis=1), 1.0)   # nothing allowed: his own types, never the excluded one
+
+
+def test_a_type_a_pitcher_does_not_use_is_never_recommended_to_him_in_any_state(world, model):
+    w, cols = world
+    shape = pc.Shape()
+    obs, support, n = pb.usage_from_counts(cols, shape, min_count=50)
+    sub, _ = model._encode(cols, model.settings, fixed_classes=True)
+    kinds = ("observed", "dp_trust", "dp_unrestricted")
+    _, detail, _, policies = pe.run("RvR", sub, model, w.env, shape, obs, support, n, kinds=kinds, trust=0.10, min_pa=1, pa_per_team_season=6200.0, league_saving={}, min_type_share=0.12)
+    allowed = policies["allowed"].astype(bool)
+    assert (~allowed).any() and any(d["excluded_types"] > 0 for d in detail)                                   # the bar really excludes something here
+    for kind in ("dp_trust", "dp_unrestricted"):
+        for i in range(len(detail)):
+            shares = np.asarray(policies[kind + "_share"][i], dtype=float)
+            assert not shares[:, ~allowed[i]].any(), (kind, detail[i]["pitcher"])
+            assert allowed[i][policies[kind][i]].all()

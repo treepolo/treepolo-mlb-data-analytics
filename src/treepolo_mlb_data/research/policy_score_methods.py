@@ -39,7 +39,7 @@ POLICIES = ("dp_trust", "dp_unrestricted")
 
 class PolicyScoreMethod(ResearchMethod):
     kind = "policy_score"
-    version = 1
+    version = 2     # 2: a run whose per-pitcher policies carry the pitcher's own counts is scored with his own mix and allowed types
     label_zh = "配球建議的評分（用另一季單獨訓練的模型）"
     label_en = "Score the pitch recommendations with a model trained on another season"
     requires_scope = True
@@ -128,10 +128,15 @@ class PolicyScoreMethod(ResearchMethod):
             kinds_p = [k for k in POLICIES if f"{k}_share" in per]
             context = "batter" if config["predict_model_run_id"] else str(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_context", "none"))       # the way the policies were made: the same for the scoring season
             seen = 0
+            min_share = float(ctx.store.get_run(int(config["policy_run_id"]))["config"].get("pitcher_min_type_share", 0.01))
             sav = {k: [] for k in kinds_p}; w_all = []
             for i, pid in enumerate(per["pitchers"].tolist()):
                 guard.checkpoint("policy score")
-                dyn = pe.averaged_dynamics(shrunk, pmodel if config["predict_model_run_id"] else shrunk, sub, int(pid), shape, group, obs, support, n, context)
+                p_obs, p_support = obs, support
+                if "counts" in per:                                  # a run that gave every pitcher only the types he uses: his own mix and his allowed types, as when the policies were chosen
+                    choice = pe.choice_from_counts(np.asarray(per["counts"][i], dtype=float), shape, support, min_share)
+                    p_obs, p_support = choice["obs"], choice["support"]
+                dyn = pe.averaged_dynamics(shrunk, pmodel if config["predict_model_run_id"] else shrunk, sub, int(pid), shape, group, p_obs, p_support, n, context)
                 e = pc.Engine(shape, dyn, env)
                 b = e.start_value(e.evaluate(e.policy_observed()))
                 w = float(per["pa"][i]); w_all.append(w)

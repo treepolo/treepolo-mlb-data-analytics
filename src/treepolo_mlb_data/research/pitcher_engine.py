@@ -205,9 +205,9 @@ def shrunk_copy(model, factor: np.ndarray, others: Mapping[str, np.ndarray] | No
                 if g == name:
                     break
                 start += len(model.indexes[g])
-            size = len(model.indexes[name])
-            blk = np.asarray(coef[start:start + size], dtype=np.float64)
-            coef[start:start + size] = (f * (blk - blk.mean(axis=1, keepdims=True))).astype(coef.dtype)
+            n_units = len(model.indexes[name])
+            blk = np.asarray(coef[start:start + n_units], dtype=np.float64)
+            coef[start:start + n_units] = (f * (blk - blk.mean(axis=1, keepdims=True))).astype(coef.dtype)
         members.append({**m, "coef": coef})
     other.members = members
     return other
@@ -353,9 +353,63 @@ def solve_pitcher(dyn: pc.Dynamics, env: pc.Environment, shape: pc.Shape, kinds:
     return out
 
 
+# ------------------------------------------------------------------------------------------------ what one pitcher may throw and what he really throws
+def type_counts(sub: Mapping[str, np.ndarray], shape: pc.Shape):
+    """Per pitch of ``sub`` that the engine can read: (rows kept, action index, balls, strikes); the same filter as ``policy_build.usage_from_counts``."""
+
+    ptype = np.asarray(sub["pitch_type"]).astype(str)
+    a = np.array([pb.PITCH_TYPES.index(t) if t in pb.PITCH_TYPES else -1 for t in ptype]) if len(ptype) else np.zeros(0, dtype=int)
+    b = np.asarray(sub["balls"]).astype(int); k = np.asarray(sub["strikes"]).astype(int)
+    ok = (a >= 0) & (b < shape.n_balls) & (k < shape.n_strikes)
+    return ok, a, b, k
+
+
+def pitcher_counts(a: np.ndarray, b: np.ndarray, k: np.ndarray, shape: pc.Shape) -> np.ndarray:
+    """[balls, strikes, A] the pitch counts of one pitcher by count and pitch type."""
+
+    by_count = np.zeros((shape.n_balls, shape.n_strikes, shape.n_actions))
+    np.add.at(by_count, (b, k, a), 1.0)
+    return by_count
+
+
+def pitcher_choice(a: np.ndarray, b: np.ndarray, k: np.ndarray, shape: pc.Shape, league_support: np.ndarray, min_type_share: float) -> dict[str, Any]:
+    """``choice_from_counts`` for the pitches of one pitcher (``a`` action, ``b`` balls, ``k`` strikes of each)."""
+
+    return choice_from_counts(pitcher_counts(a, b, k, shape), shape, league_support, min_type_share)
+
+
+def choice_from_counts(by_count: np.ndarray, shape: pc.Shape, league_support: np.ndarray, min_type_share: float) -> dict[str, Any]:
+    """What one pitcher may throw and what he really throws, from his pitch counts ``by_count`` [balls, strikes, A].
+
+    * A pitch type may be chosen for him in a state when the league's support rule allows it there AND it is at least ``min_type_share`` of all his pitches in the group.
+    * His observed mix in a state is his own share of each pitch type in the count (pooled over the previous pitch, outs and bases), kept to the types he may throw and renormalised.
+      A count in which he threw none of them uses his overall shares of those types. A state in which he may throw nothing (the league does not support what he throws there) keeps his own
+      shares of the types he uses at least ``min_type_share`` of the time (so what is recommended there is still something he throws).
+    Returns ``obs`` [S, A], ``support`` [S, A], ``allowed`` [A] (pitch types he may be given), ``excluded`` [A] (types the league supports somewhere but he does not use)."""
+
+    A = shape.n_actions
+    overall = by_count.sum(axis=(0, 1))
+    share = overall / max(overall.sum(), 1.0)
+    allowed = (overall > 0) & (share >= min_type_share)
+    bb, kk, *_ = shape.coords()
+    support = league_support & allowed[None, :]
+    own = by_count[bb, kk]                                                           # [S, A] his pitches in the count of each state
+    allowed_f = allowed.astype(float)
+    over_allowed = np.divide(overall * allowed_f, max((overall * allowed_f).sum(), 1e-12))
+    obs = np.zeros_like(own)
+    has = support.any(axis=1)
+    m = np.where(support, own, 0.0); tot = m.sum(axis=1, keepdims=True)
+    fall_sup = np.where(support, over_allowed[None, :], 0.0); fall_sup = fall_sup / np.maximum(fall_sup.sum(axis=1, keepdims=True), 1e-12)
+    obs_sup = np.where(tot > 0, m / np.maximum(tot, 1e-12), fall_sup)
+    m2 = own * allowed_f[None, :]; tot2 = m2.sum(axis=1, keepdims=True)
+    obs_free = np.where(tot2 > 0, m2 / np.maximum(tot2, 1e-12), over_allowed[None, :])
+    obs = np.where(has[:, None], obs_sup, obs_free)
+    return {"obs": obs, "support": support, "allowed": allowed, "excluded": league_support.any(axis=0) & ~allowed}
+
+
 # ------------------------------------------------------------------------------------------------ the whole thing for a group
 def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, shape: pc.Shape, obs, support, n, *, kinds: Sequence[str], trust: float, min_pa: int,
-        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", shrink: bool = True, progress=None
+        pa_per_team_season: float, league_saving: Mapping[str, float], league_start: float = float("nan"), league_hr: float = float("nan"), context: str = "both", shrink: bool = True, min_type_share: float = 0.01, progress=None
         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, np.ndarray]]:
     """(summary rows per policy, one detail row per pitcher, the coverage row, the recommended pitch of every pitcher) of the per-pitcher engine for one group; ``sub`` are the training rows
     of the group. The recommendation is the pitch type with the largest share of the policy in each state (``{'pitchers': ids, kind: uint8 [pitchers, states]}``)."""
@@ -373,19 +427,30 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
     unit_factor = factor.mean(axis=1)
     use_kinds = [k for k in kinds]
     detail: list[dict[str, Any]] = []
+    allowed_by_pitcher: list[np.ndarray] = []
+    counts_by_pitcher: list[np.ndarray] = []
     results: list[dict[str, dict[str, float]]] = []
     order = use[np.argsort(-pa[use])]
+    ok_rows, act_all, b_all, k_all = type_counts(sub, shape)
+    pit_all = np.asarray(sub["pitcher"]).astype(np.int64)
     for i, j in enumerate(order):
         guard.checkpoint("pitcher engine")
         pid = int(ids[j])
-        dyn = averaged_dynamics(shrunk, shrunk, sub, pid, shape, group, obs, support, n, context)
+        mine_rows = ok_rows & (pit_all == pid)
+        counts_p = pitcher_counts(act_all[mine_rows], b_all[mine_rows], k_all[mine_rows], shape)
+        choice = choice_from_counts(counts_p, shape, support, min_type_share)
+        counts_by_pitcher.append(counts_p.astype(np.float32))
+        dyn = averaged_dynamics(shrunk, shrunk, sub, pid, shape, group, choice["obs"], choice["support"], n, context)
         res = solve_pitcher(dyn, env, shape, use_kinds, trust)
         results.append(res)
         mine = unit_pitcher == pid
         w = unit_rows[mine]
         row = {"group": group, "pitcher": pid, "pa": int(pa[j]), "pitches": int(pitches[j]), "units": int(mine.sum()),
                "shrink_mean": float((unit_factor[mine] * w).sum() / w.sum()) if w.sum() > 0 else float("nan"), "start_observed": res["observed"]["start"],
-               "hr_observed": res["observed"]["hr"]}
+               "hr_observed": res["observed"]["hr"], "allowed_types": int(choice["allowed"].sum()), "excluded_types": int(choice["excluded"].sum()),
+               "excluded_names": " ".join(pb.PITCH_TYPES[x] for x in np.nonzero(choice["excluded"])[0])}
+        row["allowed_names"] = " ".join(pb.PITCH_TYPES[x] for x in np.nonzero(choice["allowed"])[0])
+        allowed_by_pitcher.append(choice["allowed"])
         for k in use_kinds:
             if k != "observed":
                 row[f"saving_{k}"] = res["observed"]["start"] - res[k]["start"]
@@ -421,6 +486,9 @@ def run(group: str, sub: Mapping[str, np.ndarray], model, env: pc.Environment, s
                             "start_value": float((w * start).sum() / w.sum()), "hr_probability": float((w * hr).sum() / w.sum()) if np.isfinite(hr).all() else float("nan"),
                             "league_saving_pa": float(league_saving.get(k, float("nan")))})
     policies: dict[str, np.ndarray] = {"pitchers": np.array([d["pitcher"] for d in detail], dtype=np.int64), "pa": np.array([d["pa"] for d in detail], dtype=np.float64)}
+    if allowed_by_pitcher:
+        policies["allowed"] = np.stack(allowed_by_pitcher).astype(np.uint8)
+        policies["counts"] = np.stack(counts_by_pitcher)
     for k in use_kinds:
         if k in ("dp_trust", "dp_unrestricted") and results:
             policies[k] = np.stack([r[k]["action"] for r in results])
